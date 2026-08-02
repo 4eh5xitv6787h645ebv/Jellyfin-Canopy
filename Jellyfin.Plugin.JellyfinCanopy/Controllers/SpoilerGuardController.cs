@@ -37,6 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
+        private readonly ISpoilerGuardItemActionOwner _itemActionOwner;
         private readonly SpoilerPendingService _pendingService;
         private readonly SpoilerUserResolver _resolver;
         private readonly IUserDataManager _userDataManager;
@@ -49,6 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager,
             ILibraryManager libraryManager,
+            ISpoilerGuardItemActionOwner itemActionOwner,
             SpoilerPendingService pendingService,
             SpoilerUserResolver resolver,
             IUserDataManager userDataManager)
@@ -56,6 +58,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             _userConfigurationManager = userConfigurationManager;
             _libraryManager = libraryManager;
+            _itemActionOwner = itemActionOwner;
             _pendingService = pendingService;
             _resolver = resolver;
             _userDataManager = userDataManager;
@@ -1321,49 +1324,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userKey = userId.Value.ToString("N");
             try
             {
-                var capacityExceeded = false;
-                _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
-                    userKey, SpoilerFileName, state =>
-                    {
-                        // Preserve original EnabledAt on re-toggle; refresh SeriesName
-                        // opportunistically (covers renames). Return 0 (no-write) when
-                        // truly unchanged so a re-toggle doesn't burn a disk write.
-                        if (state.Series.TryGetValue(key, out var existing))
-                        {
-                            var newName = PersistedPayloadPolicy
-                                .ClampPersistedDisplayName(
-                                    series.Name ?? existing.SeriesName);
-                            if (string.Equals(existing.SeriesName, newName, StringComparison.Ordinal))
-                            {
-                                return 0;
-                            }
-                            existing.SeriesName = newName;
-                            SpoilerGuardOverridesRevision.Advance(state);
-                            return 1;
-                        }
-                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Series, key))
-                        {
-                            capacityExceeded = true;
-                            return 0;
-                        }
-                        state.Series[key] = new SpoilerBlurSeriesEntry
-                        {
-                            SeriesId = key,
-                            SeriesName = PersistedPayloadPolicy
-                                .ClampPersistedDisplayName(series.Name),
-                            EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
-                        };
-                        SpoilerGuardOverridesRevision.Advance(state);
-                        return 1;
-                    });
-                if (capacityExceeded)
+                var result = _itemActionOwner.Configure(
+                    new SpoilerGuardActorProjection(userId.Value),
+                    SpoilerGuardItemProjection.CurrentAccessible(
+                        seriesGuid,
+                        SpoilerGuardItemKind.Series,
+                        series.Name),
+                    new SpoilerGuardItemConfiguration(enabled: true));
+                if (result.Outcome == SpoilerGuardItemActionOutcome.CapacityExceeded)
                 {
                     _logger.LogWarning(
                         $"Spoiler Guard series cap reached for {ResolveUserDisplay(userKey)}; " +
                         $"rejecting new series {key}.");
                     return SpoilerOverrideCapacityExceeded("series");
                 }
-                SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for series '{series.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, seriesId = key, name = series.Name });
             }
@@ -1395,15 +1369,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userKey = userId.Value.ToString("N");
             try
             {
-                bool removed = false;
-                _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
-                    userKey, SpoilerFileName, state =>
-                    {
-                        removed = state.Series.Remove(key);
-                        if (removed) SpoilerGuardOverridesRevision.Advance(state);
-                        return removed ? 1 : 0;
-                    });
-                SpoilerUserResolver.InvalidateUser(userKey);
+                var result = _itemActionOwner.Configure(
+                    new SpoilerGuardActorProjection(userId.Value),
+                    SpoilerGuardItemProjection.ActorOwnedRemoval(
+                        seriesGuid,
+                        SpoilerGuardItemKind.Series),
+                    new SpoilerGuardItemConfiguration(enabled: false));
+                var removed = result.Removed;
                 if (!removed)
                 {
                     _logger.LogInformation($"Spoiler Guard disable was a no-op for series {key} by {ResolveUserDisplay(userKey)} — series was not in the user's spoiler-blur list.");
@@ -1470,42 +1442,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             try
             {
-                var capacityExceeded = false;
-                _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
-                    userKey, SpoilerFileName, state =>
-                    {
-                        if (state.Movies.TryGetValue(key, out var existing))
-                        {
-                            if (string.Equals(existing.MovieName, movieNameSanitized, StringComparison.Ordinal))
-                            {
-                                return 0;
-                            }
-                            existing.MovieName = movieNameSanitized;
-                            SpoilerGuardOverridesRevision.Advance(state);
-                            return 1;
-                        }
-                        if (!SpoilerGuardOverrideCapacity.CanInsert(state.Movies, key))
-                        {
-                            capacityExceeded = true;
-                            return 0;
-                        }
-                        state.Movies[key] = new SpoilerBlurMovieEntry
-                        {
-                            MovieId = key,
-                            MovieName = movieNameSanitized,
-                            EnabledAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
-                        };
-                        SpoilerGuardOverridesRevision.Advance(state);
-                        return 1;
-                    });
-                if (capacityExceeded)
+                var result = _itemActionOwner.Configure(
+                    new SpoilerGuardActorProjection(userId.Value),
+                    SpoilerGuardItemProjection.CurrentAccessible(
+                        movieGuid,
+                        SpoilerGuardItemKind.Movie,
+                        movieNameSanitized),
+                    new SpoilerGuardItemConfiguration(enabled: true));
+                if (result.Outcome == SpoilerGuardItemActionOutcome.CapacityExceeded)
                 {
                     _logger.LogWarning(
                         $"Spoiler Guard movie cap reached for {ResolveUserDisplay(userKey)}; " +
                         $"rejecting new movie {key}.");
                     return SpoilerOverrideCapacityExceeded("movies");
                 }
-                SpoilerUserResolver.InvalidateUser(userKey);
                 _logger.LogInformation($"Spoiler Guard enabled for movie '{movie.Name}' ({key}) by {ResolveUserDisplay(userKey)}");
                 return Ok(new { success = true, movieId = key, name = movie.Name });
             }
@@ -1537,15 +1487,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userKey = userId.Value.ToString("N");
             try
             {
-                bool removed = false;
-                _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
-                    userKey, SpoilerFileName, state =>
-                    {
-                        removed = state.Movies.Remove(key);
-                        if (removed) SpoilerGuardOverridesRevision.Advance(state);
-                        return removed ? 1 : 0;
-                    });
-                SpoilerUserResolver.InvalidateUser(userKey);
+                var result = _itemActionOwner.Configure(
+                    new SpoilerGuardActorProjection(userId.Value),
+                    SpoilerGuardItemProjection.ActorOwnedRemoval(
+                        movieGuid,
+                        SpoilerGuardItemKind.Movie),
+                    new SpoilerGuardItemConfiguration(enabled: false));
+                var removed = result.Removed;
                 if (!removed)
                 {
                     _logger.LogInformation($"Spoiler Guard disable was a no-op for movie {key} by {ResolveUserDisplay(userKey)} — movie was not in the user's spoiler-blur list.");

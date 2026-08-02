@@ -54,7 +54,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             }
         }
 
-        private static Harness Build(PluginConfiguration? cfg = null, bool includeUserInManager = true)
+        private static Harness Build(
+            PluginConfiguration? cfg = null,
+            bool includeUserInManager = true,
+            ISpoilerGuardItemActionOwner? itemActionOwner = null)
         {
             var dir = Path.Combine(Path.GetTempPath(), "jc-sg-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -91,6 +94,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 provider,
                 mgr,
                 lib,
+                itemActionOwner ?? new SpoilerGuardItemActionOwner(mgr),
                 pending,
                 resolver,
                 userData);
@@ -284,6 +288,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 provider,
                 h.Mgr,
                 h.Lib,
+                new SpoilerGuardItemActionOwner(h.Mgr),
                 pending,
                 new SpoilerUserResolver(
                     h.Mgr,
@@ -1452,6 +1457,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.False(SpoilerUserResolver.IsUserStateCachedForTest(userKey));
         }
 
+        [Fact]
+        public void InstalledItemRoutes_InvokeSharedOwnerExactlyOnceAfterAdmission()
+        {
+            var owner = new RecordingItemActionOwner();
+            using var h = Build(itemActionOwner: owner);
+            var seriesId = Guid.NewGuid();
+            var movieId = Guid.NewGuid();
+            h.Lib.GetItemByIdUserHook = (id, _) =>
+                id == seriesId ? new Series { Id = id, Name = "Series" }
+                : id == movieId ? new Movie { Id = id, Name = "Movie" }
+                : null;
+
+            Assert.IsType<OkObjectResult>(
+                h.Controller.EnableSpoilerBlurForSeries(seriesId.ToString()));
+            Assert.IsType<OkObjectResult>(
+                h.Controller.DisableSpoilerBlurForSeries(seriesId.ToString()));
+            Assert.IsType<OkObjectResult>(
+                h.Controller.EnableSpoilerBlurForMovie(movieId.ToString()));
+            Assert.IsType<OkObjectResult>(
+                h.Controller.DisableSpoilerBlurForMovie(movieId.ToString()));
+
+            Assert.Collection(
+                owner.Calls,
+                call => AssertCall(call, h.User.Id, seriesId, SpoilerGuardItemKind.Series, enabled: true),
+                call => AssertCall(call, h.User.Id, seriesId, SpoilerGuardItemKind.Series, enabled: false),
+                call => AssertCall(call, h.User.Id, movieId, SpoilerGuardItemKind.Movie, enabled: true),
+                call => AssertCall(call, h.User.Id, movieId, SpoilerGuardItemKind.Movie, enabled: false));
+
+            Assert.IsType<NotFoundObjectResult>(
+                h.Controller.EnableSpoilerBlurForMovie(Guid.NewGuid().ToString()));
+            Assert.Equal(4, owner.Calls.Count);
+
+            static void AssertCall(
+                ItemActionCall call,
+                Guid userId,
+                Guid itemId,
+                SpoilerGuardItemKind kind,
+                bool enabled)
+            {
+                Assert.Equal(userId, call.Actor.UserId);
+                Assert.Equal(itemId, call.Item.ItemId);
+                Assert.Equal(kind, call.Item.Kind);
+                Assert.Equal(enabled, call.Configuration.Enabled);
+            }
+        }
+
         private static Guid CapacityGuid(int index)
             => new(index, 0, 0, new byte[8]);
 
@@ -1537,6 +1588,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 Exception? exception,
                 Func<TState, Exception?, string> formatter)
                 => Messages.Add(formatter(state, exception));
+        }
+
+        private sealed record ItemActionCall(
+            SpoilerGuardActorProjection Actor,
+            SpoilerGuardItemProjection Item,
+            SpoilerGuardItemConfiguration Configuration);
+
+        private sealed class RecordingItemActionOwner : ISpoilerGuardItemActionOwner
+        {
+            public List<ItemActionCall> Calls { get; } = new();
+
+            public SpoilerGuardItemActionResult Configure(
+                SpoilerGuardActorProjection actor,
+                SpoilerGuardItemProjection item,
+                SpoilerGuardItemConfiguration configuration)
+            {
+                Calls.Add(new ItemActionCall(actor, item, configuration));
+                return SpoilerGuardItemActionResult.Configured(
+                    configuration.Enabled,
+                    changed: true,
+                    removed: !configuration.Enabled,
+                    revision: Calls.Count);
+            }
         }
     }
 }
