@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31019,
-        "totalLines": 39687
+        "coveredLines": 31220,
+        "totalLines": 39804
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 31018,
-        "maximumCoveredLines": 31019
+        "minimumCoveredLines": 31220,
+        "maximumCoveredLines": 31220
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The #93 dependency-invalidation change adds an explicit tag-cache dependency graph, bounded descendant repair, relationship-aware pending-change coalescing, and regression coverage for episode, season, and series mutations. Four clean Coverlet runs on the identical 2026-08-02 source and 39,687-line scope each passed all 2,645 server tests: three runs observed 31,018 covered lines and the final official coverage entry point observed 31,019. Relative to the reviewed #88 main baseline of 30,222/38,901 (77.690%), the reviewed implementation adds 786 instrumented lines and 797 covered high-water lines while increasing the high-water to 31,019/39,687 (78.159%) and the enforced floor to 31,018/39,687 (78.157%). The one-line allowance is exactly the same-head fixed-scope instrumentation envelope tracked in #575; the measured high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "The #521 v1 wire-format change adds strict platform JSON/media-type handling, canonical UTC timestamp and GUID serialization, safe request binding, response formatting, and focused regression coverage. Four clean Coverlet runs on the identical 2026-08-02 source and 39,804-line scope each passed all 2,666 server tests and reproduced exactly 31,220 covered lines. Relative to the reviewed #93 main baseline of 31,019/39,687 (78.159%), the reviewed implementation adds 117 instrumented lines and 201 covered lines while increasing coverage to 31,220/39,804 (78.434%). The exact observed envelope needs no instrumentation tolerance, so the new floor is 31,220/39,804 (78.434%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
