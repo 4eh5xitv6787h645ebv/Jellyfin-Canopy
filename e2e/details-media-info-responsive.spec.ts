@@ -111,12 +111,20 @@ interface DetailsGeometry {
     documentOverflow: number;
     chipOverflows: number[];
     chipsWithinHost: boolean[];
+    chipContentsWithinClient: boolean[];
     visibleChipCount: number;
     maxActionOverlapArea: number;
     visibleActionCount: number;
+    buttonsWithinActions: boolean;
+    hostWithinInfoWrapper: boolean;
     actionsWithinRibbon: boolean;
     actionsWithinViewport: boolean;
     hostWithinRibbon: boolean;
+    gutterGuard: {
+        rawOverflow: number;
+        normalizedOverflow: number;
+        childWithinClient: boolean;
+    };
 }
 
 async function readDetailsGeometry(page: Page, width: number): Promise<DetailsGeometry> {
@@ -131,7 +139,6 @@ async function readDetailsGeometry(page: Page, width: number): Promise<DetailsGe
         ));
         const actionButtons = Array.from(actions.querySelectorAll<HTMLElement>('button, .detailButton'))
             .filter((button) => button.getClientRects().length > 0);
-        const ribbonRect = ribbon.getBoundingClientRect();
         const hostRect = host.getBoundingClientRect();
         const actionRect = actions.getBoundingClientRect();
         const intersectionArea = (left: DOMRect, right: DOMRect): number => {
@@ -150,32 +157,155 @@ async function readDetailsGeometry(page: Page, width: number): Promise<DetailsGe
             return actionButtons.map((button) =>
                 intersectionArea(chipRect, button.getBoundingClientRect()));
         });
-        const withinHorizontally = (inner: DOMRect, outer: DOMRect): boolean =>
-            inner.left >= outer.left - 1 && inner.right <= outer.right + 1;
+        const clientHorizontalBounds = (element: HTMLElement): { left: number; right: number } => {
+            const rect = element.getBoundingClientRect();
+            const scale = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1;
+            const left = rect.left + element.clientLeft * scale;
+            return { left, right: left + element.clientWidth * scale };
+        };
+        const withinBounds = (
+            inner: Pick<DOMRect, 'left' | 'right'>,
+            outer: { left: number; right: number }
+        ): boolean => inner.left >= outer.left - 1 && inner.right <= outer.right + 1;
+        const withinClientHorizontally = (inner: DOMRect, outer: HTMLElement): boolean =>
+            withinBounds(inner, clientHorizontalBounds(outer));
+        const contentWithinClientHorizontally = (element: HTMLElement): boolean => {
+            const bounds = clientHorizontalBounds(element);
+            const descendants = Array.from(element.querySelectorAll<HTMLElement>('*'));
+            const elementsFit = descendants.every((descendant) =>
+                Array.from(descendant.getClientRects()).every((rect) =>
+                    rect.width <= 0 || rect.height <= 0 || withinBounds(rect, bounds)));
+            if (!elementsFit) return false;
+
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            let textNode = walker.nextNode();
+            while (textNode) {
+                if (textNode.textContent?.trim()) {
+                    const range = document.createRange();
+                    range.selectNodeContents(textNode);
+                    const textFits = Array.from(range.getClientRects()).every((rect) =>
+                        rect.width <= 0 || rect.height <= 0 || withinBounds(rect, bounds));
+                    range.detach();
+                    if (!textFits) return false;
+                }
+                textNode = walker.nextNode();
+            }
+            return true;
+        };
+        const horizontalOverflow = (element: HTMLElement): number => {
+            const style = getComputedStyle(element);
+            const horizontalBorder = Number.parseFloat(style.borderLeftWidth || '0')
+                + Number.parseFloat(style.borderRightWidth || '0');
+            // scrollWidth/clientWidth includes a classic vertical-scrollbar gutter
+            // as apparent horizontal overflow. Remove only that measured gutter;
+            // the chip and bounding-box assertions below still catch real clipping.
+            const verticalScrollbarGutter = Math.max(
+                0,
+                element.offsetWidth - element.clientWidth - horizontalBorder
+            );
+            return Math.max(
+                0,
+                element.scrollWidth - element.clientWidth - verticalScrollbarGutter
+            );
+        };
+
+        // Prove that gutter normalization is paired with client-box containment:
+        // the child deliberately extends beneath the reserved scrollbar gutter.
+        const guard = document.createElement('div');
+        guard.style.cssText = [
+            'position:fixed',
+            'left:-10000px',
+            'top:0',
+            'width:100px',
+            'height:100px',
+            'border:2px solid transparent',
+            'overflow-y:scroll',
+            'scrollbar-gutter:stable',
+        ].join(';');
+        const guardChild = document.createElement('div');
+        guardChild.style.cssText = 'width:100px;height:200px';
+        guard.append(guardChild);
+        document.body.append(guard);
+        const gutterGuard = {
+            rawOverflow: guard.scrollWidth - guard.clientWidth,
+            normalizedOverflow: horizontalOverflow(guard),
+            childWithinClient: withinClientHorizontally(
+                guardChild.getBoundingClientRect(),
+                guard
+            ),
+        };
+        guard.remove();
 
         return {
             width: viewportWidth,
             hostWidth: hostRect.width,
-            hostOverflow: host.scrollWidth - host.clientWidth,
-            infoWrapperOverflow: infoWrapper.scrollWidth - infoWrapper.clientWidth,
-            actionsOverflow: actions.scrollWidth - actions.clientWidth,
+            hostOverflow: horizontalOverflow(host),
+            infoWrapperOverflow: horizontalOverflow(infoWrapper),
+            actionsOverflow: horizontalOverflow(actions),
             documentOverflow:
                 (document.scrollingElement?.scrollWidth || 0) - window.innerWidth,
-            chipOverflows: chips.map((chip) => chip.scrollWidth - chip.clientWidth),
+            chipOverflows: chips.map(horizontalOverflow),
             chipsWithinHost: chips.map((chip) =>
-                withinHorizontally(chip.getBoundingClientRect(), hostRect)),
+                withinClientHorizontally(chip.getBoundingClientRect(), host)),
+            chipContentsWithinClient: chips.map(contentWithinClientHorizontally),
             visibleChipCount: chips.filter((chip) => chip.getClientRects().length > 0).length,
             maxActionOverlapArea: Math.max(0, ...overlapAreas),
             visibleActionCount: actionButtons.length,
-            actionsWithinRibbon: withinHorizontally(actionRect, ribbonRect),
+            buttonsWithinActions: actionButtons.every((button) =>
+                withinClientHorizontally(button.getBoundingClientRect(), actions)),
+            hostWithinInfoWrapper: withinClientHorizontally(hostRect, infoWrapper),
+            actionsWithinRibbon: withinClientHorizontally(actionRect, ribbon),
             actionsWithinViewport:
                 actionButtons.every((button) => {
                     const rect = button.getBoundingClientRect();
                     return rect.left >= -1 && rect.right <= window.innerWidth + 1;
                 }),
-            hostWithinRibbon: withinHorizontally(hostRect, ribbonRect),
+            hostWithinRibbon: withinClientHorizontally(hostRect, ribbon),
+            gutterGuard,
         };
     }, width);
+}
+
+async function waitForStableDetailsLayout(page: Page): Promise<void> {
+    await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise<void>((resolve, reject) => {
+            let previous = '';
+            let stableFrames = 0;
+            let sampledFrames = 0;
+            const sample = () => {
+                const visiblePage = document.querySelector<HTMLElement>('#itemDetailPage:not(.hide)');
+                const elements = visiblePage
+                    ? [
+                        visiblePage.querySelector<HTMLElement>('.detailRibbon'),
+                        visiblePage.querySelector<HTMLElement>('.infoWrapper'),
+                        visiblePage.querySelector<HTMLElement>('.itemMiscInfo-primary'),
+                        visiblePage.querySelector<HTMLElement>('.mainDetailButtons'),
+                    ]
+                    : [];
+                const signature = elements.map((element) => element
+                    ? [
+                        element.offsetWidth,
+                        element.clientWidth,
+                        element.scrollWidth,
+                        element.getBoundingClientRect().width.toFixed(3),
+                    ].join(':')
+                    : 'missing').join('|');
+
+                stableFrames = signature && signature === previous ? stableFrames + 1 : 0;
+                previous = signature;
+                sampledFrames++;
+                if (stableFrames >= 2) {
+                    resolve();
+                } else if (sampledFrames >= 120) {
+                    reject(new Error(`details layout did not stabilize: ${signature}`));
+                } else {
+                    requestAnimationFrame(sample);
+                }
+            };
+            requestAnimationFrame(sample);
+        });
+    });
 }
 
 test.describe('responsive details media info (#466 finding 5)', () => {
@@ -235,9 +365,7 @@ test.describe('responsive details media info (#466 finding 5)', () => {
 
                 for (const width of WIDTHS) {
                     await page.setViewportSize({ width, height: 900 });
-                    await page.evaluate(() => new Promise<void>((resolve) => {
-                        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-                    }));
+                    await waitForStableDetailsLayout(page);
                     const geometry = await readDetailsGeometry(page, width);
 
                     if (VISUAL_REVIEW_WIDTHS.has(width)) {
@@ -268,7 +396,11 @@ test.describe('responsive details media info (#466 finding 5)', () => {
                     ).toBe(true);
                     expect(
                         geometry.chipsWithinHost.every(Boolean),
-                        `${width}px every chip stays inside the metadata host`
+                        `${width}px every chip stays inside the metadata host client box`
+                    ).toBe(true);
+                    expect(
+                        geometry.chipContentsWithinClient.every(Boolean),
+                        `${width}px every chip's content stays inside its client box`
                     ).toBe(true);
                     expect(
                         geometry.maxActionOverlapArea,
@@ -276,10 +408,30 @@ test.describe('responsive details media info (#466 finding 5)', () => {
                     ).toBeLessThanOrEqual(1);
                     expect(geometry.actionsWithinRibbon, `${width}px actions stay in ribbon`)
                         .toBe(true);
+                    expect(
+                        geometry.buttonsWithinActions,
+                        `${width}px action buttons stay inside the action-row client box`
+                    ).toBe(true);
+                    expect(
+                        geometry.hostWithinInfoWrapper,
+                        `${width}px metadata stays inside the info-wrapper client box`
+                    ).toBe(true);
                     expect(geometry.actionsWithinViewport, `${width}px actions stay in viewport`)
                         .toBe(true);
                     expect(geometry.hostWithinRibbon, `${width}px metadata stays in ribbon`)
                         .toBe(true);
+                    expect(
+                        geometry.gutterGuard.rawOverflow,
+                        `${width}px negative control reserves a classic scrollbar gutter`
+                    ).toBeGreaterThan(1);
+                    expect(
+                        geometry.gutterGuard.normalizedOverflow,
+                        `${width}px negative control exercises gutter normalization`
+                    ).toBeLessThanOrEqual(1);
+                    expect(
+                        geometry.gutterGuard.childWithinClient,
+                        `${width}px client-box guard rejects content beneath the scrollbar gutter`
+                    ).toBe(false);
                 }
 
                 assertNoRuntimeErrors(consoleErrors);
