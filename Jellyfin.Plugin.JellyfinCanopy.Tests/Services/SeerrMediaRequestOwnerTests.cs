@@ -306,6 +306,68 @@ public sealed class SeerrMediaRequestOwnerTests
     }
 
     [Fact]
+    public async Task FactoryCallbackUserDeletion_IsRejectedByLastEdgeHostCheckBeforeSendAsync()
+    {
+        var harness = new Harness(clientFactory: current => new CallbackHttpClientFactory(
+            new RecordingHttpClientFactory(current.Handler),
+            () => current.Host.UserExists = false));
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "157"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+        Assert.Empty(harness.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task FactoryCallbackAdminDemotion_IsRejectedByLastEdgeHostCheckBeforeSendAsync()
+    {
+        var harness = new Harness(
+            isElevated: true,
+            clientFactory: current => new CallbackHttpClientFactory(
+                new RecordingHttpClientFactory(current.Handler),
+                () => current.Host.IsAdministrator = false));
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "158"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+        Assert.Empty(harness.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task FactoryCallbackItemInaccessible_IsRejectedByLastEdgeHostCheckBeforeSendAsync()
+    {
+        var harness = new Harness(clientFactory: current => new CallbackHttpClientFactory(
+            new RecordingHttpClientFactory(current.Handler),
+            () => current.Host.ItemAccessible = false));
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "159"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+        Assert.Empty(harness.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task FactoryCallbackProviderReferenceDrift_IsRejectedBeforeSendAsync()
+    {
+        var harness = new Harness(clientFactory: current => new CallbackHttpClientFactory(
+            new RecordingHttpClientFactory(current.Handler),
+            () => current.Host.ItemTransform = item => new HostAccessibleItem(
+                item.Id,
+                item.Kind,
+                item.SeriesId,
+                item.ProviderReferences.Add(new HostProviderReference("Tvdb", "factory-drift")))));
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "160"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+        Assert.Empty(harness.Handler.Requests);
+    }
+
+    [Fact]
     public async Task CallerCancellationPropagatesBeforeMutation()
     {
         var harness = new Harness();

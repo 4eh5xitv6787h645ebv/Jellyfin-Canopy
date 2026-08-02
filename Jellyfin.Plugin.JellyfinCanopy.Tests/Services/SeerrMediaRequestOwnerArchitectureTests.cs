@@ -80,6 +80,15 @@ public sealed class SeerrMediaRequestOwnerArchitectureTests
             source.LastIndexOf("SeerrRequestIdentityResolutionMode.FinalPreDispatch", StringComparison.Ordinal)
                 < source.IndexOf("_host.Users.Find(actor.UserId)", StringComparison.Ordinal));
         Assert.True(
+            source.IndexOf("SeerrHttpHelper.CreateClient", StringComparison.Ordinal)
+                < source.IndexOf("_host.Users.Find(actor.UserId)", StringComparison.Ordinal));
+        Assert.True(
+            source.IndexOf("SeerrHttpHelper.BuildRequest", StringComparison.Ordinal)
+                < source.IndexOf("_host.Users.Find(actor.UserId)", StringComparison.Ordinal));
+        Assert.True(
+            source.IndexOf("PlatformIdempotencyKey.HeaderName, idempotencyKey.Value", StringComparison.Ordinal)
+                < source.IndexOf("_host.Users.Find(actor.UserId)", StringComparison.Ordinal));
+        Assert.True(
             source.IndexOf("_host.Library.FindAccessible(actor.UserId, item.Id)", StringComparison.Ordinal)
                 < source.IndexOf("SeerrHttpHelper.SendResponseHeadersReadAsync", StringComparison.Ordinal));
 

@@ -350,9 +350,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.IdentityChanged);
             }
 
-            // Every earlier projection is stale after an await. Re-enter the host's
-            // current user-scoped seam immediately before transport and require both
-            // the acting authority and the complete safe item projection to match.
+            var persistSpoilerIntent = config.SpoilerBlurEnabled
+                && config.SpoilerAutoEnableOnSeerrRequest;
+            var requestUri = finalIdentity.SourceUrl + RequestPath;
+            var requestBody = BuildRequestBody(target, variant);
+            var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+            httpClient.Timeout = RequestTimeout;
+            using var request = SeerrHttpHelper.BuildRequest(
+                HttpMethod.Post,
+                requestUri,
+                integration.ApiKey,
+                finalIdentity.UserId.ToString(CultureInfo.InvariantCulture),
+                requestBody);
+            request.Headers.Add(PlatformIdempotencyKey.HeaderName, idempotencyKey.Value);
+
+            // Client factories and request/header construction are arbitrary code
+            // boundaries. Re-enter the host only after they finish, then dispatch
+            // synchronously through the typed configuration fence with no intervening
+            // authority-capable work.
             cancellationToken.ThrowIfCancellationRequested();
             var currentUser = _host.Users.Find(actor.UserId);
             var currentAccess = _host.Library.FindAccessible(actor.UserId, item.Id);
@@ -367,20 +382,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-
-            var persistSpoilerIntent = config.SpoilerBlurEnabled
-                && config.SpoilerAutoEnableOnSeerrRequest;
-            var requestUri = finalIdentity.SourceUrl + RequestPath;
-            var requestBody = BuildRequestBody(target, variant);
-            var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
-            httpClient.Timeout = RequestTimeout;
-            using var request = SeerrHttpHelper.BuildRequest(
-                HttpMethod.Post,
-                requestUri,
-                integration.ApiKey,
-                finalIdentity.UserId.ToString(CultureInfo.InvariantCulture),
-                requestBody);
-            request.Headers.Add(PlatformIdempotencyKey.HeaderName, idempotencyKey.Value);
 
             HttpResponseMessage response;
             try
