@@ -1,7 +1,12 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.IO;
+using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
@@ -47,6 +52,67 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
             new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Episode, Guid.NewGuid(), []),
             new SpoilerGuardItemConfiguration(enabled: false)));
         Assert.Equal(0, owner.ConfigureCalls);
+    }
+
+    [Fact]
+    public void ExistingMovie_WithNoPlatformDisplayName_PreservesOwnerStateAndRevision()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "jc-sg-platform-adapter-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var manager = new UserConfigurationManager(
+                new StubAppPaths(directory),
+                NullLogger<UserConfigurationManager>.Instance);
+            var userId = Guid.NewGuid();
+            var itemId = Guid.NewGuid();
+            var itemKey = itemId.ToString("N");
+            manager.SaveUserConfiguration(
+                userId.ToString("N"),
+                "spoilerblur.json",
+                new UserSpoilerBlur
+                {
+                    OverridesRevision = 17,
+                    Movies = new Dictionary<string, SpoilerBlurMovieEntry>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [itemKey] = new SpoilerBlurMovieEntry
+                        {
+                            MovieId = itemKey,
+                            MovieName = "Preserve this title",
+                            EnabledAt = "2026-08-03T01:02:03.0000000Z",
+                        },
+                    },
+                });
+
+            var adapter = new SpoilerGuardPlatformItemActionAdapter(
+                new SpoilerGuardItemActionOwner(manager));
+            var result = adapter.Configure(
+                new PlatformActor(userId, false, "correlation", null, null),
+                new HostAccessibleItem(itemId, HostItemKind.Movie, seriesId: null, []),
+                new SpoilerGuardItemConfiguration(enabled: true));
+            var stored = manager.GetUserConfigurationStrict<UserSpoilerBlur>(
+                userId.ToString("N"),
+                "spoilerblur.json");
+
+            Assert.Equal(SpoilerGuardItemActionOutcome.Configured, result.Outcome);
+            Assert.False(result.Changed);
+            Assert.Equal(17, result.Revision);
+            Assert.Equal(17, stored.OverridesRevision);
+            Assert.Equal("Preserve this title", stored.Movies[itemKey].MovieName);
+            Assert.Equal("2026-08-03T01:02:03.0000000Z", stored.Movies[itemKey].EnabledAt);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // Best-effort test cleanup.
+            }
+        }
     }
 
     private sealed class RecordingOwner : ISpoilerGuardItemActionOwner

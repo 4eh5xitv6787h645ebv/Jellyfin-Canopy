@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 33602,
-        "totalLines": 42604
+        "coveredLines": 33607,
+        "totalLines": 42607
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 33602,
-        "maximumCoveredLines": 33602
+        "minimumCoveredLines": 33607,
+        "maximumCoveredLines": 33607
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The #593 follow-up adds the transport-free Spoiler Guard Platform adapter that maps only authoritative actor and freshly accessible Movie/Series projections into the already shared installed-item owner. Its tests cover both admitted kinds, preserve the owner's exact semantic result, prove exactly one owner call, and reject unsupported kinds before the owner. The adapter measures 100% line coverage. Three clean Coverlet runs on the identical 2026-08-03 source and 42,604-line scope each passed all 2,946 server tests and reproduced exactly 33,602 covered lines. Relative to the reviewed #594 main high-water of 33,585/42,586 (78.864%), this change adds 18 instrumented lines and 17 covered lines, raising the high-water to 33,602/42,604 (78.871%). The identical observation envelope needs no instrumentation tolerance, so the floor and high-water are both 33,602/42,604. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #593 follow-up adds the transport-free Spoiler Guard Platform adapter that maps only authoritative actor and freshly accessible Movie/Series projections into the already shared installed-item owner. Its tests cover both admitted kinds, preserve the owner's exact semantic result, prove exactly one owner call, and reject unsupported kinds before the owner. Independent review also found and corrected a real parity edge: because the safe Platform projection has no title, re-enabling an existing movie now preserves its durable display metadata and revision instead of erasing the name. A real adapter-plus-owner persistence regression pins that behavior. The adapter measures 100% line coverage. Three clean Coverlet runs on the identical corrected 2026-08-03 source and 42,607-line scope each passed all 2,947 server tests and reproduced exactly 33,607 covered lines. Relative to the reviewed #594 main high-water of 33,585/42,586 (78.864%), this change adds 21 instrumented lines and 22 covered lines, raising the high-water to 33,607/42,607 (78.877%). The identical observation envelope needs no instrumentation tolerance, so the floor and high-water are both 33,607/42,607. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
