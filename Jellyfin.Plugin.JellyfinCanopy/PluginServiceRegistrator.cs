@@ -57,6 +57,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             RegisterMaintainerrHttpClient(serviceCollection);
+            // Discovery probes server-chosen private-network candidates and is
+            // credential-free; suppress default URI logging like Maintainerr's
+            // (candidate URLs are private-network topology).
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.DiscoveryClient)
+                .RemoveAllLoggers()
+                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateDiscoveryHandler);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.JikanClient, client =>
@@ -101,6 +107,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.IPluginConfigProvider, Services.PluginConfigProvider>();
             serviceCollection.AddSingleton(new Services.Maintainerr.MaintainerrHostIdentity(applicationHost.SystemId));
             serviceCollection.AddSingleton<Services.Maintainerr.IMaintainerrClient, Services.Maintainerr.MaintainerrClient>();
+            serviceCollection.AddSingleton<Services.Discovery.ServiceDiscoveryService>();
             serviceCollection.AddSingleton(serviceProvider =>
                 new Services.ClientRefreshStateService(
                     serviceProvider.GetRequiredService<Services.IPluginConfigProvider>(),
