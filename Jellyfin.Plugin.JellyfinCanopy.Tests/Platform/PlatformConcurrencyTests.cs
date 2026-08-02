@@ -30,6 +30,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             public IActionResult Get() => new OkObjectResult(new { Value = 1 });
         }
 
+        private sealed class ValidatedPostController : PlatformControllerBase
+        {
+            [PlatformValidatedRepresentation]
+            public IActionResult Post() => new OkObjectResult(new { Value = 1 });
+        }
+
         [Fact]
         public async Task CacheableSuccessUsesStrongSha256OfExactWireBytes()
         {
@@ -219,6 +225,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Equal(StatusCodes.Status200OK, response.StatusCode);
             Assert.Empty(response.Headers.ETag.ToString());
+        }
+
+        [Fact]
+        public async Task ValidatedPostGetsExactEtagButNeverGetStyleConditionalSemantics()
+        {
+            var controller = new ValidatedPostController();
+            var method = typeof(ValidatedPostController).GetMethod(nameof(ValidatedPostController.Post))!;
+            var first = await RunAsync(method, controller.Post());
+            var tag = first.Headers.ETag.ToString();
+
+            var matching = await RunAsync(
+                method,
+                controller.Post(),
+                ifMatch: "\"different\"",
+                ifNoneMatch: tag);
+
+            Assert.Equal(StatusCodes.Status200OK, first.StatusCode);
+            Assert.Matches("^\"sha256-[0-9a-f]{64}\"$", tag);
+            Assert.Equal(StatusCodes.Status200OK, matching.StatusCode);
+            Assert.Equal(tag, matching.Headers.ETag.ToString());
+            Assert.NotEmpty(Assert.IsType<MemoryStream>(matching.Body).ToArray());
         }
 
         [Fact]
