@@ -333,9 +333,16 @@ function isExpectedSignedOutHomeAxios401(detail, evidence, hasAllowedHost401) {
  * Classifies the stock TanStack cancellation stack emitted by Jellyfin Web
  * while logout revokes its active query client. Require a console error whose
  * first line and source chunk match the observed host event, followed by the
- * exact observed TanStack-only frame sequence. Any missing, reordered,
- * substituted, malformed, credential-bearing, Canopy, or additional frame
- * fails closed.
+ * exact observed TanStack-only frame sequence. Any missing, substituted,
+ * malformed, credential-bearing, Canopy, or additional frame fails closed, as
+ * does any frame served from outside the single TanStack bundle build.
+ *
+ * Frames are identified by function name and origin bundle rather than by the
+ * minified line:column values of one Jellyfin Web build, so a host rebuild does
+ * not turn stock noise into an unexplained error. The cost is that swapping two
+ * frames that share a function name is no longer distinguishable; every frame
+ * must still come from the same TanStack bundle, so this cannot admit a Canopy
+ * frame, a foreign origin, or an extra frame.
  *
  * @param {{text: string, url?: string, source?: string}} detail
  * @param {LogoutEvidence} evidence
@@ -369,17 +376,23 @@ function isExpectedJellyfinWebTanStackCancellation(detail, evidence) {
     const lines = text.split('\n');
     if (lines[0] !== 'e: CancelledError' || lines.length !== 11) return false;
 
+    // Frame identity is the sequence of function names and their common origin
+    // bundle, not where the minifier happened to place them. Every frame must
+    // still carry well-formed line:column coordinates, but their exact values
+    // belong to one Jellyfin Web build: pinning them made a stock host stack
+    // read as an unexplained Canopy error the moment the server image moved,
+    // which is precisely what the nightly refresher does on purpose.
     const expectedFrames = [
-        { frame: /^\s+at Object\.cancel \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:90321' },
-        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:42018' },
-        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:42232' },
-        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:53013' },
-        { frame: /^\s+at (https?:\/\/\S+)$/, coordinates: '2:53199' },
+        { frame: /^\s+at Object\.cancel \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at (https?:\/\/\S+)$/ },
         { frame: /^\s+at Array\.forEach \(<anonymous>\)$/ },
-        { frame: /^\s+at (https?:\/\/\S+)$/, coordinates: '2:53176' },
-        { frame: /^\s+at Object\.batch \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:26154' },
-        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:53147' },
-        { frame: /^\s+at t\.value \((https?:\/\/[^)\s]+)\)$/, coordinates: '2:72222' },
+        { frame: /^\s+at (https?:\/\/\S+)$/ },
+        { frame: /^\s+at Object\.batch \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at e\.value \((https?:\/\/[^)\s]+)\)$/ },
+        { frame: /^\s+at t\.value \((https?:\/\/[^)\s]+)\)$/ },
     ];
     let bundleVersion = '';
     for (let index = 0; index < expectedFrames.length; index += 1) {
@@ -388,8 +401,10 @@ function isExpectedJellyfinWebTanStackCancellation(detail, evidence) {
         const match = line.match(expected.frame);
         if (!match) return false;
         if (!match[1]) continue;
+        // Coordinates must be present and well formed; their values are the
+        // host build's business, not a property this classifier can assert.
         const coordinates = match[1].match(/:(\d+):(\d+)$/);
-        if (!coordinates || `${coordinates[1]}:${coordinates[2]}` !== expected.coordinates) return false;
+        if (!coordinates) return false;
         try {
             const frame = new URL(match[1].slice(0, -coordinates[0].length));
             if (frame.origin !== origin.origin

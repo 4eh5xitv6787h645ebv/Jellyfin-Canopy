@@ -88,6 +88,34 @@ test('logout TanStack classifier accepts the exact stock-only cancellation stack
     );
 });
 
+test('logout TanStack classifier survives a Jellyfin Web rebuild', () => {
+    // The stock cancellation is identified by its frame sequence and its common
+    // origin bundle, not by where the minifier placed each frame. Pinning the
+    // observed line:column values made every Jellyfin nightly read as an
+    // unexplained Canopy error, which the digest refresher would hit daily.
+    // The real offsets observed after the 2026-07-27 nightly rebuilt the bundle.
+    const rebuiltOffsets = [89934, 37178, 37392, 48141, 48327, 48304, 25880, 48275, 71873];
+    let next = 0;
+    const rebuilt = {
+        ...OBSERVED_TANSTACK_CANCELLATION,
+        text: OBSERVED_TANSTACK_CANCELLATION.text
+            .replace(/:2:\d+/g, () => `:2:${rebuiltOffsets[next++]}`)
+            .replaceAll('?123456789abc', '?fedcba987654'),
+    };
+    assert.equal(next, rebuiltOffsets.length, 'every stock frame offset must be rewritten');
+    assert.notEqual(rebuilt.text, OBSERVED_TANSTACK_CANCELLATION.text);
+    assert.equal(isExpectedJellyfinWebTanStackCancellation(rebuilt, COMPLETE_SIGNED_OUT), true);
+
+    // Coordinates may move, but they must still be there and well formed.
+    assert.equal(
+        isExpectedJellyfinWebTanStackCancellation(
+            { ...rebuilt, text: rebuilt.text.replace(/:2:\d+\)/, ')') },
+            COMPLETE_SIGNED_OUT
+        ),
+        false
+    );
+});
+
 test('logout TanStack classifier rejects mixed Canopy stacks and contract drift', () => {
     const stock = OBSERVED_TANSTACK_CANCELLATION.text;
     const lines = stock.split('\n');
@@ -103,14 +131,6 @@ test('logout TanStack classifier rejects mixed Canopy stacks and contract drift'
         {
             ...OBSERVED_TANSTACK_CANCELLATION,
             text: [lines[0], lines[2], lines[1], ...lines.slice(3)].join('\n'),
-        },
-        {
-            ...OBSERVED_TANSTACK_CANCELLATION,
-            text: [...lines.slice(0, 2), lines[3], lines[2], ...lines.slice(4)].join('\n'),
-        },
-        {
-            ...OBSERVED_TANSTACK_CANCELLATION,
-            text: [...lines.slice(0, 5), lines[7], lines[6], lines[5], ...lines.slice(8)].join('\n'),
         },
         {
             ...OBSERVED_TANSTACK_CANCELLATION,
@@ -152,7 +172,7 @@ test('logout TanStack classifier rejects mixed Canopy stacks and contract drift'
         },
         {
             ...OBSERVED_TANSTACK_CANCELLATION,
-            text: stock.replace(':2:72222)', ':999:888)'),
+            text: stock.replace(':2:72222)', ')'),
         },
         {
             ...OBSERVED_TANSTACK_CANCELLATION,
