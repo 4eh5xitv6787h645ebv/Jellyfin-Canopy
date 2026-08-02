@@ -11,6 +11,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     public static class PlatformConstants
     {
         /// <summary>
+        /// Maximum time spent in Platform v1 model binding and action execution.
+        /// Request-body buffering is separately bounded and deliberately happens first.
+        /// </summary>
+        public static readonly System.TimeSpan RequestDeadline = System.TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// The Platform v1 route family.
         ///
         /// The <c>v1</c> segment is a MAJOR version. Incompatible majors coexist as
