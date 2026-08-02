@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31272,
-        "totalLines": 39989
+        "coveredLines": 31292,
+        "totalLines": 40009
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 31271,
-        "maximumCoveredLines": 31272
+        "minimumCoveredLines": 31291,
+        "maximumCoveredLines": 31292
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The connected-service auto-discovery change adds ServiceDiscoveryService (bounded candidate building, SSRF-guarded credential-free probing confined to the candidate origin across redirects, single-flight, and the Seerr arr-settings import projection), its admin-only controller, and the guarded Discovery named client. Three clean Coverlet runs on the identical 2026-08-02 source and 39,989-line scope each passed all 2,672 server tests: the official full-gate coverage entry point observed 31,272 covered lines and two subsequent identical-scope runs observed 31,271. Relative to the prior reviewed baseline of 31,019/39,687 (78.159%), the reviewed implementation adds 302 instrumented lines and 253 covered high-water lines while increasing the high-water to 31,272/39,989 (78.202%) and the enforced floor to 31,271/39,989 (78.199%), above the previous 78.157% floor. The one-line allowance is exactly the same-head fixed-scope instrumentation envelope tracked in #575; the measured high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The connected-service auto-discovery change adds ServiceDiscoveryService (bounded candidate building, SSRF-guarded credential-free probing confined to the candidate origin across redirects, resolved-address dedup against already-configured endpoints, single-flight, and the Seerr arr-settings import projection), its admin-only controller, and the guarded Discovery named client. Three clean Coverlet runs on the identical 2026-08-02 source and 40,009-line scope each passed all 2,674 server tests, observing 31,291 (official full-gate entry point), 31,292 and 31,291 covered lines. Relative to the prior reviewed baseline of 31,019/39,687 (78.159%), the reviewed implementation adds 322 instrumented lines and 273 covered high-water lines while increasing the high-water to 31,292/40,009 (78.212%) and the enforced floor to 31,291/40,009 (78.210%), above the previous 78.157% floor. The one-line allowance is exactly the same-head fixed-scope instrumentation envelope tracked in #575; the measured high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
