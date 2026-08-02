@@ -37,6 +37,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // The sole process-wide owner of bounded idempotency state. Future mutation
             // endpoints consume this singleton; no current read route changes behavior.
             serviceCollection.AddSingleton<PlatformIdempotencyStore>();
+            // One process-local 256-bit authority and nonce ledger for short-lived
+            // native action capabilities. Restart intentionally invalidates every token.
+            serviceCollection.AddSingleton<PlatformActionCapabilityService>();
 
             // a named HttpClient with AllowAutoRedirect=false so
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning

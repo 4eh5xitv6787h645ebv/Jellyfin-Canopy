@@ -19,6 +19,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
         private static readonly Dictionary<string, string> AllowedStateOwners = new(StringComparer.Ordinal)
         {
+            ["PlatformActionCapabilityService.cs:_ledger"] = "The sole reviewed bounded short-lived capability nonce owner.",
             ["PlatformErrorCode.cs:Definitions"] = "Immutable error-code definition table, not request state.",
             ["PlatformIdempotencyStore.cs:_entries"] = "The sole reviewed bounded idempotency state owner.",
         };
@@ -37,6 +38,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Contains("MaximumEntries", code, StringComparison.Ordinal);
             Assert.Contains("MaximumStoredResultBytes", code, StringComparison.Ordinal);
             Assert.Contains("MaximumResultBytes", code, StringComparison.Ordinal);
+
+            var capabilityCode = PlatformHostSeamTests.CodeOnly(
+                File.ReadAllText(SourcePath("PlatformActionCapabilityService.cs")));
+            Assert.Contains("MaximumLedgerEntries", capabilityCode, StringComparison.Ordinal);
+            Assert.Contains("CapabilityTimeToLive", capabilityCode, StringComparison.Ordinal);
+            Assert.Contains("RemoveExpiredEntries", capabilityCode, StringComparison.Ordinal);
         }
 
         [Fact]
