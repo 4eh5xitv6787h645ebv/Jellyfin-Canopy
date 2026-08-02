@@ -135,9 +135,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // no DB/probe work) and drained by a debounced background worker so scans are
         // never blocked and repeated hits on the same id coalesce to one rebuild.
         private readonly TagCachePendingChanges _pending = new();
+        private readonly object _lifecycleGate = new();
         private Timer? _flushTimer;
         private long _firstPendingTicks; // 0 = nothing pending since last flush
         private int _flushing;           // 0/1 non-reentrancy guard for the worker
+        private int _disposed;           // 0/1; prevents timer resurrection during shutdown
+        private long _retryBackoffTicks;
+        private long _removedDependencyEntriesVisited;
+        private int _repairIncomplete;
         private static readonly TimeSpan FlushDebounce = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan FlushMaxWait = TimeSpan.FromSeconds(30);
 
@@ -148,6 +153,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // multi-second wait.
         private int _rebuildFlushGuardSpins = 3000;
         internal void SetRebuildFlushGuardSpinsForTest(int spins) => _rebuildFlushGuardSpins = spins;
+        private int _disposeFlushGuardSpins = 500;
+        internal void SetDisposeFlushGuardSpinsForTest(int spins) => _disposeFlushGuardSpins = spins;
 
         // Bump whenever a TagCacheEntry field the STRIP paths depend on is added,
         // so a cache serialized by an older build is discarded and rebuilt. v2
@@ -155,7 +162,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // has null SeriesId on every episode, so the strip skips them and unstripped
         // ratings leak onto guarded cards via renderFromServerCache. Discarding
         // starts empty (client falls back to the live/per-batch strip) until rebuild.
-        private const int CurrentCacheSchemaVersion = 2;
+        // v3 adds persisted Episode SeasonId and stream-source identity. Both are
+        // correctness-critical dependency metadata, so older entries are rebuilt.
+        private const int CurrentCacheSchemaVersion = 3;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -219,6 +228,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 DateTime.UtcNow);
 
         internal void FlushPendingForTest() => FlushPending();
+
+        internal int PendingChangeCountForTest => _pending.Count;
+
+        internal bool HasFlushTimerForTest => Volatile.Read(ref _flushTimer) != null;
+
+        internal long RemovedDependencyEntriesVisitedForTest
+            => Interlocked.Read(ref _removedDependencyEntriesVisited);
 
         internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
 
@@ -318,23 +334,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
 
-                // Pass 1: which series' own rating changed since its cached entry was built. An
-                // Episode with no rating of its own inherits its parent series' rating, so a series
-                // rating change must re-derive those episodes even when the episode's own
-                // DateLastSaved is unchanged. A Series entry stores the series' own rating verbatim
-                // (no fallback), so comparing the live value against the old entry is exact.
-                var seriesRatingChanged = new HashSet<Guid>();
-                foreach (var item in allItems)
-                {
-                    if (item.GetBaseItemKind() != BaseItemKind.Series) continue;
-                    var sKey = item.Id.ToString("N").ToLowerInvariant();
-                    if (!oldCache.TryGetValue(sKey, out var oldSeries)
-                        || oldSeries.CommunityRating != item.CommunityRating
-                        || oldSeries.CriticRating != item.CriticRating)
-                    {
-                        seriesRatingChanged.Add(item.Id);
-                    }
-                }
+                // Parent-Series dependencies share the same authoritative graph as incremental
+                // events. This also heals a missed TMDB/rating event for an unchanged Episode;
+                // containers are rebuilt unconditionally below because they derive first-Episode
+                // data whose revision is independent of the container's own revision.
+                var seriesById = allItems
+                    .Where(static item => item.GetBaseItemKind() == BaseItemKind.Series)
+                    .ToDictionary(static item => item.Id);
 
                 var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
                 var changed = false; // an add or a genuine content change (drives the ?since= delta)
@@ -350,12 +356,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var revision = item.DateLastSaved.Ticks;
                     oldCache.TryGetValue(key, out var old);
 
-                    var parentSeriesRatingChanged =
-                        kind == BaseItemKind.Episode
+                    TagCacheEntry? parentSeriesRefresh = null;
+                    var parentOrRelationshipChanged = false;
+                    if (kind == BaseItemKind.Episode
                         && item is MediaBrowser.Controller.Entities.TV.Episode epDep
-                        && seriesRatingChanged.Contains(epDep.SeriesId);
+                        && old != null
+                        && old.SourceRevision == revision)
+                    {
+                        seriesById.TryGetValue(epDep.SeriesId, out var parentSeries);
+                        var relationshipChanged = !string.Equals(old.SeriesId, FormatId(epDep.SeriesId), StringComparison.Ordinal)
+                            || !string.Equals(old.SeasonId, FormatId(epDep.SeasonId), StringComparison.Ordinal);
+                        if (relationshipChanged)
+                        {
+                            parentOrRelationshipChanged = true;
+                            if (epDep.SeriesId == Guid.Empty || parentSeries != null)
+                            {
+                                parentSeriesRefresh = TagCacheDependencyGraph.ApplySeasonRelationshipRefresh(
+                                    parentSeries,
+                                    epDep,
+                                    old,
+                                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                            }
+                        }
+                        else if (parentSeries != null)
+                        {
+                            parentOrRelationshipChanged = TagCacheDependencyGraph.TryPrepareParentSeriesRefresh(
+                                parentSeries,
+                                item,
+                                old,
+                                static _ => null,
+                                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                out parentSeriesRefresh);
+                        }
+                    }
 
-                    if (!ShouldRebuild(kind, old, revision, parentSeriesRatingChanged))
+                    if (!ShouldRebuild(kind, old, revision, parentOrRelationshipChanged))
                     {
                         // Unchanged: reuse the existing entry verbatim — no media probe, timestamp
                         // preserved. old is non-null here (ShouldRebuild returns true when it is).
@@ -363,7 +398,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                     else
                     {
-                        var entry = BuildEntryForItem(item);
+                        // A parent-only change must not re-probe unchanged Episode media. The
+                        // authoritative dependency graph already prepared exactly the inherited
+                        // fields from this reconcile's stable Series/Episode snapshot.
+                        var entry = parentSeriesRefresh ?? BuildEntryForItem(item);
                         if (entry == null)
                         {
                             // Unexpected build failure (a bug, not a media-probe failure — those return
@@ -378,10 +416,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             // (unconfirmed): keep its fresh probe-independent data (own + inherited
                             // rating/genres) but retain the last-good streams, and leave it unconfirmed
                             // so the gate rebuilds it every cycle until the probe recovers.
-                            if (entry.SourceRevision == 0 && old != null)
+                            if (entry.SourceRevision == 0
+                                && old != null
+                                && string.Equals(
+                                    entry.StreamSourceId,
+                                    old.StreamSourceId,
+                                    StringComparison.Ordinal))
                             {
-                                entry.StreamData = old.StreamData;
-                                entry.AudioLanguages = old.AudioLanguages;
+                                RetainLastGoodProbeData(entry, old);
                             }
 
                             if (old != null && ContentEquals(old, entry))
@@ -479,7 +521,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// Pure so the gate can be unit-tested without a live library. A rebuild is required for a
         /// new item, for containers (Series/Season) whose derived data tracks their child episodes
         /// rather than their own timestamp, when the source revision changed, or when an Episode's
-        /// parent-series rating changed (the episode inherits it when it has none of its own).
+        /// parent-Series derived surface changed (rating or TMDB metadata that the Episode inherits).
         /// </summary>
         internal static bool ShouldRebuild(BaseItemKind kind, TagCacheEntry? old, long revision, bool parentSeriesRatingChanged)
         {
@@ -523,6 +565,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return JsonSerializer.Serialize(copy);
         }
 
+        private static void RetainLastGoodProbeData(TagCacheEntry current, TagCacheEntry previous)
+        {
+            var freshIdentity = current.StreamData;
+            if (previous.StreamData != null)
+            {
+                current.StreamData = string.Equals(
+                        freshIdentity?.ItemName,
+                        previous.StreamData.ItemName,
+                        StringComparison.Ordinal)
+                    && string.Equals(
+                        freshIdentity?.ItemPath,
+                        previous.StreamData.ItemPath,
+                        StringComparison.Ordinal)
+                    ? previous.StreamData
+                    : new TagStreamData
+                    {
+                        Streams = previous.StreamData.Streams,
+                        Sources = previous.StreamData.Sources,
+                        ItemName = freshIdentity?.ItemName,
+                        ItemPath = freshIdentity?.ItemPath,
+                    };
+            }
+
+            current.AudioLanguages = previous.AudioLanguages;
+        }
+
         /// <summary>
         /// Queue an item to be (re)built in the cache. Called by TagCacheMonitor on
         /// ItemAdded/ItemUpdated. This only records the id and arms a debounced
@@ -534,8 +602,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public void EnqueueUpdate(Guid itemId)
         {
             if (itemId == Guid.Empty) return;
-            _pending.Record(itemId, removed: false); // PERF(S1): O(1) record-and-defer, safe on the scan thread
-            ScheduleFlush();
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0) return;
+                _pending.Record(itemId, removed: false); // PERF(S1): O(1) record-and-defer, safe on the scan thread
+                Interlocked.Exchange(ref _retryBackoffTicks, 0);
+                ScheduleFlush();
+            }
         }
 
         /// <summary>
@@ -546,8 +619,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public void EnqueueRemoval(Guid itemId)
         {
             if (itemId == Guid.Empty) return;
-            _pending.Record(itemId, removed: true);
-            ScheduleFlush();
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0) return;
+                _pending.Record(itemId, removed: true);
+                Interlocked.Exchange(ref _retryBackoffTicks, 0);
+                ScheduleFlush();
+            }
+        }
+
+        /// <summary>
+        /// Record one explicit library event with its cheap relationship identity. The synchronous
+        /// scan thread stops here; parent/descendant expansion and all library queries run later in
+        /// <see cref="FlushPending"/>.
+        /// </summary>
+        internal void EnqueueItemChange(BaseItem item, bool removed)
+        {
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0) return;
+                var key = item.Id.ToString("N").ToLowerInvariant();
+                _cache.TryGetValue(key, out var previous);
+                var change = TagCacheDependencyGraph.Capture(item, removed, previous);
+                if (change.Id == Guid.Empty) return;
+                _pending.Record(change);
+                Interlocked.Exchange(ref _retryBackoffTicks, 0);
+                ScheduleFlush();
+            }
         }
 
         /// <summary>
@@ -555,6 +653,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private void ScheduleFlush()
         {
+            if (Volatile.Read(ref _disposed) != 0) return;
             Interlocked.CompareExchange(ref _firstPendingTicks, DateTime.UtcNow.Ticks, 0);
             ArmFlushTimer(ComputeFlushDelay());
         }
@@ -564,22 +663,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private void ArmFlushTimer(TimeSpan due)
         {
-            var existing = _flushTimer;
-            if (existing != null)
+            lock (_lifecycleGate)
             {
-                try
+                if (Volatile.Read(ref _disposed) != 0) return;
+                var existing = _flushTimer;
+                if (existing != null)
                 {
-                    existing.Change(due, Timeout.InfiniteTimeSpan);
-                    return;
+                    try
+                    {
+                        existing.Change(due, Timeout.InfiniteTimeSpan);
+                        return;
+                    }
+                    catch (ObjectDisposedException) { }
                 }
-                catch (ObjectDisposedException) { }
-            }
 
-            var timer = new Timer(_ => FlushPending(), null, due, Timeout.InfiniteTimeSpan);
-            var old = Interlocked.Exchange(ref _flushTimer, timer);
-            if (old != null && !ReferenceEquals(old, timer))
-            {
-                old.Dispose();
+                // Publication is serialized with Dispose's disposed transition. Either this timer
+                // is visible before shutdown (and Dispose takes it), or shutdown wins and no timer
+                // is created; there is no check-then-publish resurrection window.
+                var timer = new Timer(_ => FlushPending(), null, due, Timeout.InfiniteTimeSpan);
+                var old = Interlocked.Exchange(ref _flushTimer, timer);
+                if (old != null && !ReferenceEquals(old, timer))
+                {
+                    old.Dispose();
+                }
             }
         }
 
@@ -609,6 +715,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private void FlushPending()
         {
+            if (Volatile.Read(ref _disposed) != 0) return;
             // Non-reentrant: if a flush already owns the batch, retry after the debounce.
             // (Retry via ArmFlushTimer, NOT ScheduleFlush: once the first pending change is older
             // than FlushMaxWait, ScheduleFlush would compute a zero delay and busy-spin the timer
@@ -619,25 +726,72 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
+            // Dispose may win after the callback's entry check but before it acquires the guard.
+            // Re-check while owning the guard so no callback can mutate after shutdown persistence.
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                Interlocked.Exchange(ref _flushing, 0);
+                return;
+            }
+
             try
             {
                 Interlocked.Exchange(ref _firstPendingTicks, 0);
-                if (ApplyPendingBatch(_pending.Drain(), out var removed))
+                var changed = ApplyPendingBatch(_pending.Drain(), out var removed);
+
+                OnAfterFlushApplyForTest?.Invoke();
+
+                // Dispose can time out while this owner is blocked after draining. Enqueue and
+                // Dispose share _lifecycleGate, so once _disposed is visible no new work can arrive;
+                // this final handoff drain captures every event recorded during the in-flight pass.
+                if (Volatile.Read(ref _disposed) != 0 && !_pending.IsEmpty)
+                {
+                    changed |= ApplyPendingBatch(_pending.Drain(), out var handoffRemoved);
+                    removed |= handoffRemoved;
+                }
+
+                if (changed)
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     // Current clients consume the tombstone journal. Retain Version
                     // for an older cached bundle whose ?since= shape cannot delete.
                     if (removed) Interlocked.Increment(ref _version);
                     ScheduleDebouncedSave();
+                    // If shutdown timed out waiting for this in-flight callback, Dispose cannot
+                    // persist our later mutation. Complete the atomic save here instead of leaving
+                    // a dirty cache with no live debounce timer.
+                    if (Volatile.Read(ref _disposed) != 0)
+                    {
+                        SaveToDisk();
+                    }
                 }
-
-                OnAfterFlushApplyForTest?.Invoke();
+                else if (Volatile.Read(ref _disposed) != 0
+                    && Volatile.Read(ref _repairIncomplete) != 0)
+                {
+                    SaveToDisk();
+                }
             }
             finally
             {
                 Interlocked.Exchange(ref _flushing, 0);
-                // Ids recorded while we were draining/applying: run again (cap-aware).
-                if (!_pending.IsEmpty) ScheduleFlush();
+                // Ids recorded while we were draining/applying: run again. Retries use an
+                // exponential global delay; a genuine new event clears it in EnqueueItemChange.
+                lock (_lifecycleGate)
+                {
+                    if (!_pending.IsEmpty && Volatile.Read(ref _disposed) == 0)
+                    {
+                        var backoffTicks = Interlocked.Exchange(ref _retryBackoffTicks, 0);
+                        if (backoffTicks > 0)
+                        {
+                            Interlocked.Exchange(ref _firstPendingTicks, DateTime.UtcNow.Ticks);
+                            ArmFlushTimer(TimeSpan.FromTicks(backoffTicks));
+                        }
+                        else
+                        {
+                            ScheduleFlush();
+                        }
+                    }
+                }
             }
         }
 
@@ -705,46 +859,793 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// signal for cached pre-journal clients. Wrapping it keeps <see cref="ApplyBatch"/>'s
         /// tested signature untouched.
         /// </summary>
-        private bool ApplyPendingBatch(IReadOnlyList<(Guid Id, bool Removed)> batch, out bool removedFromCache)
+        private bool ApplyPendingBatch(IReadOnlyList<TagCacheChange> batch, out bool removedFromCache)
         {
             var removed = false;
-            var changed = ApplyBatch(
-                batch,
-                RebuildEntry,
-                id => { var r = RemoveEntry(id); if (r) removed = true; return r; });
+            var changed = false;
+            var expandedSeries = new HashSet<Guid>();
+            var preparedEntries = new Dictionary<Guid, TagCacheEntry>();
+            foreach (var change in ExpandDependencies(batch, expandedSeries, preparedEntries))
+            {
+                try
+                {
+                    if (change.Removed)
+                    {
+                        var didRemove = RemoveEntry(change.Id);
+                        removed |= didRemove;
+                        changed |= didRemove;
+                        continue;
+                    }
+
+                    var unavailable = false;
+                    var didRebuild = preparedEntries.TryGetValue(change.Id, out var prepared)
+                        ? PublishPreparedEntry(change.Id, prepared)
+                        : RebuildEntry(
+                            change.Id,
+                            expandedSeries.Contains(change.Id),
+                            out unavailable);
+                    changed |= didRebuild;
+                    if (unavailable)
+                    {
+                        QueueRetry(change, "item is not yet resolvable");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    QueueRetry(change, ex.Message);
+                }
+            }
+
+            if (changed)
+            {
+                _userAccessCache.Clear();
+            }
+
             removedFromCache = removed;
             return changed;
+        }
+
+        /// <summary>
+        /// Expand the centralized derived-entry graph on the background flush worker. Explicit
+        /// event intent is installed first, so a same-batch removal cannot be overwritten by a
+        /// derived parent/descendant rebuild. Series discovery is constrained to one ancestor and
+        /// every returned row is relationship-verified before it can enter the batch.
+        /// </summary>
+        private IReadOnlyList<TagCacheChange> ExpandDependencies(
+            IReadOnlyList<TagCacheChange> batch,
+            ISet<Guid> expandedSeries,
+            IDictionary<Guid, TagCacheEntry> preparedEntries)
+        {
+            var targets = new Dictionary<Guid, TagCacheChange>();
+            foreach (var change in batch)
+            {
+                if (change.Id != Guid.Empty) targets[change.Id] = change;
+            }
+
+            var removedSeriesIds = batch
+                .Where(static change => change.Removed && change.Kind == BaseItemKind.Series)
+                .Select(static change => change.Id)
+                .ToHashSet();
+            var removedSeasonIds = batch
+                .Where(static change => change.Removed && change.Kind == BaseItemKind.Season)
+                .Select(static change => change.Id)
+                .ToHashSet();
+            var explicitRemovedIds = batch
+                .Where(static change => change.Removed)
+                .Select(static change => change.Id)
+                .ToHashSet();
+            var explicitChangeIds = batch.Select(static change => change.Id).ToHashSet();
+            var movedSeasonExpectedEpisodes = batch
+                .Where(static change => !change.Removed
+                    && change.Kind == BaseItemKind.Season
+                    && change.SeriesId != change.PreviousSeriesId)
+                .ToDictionary(
+                    static change => change.Id,
+                    static _ => new HashSet<Guid>());
+            var seriesExpectedDescendants = batch
+                .Where(TagCacheDependencyGraph.NeedsSeriesDescendantDiscovery)
+                .ToDictionary(
+                    static change => change.Id,
+                    static _ => new HashSet<Guid>());
+            var cachedSeriesDescendants = new Dictionary<Guid, HashSet<Guid>>();
+            var cachedSeasonEpisodes = new Dictionary<Guid, HashSet<Guid>>();
+
+            // One O(cache-size) relationship-index pass covers every removed container and every
+            // descendant-completeness check in the batch. Rebuilding these expected sets from the
+            // cache on every retry prevents a transiently partial Jellyfin snapshot from becoming
+            // authoritative merely because the original removal event has already been consumed.
+            if (removedSeriesIds.Count != 0
+                || removedSeasonIds.Count != 0
+                || movedSeasonExpectedEpisodes.Count != 0
+                || seriesExpectedDescendants.Count != 0)
+            {
+                foreach (var cached in _cache)
+                {
+                    Interlocked.Increment(ref _removedDependencyEntriesVisited);
+                    if (!Guid.TryParseExact(cached.Key, "N", out var descendantId))
+                    {
+                        continue;
+                    }
+
+                    var cachedKind = ParseKind(cached.Value.Type);
+                    var cachedSeriesId = ParseId(cached.Value.SeriesId);
+                    var cachedSeasonId = ParseId(cached.Value.SeasonId);
+                    if ((cachedKind == BaseItemKind.Episode || cachedKind == BaseItemKind.Season)
+                        && cachedSeriesId is { } indexedSeriesId)
+                    {
+                        if (!cachedSeriesDescendants.TryGetValue(indexedSeriesId, out var indexedDescendants))
+                        {
+                            indexedDescendants = new HashSet<Guid>();
+                            cachedSeriesDescendants[indexedSeriesId] = indexedDescendants;
+                        }
+
+                        indexedDescendants.Add(descendantId);
+                    }
+
+                    if (cachedKind == BaseItemKind.Episode && cachedSeasonId is { } indexedSeasonId)
+                    {
+                        if (!cachedSeasonEpisodes.TryGetValue(indexedSeasonId, out var indexedEpisodes))
+                        {
+                            indexedEpisodes = new HashSet<Guid>();
+                            cachedSeasonEpisodes[indexedSeasonId] = indexedEpisodes;
+                        }
+
+                        indexedEpisodes.Add(descendantId);
+                    }
+
+                    if (!explicitChangeIds.Contains(descendantId)
+                        && cachedKind == BaseItemKind.Episode
+                        && cachedSeasonId is { } expectedSeasonId
+                        && movedSeasonExpectedEpisodes.TryGetValue(expectedSeasonId, out var expectedEpisodes))
+                    {
+                        expectedEpisodes.Add(descendantId);
+                    }
+
+                    if (!explicitChangeIds.Contains(descendantId)
+                        && (cachedKind == BaseItemKind.Episode || cachedKind == BaseItemKind.Season)
+                        && cachedSeriesId is { } expectedSeriesId
+                        && seriesExpectedDescendants.TryGetValue(expectedSeriesId, out var expectedDescendants))
+                    {
+                        expectedDescendants.Add(descendantId);
+                    }
+
+                    // Jellyfin reports only the top-level folder after recursively deleting
+                    // children, so synthesize descendant removals from the cached relationships.
+                    var matchedSeries = cachedSeriesId is { } removedSeriesId
+                        && removedSeriesIds.Contains(removedSeriesId);
+                    var matchedSeason = cachedSeasonId is { } removedSeasonId
+                        && removedSeasonIds.Contains(removedSeasonId);
+                    if (!matchedSeries && !matchedSeason)
+                    {
+                        continue;
+                    }
+
+                    // A Season explicitly escaping a removed Series owns its children. Until its
+                    // live descendant snapshot proves their disposition, keep cached Episodes
+                    // fail-safe instead of publishing synthetic tombstones from the old Series.
+                    if (!explicitChangeIds.Contains(descendantId)
+                        && string.Equals(cached.Value.Type, BaseItemKind.Episode.ToString(), StringComparison.Ordinal)
+                        && cachedSeasonId is { } protectedSeasonId
+                        && movedSeasonExpectedEpisodes.ContainsKey(protectedSeasonId))
+                    {
+                        continue;
+                    }
+
+                    if (targets.TryGetValue(descendantId, out var explicitChange)
+                        && TagCacheDependencyGraph.ExplicitChangeEscapedRemovedContainers(
+                            explicitChange,
+                            matchedSeries,
+                            matchedSeason,
+                            removedSeriesIds,
+                            removedSeasonIds))
+                    {
+                        continue;
+                    }
+
+                    targets[descendantId] = RemovalTarget(descendantId, ParseKind(cached.Value.Type));
+                    preparedEntries.Remove(descendantId);
+                }
+            }
+
+            void InstallConfirmedContainerRemoval(Guid containerId, BaseItemKind containerKind)
+            {
+                targets[containerId] = RemovalTarget(containerId, containerKind);
+                preparedEntries.Remove(containerId);
+                var descendants = containerKind == BaseItemKind.Series
+                    ? cachedSeriesDescendants.GetValueOrDefault(containerId)
+                    : cachedSeasonEpisodes.GetValueOrDefault(containerId);
+                if (descendants == null)
+                {
+                    return;
+                }
+
+                foreach (var descendantId in descendants)
+                {
+                    // A live, explicit or relationship-verified escape is newer evidence than
+                    // the cached owner index and must survive the synthetic recursive removal.
+                    if (targets.TryGetValue(descendantId, out var currentTarget) && !currentTarget.Removed)
+                    {
+                        continue;
+                    }
+
+                    _cache.TryGetValue(descendantId.ToString("N"), out var cachedDescendant);
+                    targets[descendantId] = RemovalTarget(descendantId, ParseKind(cachedDescendant?.Type));
+                    preparedEntries.Remove(descendantId);
+                }
+            }
+
+            foreach (var change in batch)
+            {
+                foreach (var parent in TagCacheDependencyGraph.DirectDerivedTargets(change))
+                {
+                    var isPreviousOnlyOwner = parent.Id == change.PreviousSeriesId
+                            && parent.Id != change.SeriesId
+                        || parent.Id == change.PreviousSeasonId
+                            && parent.Id != change.SeasonId;
+                    if (isPreviousOnlyOwner && !_cache.ContainsKey(parent.Id.ToString("N")))
+                    {
+                        continue;
+                    }
+
+                    targets.TryAdd(parent.Id, DependencyTarget(parent.Id, parent.Kind));
+                }
+
+                if (!change.Removed
+                    && change.Kind == BaseItemKind.Season
+                    && change.SeriesId != change.PreviousSeriesId)
+                {
+                    try
+                    {
+                        BaseItem? newSeries = null;
+                        if (change.SeriesId != Guid.Empty)
+                        {
+                            newSeries = _libraryManager.GetItemById<BaseItem>(change.SeriesId);
+                            if (newSeries == null || newSeries.GetBaseItemKind() != BaseItemKind.Series)
+                            {
+                                throw new InvalidOperationException("moved Season parent Series is not yet resolvable");
+                            }
+                        }
+
+                        var seasonEpisodes = _libraryManager.GetItemList(new InternalItemsQuery
+                        {
+                            AncestorIds = new[] { change.Id },
+                            IncludeItemTypes = new[] { BaseItemKind.Episode },
+                            IsVirtualItem = false,
+                            Recursive = true,
+                        });
+                        var inconsistentEpisodeRelationship = false;
+                        var discoveredEpisodeIds = new HashSet<Guid>();
+                        foreach (var episode in seasonEpisodes.OfType<MediaBrowser.Controller.Entities.TV.Episode>())
+                        {
+                            if (episode.SeasonId != change.Id)
+                            {
+                                continue;
+                            }
+
+                            if (episode.SeriesId != change.SeriesId)
+                            {
+                                inconsistentEpisodeRelationship = true;
+                                continue;
+                            }
+
+                            discoveredEpisodeIds.Add(episode.Id);
+
+                            var episodeTarget = DependencyTarget(episode.Id, BaseItemKind.Episode);
+                            var canReplaceSyntheticRemoval = targets.TryGetValue(episode.Id, out var currentTarget)
+                                && currentTarget.Removed
+                                && !explicitRemovedIds.Contains(episode.Id)
+                                && !removedSeriesIds.Contains(episode.SeriesId)
+                                && !removedSeasonIds.Contains(episode.SeasonId);
+                            if ((targets.TryAdd(episode.Id, episodeTarget) || canReplaceSyntheticRemoval)
+                                && _cache.TryGetValue(episode.Id.ToString("N").ToLowerInvariant(), out var existing))
+                            {
+                                targets[episode.Id] = episodeTarget;
+                                if (existing.SourceRevision == episode.DateLastSaved.Ticks)
+                                {
+                                    preparedEntries[episode.Id] = TagCacheDependencyGraph.ApplySeasonRelationshipRefresh(
+                                        newSeries,
+                                        episode,
+                                        existing,
+                                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                                }
+                                else
+                                {
+                                    preparedEntries.Remove(episode.Id);
+                                }
+                            }
+                        }
+
+                        if (inconsistentEpisodeRelationship)
+                        {
+                            QueueRetry(change, "one or more Episodes still expose the old Series during Season reparent");
+                        }
+
+                        if (movedSeasonExpectedEpisodes.TryGetValue(change.Id, out var expectedEpisodes)
+                            && !expectedEpisodes.IsSubsetOf(discoveredEpisodeIds))
+                        {
+                            QueueRetry(change, "moved Season descendant discovery omitted one or more cached Episodes");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        QueueRetry(change, $"moved Season descendant discovery failed: {ex.Message}");
+                    }
+                }
+
+                if (!TagCacheDependencyGraph.NeedsSeriesDescendantDiscovery(change)) continue;
+                try
+                {
+                    var series = _libraryManager.GetItemById<BaseItem>(change.Id);
+                    if (series == null || series.GetBaseItemKind() != BaseItemKind.Series)
+                    {
+                        throw new InvalidOperationException("Series is not yet resolvable");
+                    }
+
+                    var descendantSnapshot = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        AncestorIds = new[] { change.Id },
+                        IncludeItemTypes = TagCacheDependencyGraph.DescendantKinds(),
+                        IsVirtualItem = false,
+                        Recursive = true,
+                        OrderBy = new[] { (ItemSortBy.PremiereDate, JSortOrder.Ascending) },
+                    }).ToList();
+                    var formattedSeriesId = FormatId(change.Id);
+                    var snapshotIds = descendantSnapshot.Select(static item => item.Id).ToHashSet();
+                    var oldSeriesRepairIds = new HashSet<Guid>();
+                    foreach (var descendant in descendantSnapshot)
+                    {
+                        if (descendant is not MediaBrowser.Controller.Entities.TV.Episode
+                            && descendant is not MediaBrowser.Controller.Entities.TV.Season)
+                        {
+                            continue;
+                        }
+
+                        if (_cache.TryGetValue(descendant.Id.ToString("N"), out var cachedDescendant)
+                            && ParseId(cachedDescendant.SeriesId) is { } oldSeriesId
+                            && oldSeriesId != change.Id
+                            && (descendant is MediaBrowser.Controller.Entities.TV.Episode episode
+                                    && episode.SeriesId == change.Id
+                                || descendant is MediaBrowser.Controller.Entities.TV.Season season
+                                    && season.SeriesId == change.Id))
+                        {
+                            oldSeriesRepairIds.Add(oldSeriesId);
+                        }
+                    }
+
+                    // A partial new-Series snapshot can omit an item whose cache still points at
+                    // an old owner, so it is absent from the new owner's expected set. Once any
+                    // stale old owner is observed, bulk-confirm only that owner's omitted cached
+                    // rows and fold live rows that really moved to this Series into the snapshot.
+                    var staleRelationshipCandidates = oldSeriesRepairIds
+                        .SelectMany(id => cachedSeriesDescendants.GetValueOrDefault(id) ?? Enumerable.Empty<Guid>())
+                        .Where(id => !snapshotIds.Contains(id) && !explicitChangeIds.Contains(id))
+                        .ToHashSet();
+                    if (staleRelationshipCandidates.Count != 0)
+                    {
+                        var confirmedCandidates = _libraryManager.GetItemList(new InternalItemsQuery
+                        {
+                            ItemIds = staleRelationshipCandidates.ToArray(),
+                            IncludeItemTypes = TagCacheDependencyGraph.DescendantKinds(),
+                            IsVirtualItem = false,
+                        });
+                        var confirmedCandidateIds = confirmedCandidates.Select(static item => item.Id).ToHashSet();
+                        foreach (var candidate in confirmedCandidates)
+                        {
+                            var related = candidate is MediaBrowser.Controller.Entities.TV.Episode relatedEpisode
+                                    && relatedEpisode.SeriesId == change.Id
+                                || candidate is MediaBrowser.Controller.Entities.TV.Season relatedSeason
+                                    && relatedSeason.SeriesId == change.Id;
+                            if (related && snapshotIds.Add(candidate.Id))
+                            {
+                                descendantSnapshot.Add(candidate);
+                            }
+                        }
+
+                        const int MaximumScalarRelationshipConfirmations = 32;
+                        var scalarConfirmations = 0;
+                        foreach (var omittedCandidateId in staleRelationshipCandidates.Except(confirmedCandidateIds))
+                        {
+                            if (scalarConfirmations++ >= MaximumScalarRelationshipConfirmations)
+                            {
+                                QueueRetry(change, "partial relationship confirmation exceeded its bounded scalar budget");
+                                break;
+                            }
+
+                            var candidate = _libraryManager.GetItemById<BaseItem>(omittedCandidateId);
+                            if (candidate == null)
+                            {
+                                if (_cache.TryGetValue(omittedCandidateId.ToString("N"), out var missingCached)
+                                    && ParseKind(missingCached.Type) is { } missingKind)
+                                {
+                                    if (missingKind == BaseItemKind.Series || missingKind == BaseItemKind.Season)
+                                    {
+                                        InstallConfirmedContainerRemoval(omittedCandidateId, missingKind);
+                                    }
+                                    else
+                                    {
+                                        targets[omittedCandidateId] = RemovalTarget(omittedCandidateId, missingKind);
+                                        preparedEntries.Remove(omittedCandidateId);
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            var related = candidate is MediaBrowser.Controller.Entities.TV.Episode relatedEpisode
+                                    && relatedEpisode.SeriesId == change.Id
+                                || candidate is MediaBrowser.Controller.Entities.TV.Season relatedSeason
+                                    && relatedSeason.SeriesId == change.Id;
+                            if (related && snapshotIds.Add(candidate.Id))
+                            {
+                                descendantSnapshot.Add(candidate);
+                            }
+                        }
+                    }
+
+                    var firstEpisodesBySeason = new Dictionary<Guid, BaseItem>();
+                    var discoveredDescendantIds = new HashSet<Guid>();
+                    var inconsistentSeriesRelationship = false;
+                    foreach (var episode in descendantSnapshot.OfType<MediaBrowser.Controller.Entities.TV.Episode>())
+                    {
+                        if (episode.SeriesId != change.Id)
+                        {
+                            inconsistentSeriesRelationship = true;
+                            continue;
+                        }
+
+                        if (episode.SeasonId != Guid.Empty)
+                        {
+                            firstEpisodesBySeason.TryAdd(episode.SeasonId, episode);
+                        }
+                    }
+                    if (inconsistentSeriesRelationship)
+                    {
+                        QueueRetry(change, "Series descendant discovery returned one or more foreign Episodes");
+                    }
+                    BaseItem? FirstEpisodeFromSnapshot(BaseItem container)
+                        => firstEpisodesBySeason.GetValueOrDefault(container.Id);
+                    var oldSeasonRepairIds = new HashSet<Guid>();
+
+                    foreach (var descendant in descendantSnapshot)
+                    {
+                        var related = descendant is MediaBrowser.Controller.Entities.TV.Episode relatedEpisode
+                                && relatedEpisode.SeriesId == change.Id
+                            || descendant is MediaBrowser.Controller.Entities.TV.Season relatedSeason
+                                && relatedSeason.SeriesId == change.Id;
+                        if (!related)
+                        {
+                            continue;
+                        }
+
+                        discoveredDescendantIds.Add(descendant.Id);
+
+                        var key = descendant.Id.ToString("N").ToLowerInvariant();
+                        _cache.TryGetValue(key, out var existing);
+                        var lastUpdated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        if (existing == null)
+                        {
+                            targets.TryAdd(
+                                descendant.Id,
+                                DependencyTarget(descendant.Id, descendant.GetBaseItemKind()));
+                        }
+                        else if (!string.Equals(existing.SeriesId, formattedSeriesId, StringComparison.Ordinal)
+                            || descendant is MediaBrowser.Controller.Entities.TV.Episode movedEpisode
+                                && !string.Equals(existing.SeasonId, FormatId(movedEpisode.SeasonId), StringComparison.Ordinal))
+                        {
+                            // The stable subtree can repair missed relationship metadata without
+                            // turning a parent event into N media probes. Also repair the old
+                            // relationship owner so a missed reparent cannot strand its projection.
+                            if (ParseId(existing.SeriesId) is { } oldSeriesId && oldSeriesId != change.Id)
+                            {
+                                oldSeriesRepairIds.Add(oldSeriesId);
+                            }
+
+                            if (descendant is MediaBrowser.Controller.Entities.TV.Episode episode)
+                            {
+                                var oldSeasonId = ParseId(existing.SeasonId);
+                                if (oldSeasonId.HasValue && oldSeasonId.Value != episode.SeasonId)
+                                {
+                                    oldSeasonRepairIds.Add(oldSeasonId.Value);
+                                    if (episode.SeasonId != Guid.Empty)
+                                    {
+                                        targets.TryAdd(
+                                            episode.SeasonId,
+                                            DependencyTarget(episode.SeasonId, BaseItemKind.Season));
+                                    }
+                                }
+                            }
+
+                            var descendantTarget = DependencyTarget(descendant.Id, descendant.GetBaseItemKind());
+                            var canReplaceSyntheticRemoval = targets.TryGetValue(descendant.Id, out var currentTarget)
+                                && currentTarget.Removed
+                                && !explicitRemovedIds.Contains(descendant.Id);
+                            if (targets.TryAdd(descendant.Id, descendantTarget) || canReplaceSyntheticRemoval)
+                            {
+                                targets[descendant.Id] = descendantTarget;
+                                if (existing.SourceRevision == descendant.DateLastSaved.Ticks)
+                                {
+                                    preparedEntries[descendant.Id] = TagCacheDependencyGraph.ApplySeriesRelationshipRefresh(
+                                        series,
+                                        descendant,
+                                        existing,
+                                        FirstEpisodeFromSnapshot,
+                                        lastUpdated);
+                                }
+                                else
+                                {
+                                    preparedEntries.Remove(descendant.Id);
+                                }
+                            }
+                        }
+                        else if (existing.SourceRevision != descendant.DateLastSaved.Ticks)
+                        {
+                            targets.TryAdd(
+                                descendant.Id,
+                                DependencyTarget(descendant.Id, descendant.GetBaseItemKind()));
+                            preparedEntries.Remove(descendant.Id);
+                        }
+                        else if (TagCacheDependencyGraph.TryPrepareParentSeriesRefresh(
+                                series,
+                                descendant,
+                                existing,
+                                FirstEpisodeFromSnapshot,
+                                lastUpdated,
+                                out var prepared)
+                            && targets.TryAdd(
+                                descendant.Id,
+                                DependencyTarget(descendant.Id, descendant.GetBaseItemKind())))
+                        {
+                            preparedEntries[descendant.Id] = prepared!;
+                        }
+                    }
+
+                    var oldOwnerKinds = oldSeriesRepairIds
+                        .Select(static id => (Id: id, Kind: BaseItemKind.Series))
+                        .Concat(oldSeasonRepairIds.Select(static id => (Id: id, Kind: BaseItemKind.Season)))
+                        .Where(owner => !explicitChangeIds.Contains(owner.Id)
+                            && _cache.ContainsKey(owner.Id.ToString("N")))
+                        .GroupBy(static owner => owner.Id)
+                        .ToDictionary(static group => group.Key, static group => group.First().Kind);
+                    if (oldOwnerKinds.Count != 0)
+                    {
+                        var liveOldOwners = _libraryManager.GetItemList(new InternalItemsQuery
+                        {
+                            ItemIds = oldOwnerKinds.Keys.ToArray(),
+                            IncludeItemTypes = new[] { BaseItemKind.Series, BaseItemKind.Season },
+                            IsVirtualItem = false,
+                        })
+                            .Where(item => oldOwnerKinds.TryGetValue(item.Id, out var expectedKind)
+                                && item.GetBaseItemKind() == expectedKind)
+                            .ToDictionary(static item => item.Id);
+                        const int MaximumScalarOwnerConfirmations = 32;
+                        var scalarOwnerConfirmations = 0;
+                        foreach (var oldOwner in oldOwnerKinds)
+                        {
+                            if (liveOldOwners.ContainsKey(oldOwner.Key))
+                            {
+                                targets[oldOwner.Key] = DependencyTarget(oldOwner.Key, oldOwner.Value);
+                                preparedEntries.Remove(oldOwner.Key);
+                                continue;
+                            }
+
+                            if (scalarOwnerConfirmations++ >= MaximumScalarOwnerConfirmations)
+                            {
+                                QueueRetry(change, "old relationship-owner confirmation exceeded its bounded scalar budget");
+                                break;
+                            }
+
+                            var liveOwner = _libraryManager.GetItemById<BaseItem>(oldOwner.Key);
+                            if (liveOwner != null && liveOwner.GetBaseItemKind() == oldOwner.Value)
+                            {
+                                targets[oldOwner.Key] = DependencyTarget(oldOwner.Key, oldOwner.Value);
+                                preparedEntries.Remove(oldOwner.Key);
+                            }
+                            else
+                            {
+                                InstallConfirmedContainerRemoval(oldOwner.Key, oldOwner.Value);
+                            }
+                        }
+                    }
+
+                    if (seriesExpectedDescendants.TryGetValue(change.Id, out var expectedDescendants)
+                        && expectedDescendants.Any(id => !discoveredDescendantIds.Contains(id)
+                            && (!targets.TryGetValue(id, out var target) || !target.Removed)))
+                    {
+                        QueueRetry(change, "Series descendant discovery omitted one or more cached descendants");
+                    }
+
+                    expandedSeries.Add(change.Id);
+                }
+                catch (Exception ex)
+                {
+                    QueueRetry(change, $"derived Series discovery failed: {ex.Message}");
+                }
+            }
+
+            // Apply relationship sources before their derived containers. Besides being linear,
+            // this closes the in-flight reparent window where a concurrently arriving event could
+            // otherwise capture the pre-batch cached parent after a new parent had already rebuilt.
+            var ordered = new List<TagCacheChange>(targets.Count);
+            for (var rank = 0; rank <= 2; rank++)
+            {
+                foreach (var target in targets.Values)
+                {
+                    if (DependencyRank(target.Kind) == rank)
+                    {
+                        ordered.Add(target);
+                    }
+                }
+            }
+
+            return ordered;
+        }
+
+        private static TagCacheChange DependencyTarget(Guid id, BaseItemKind? kind)
+            => new(
+                id,
+                kind,
+                Guid.Empty,
+                Guid.Empty,
+                Guid.Empty,
+                Guid.Empty,
+                Removed: false);
+
+        private static TagCacheChange RemovalTarget(Guid id, BaseItemKind? kind = null)
+            => new(
+                id,
+                kind,
+                Guid.Empty,
+                Guid.Empty,
+                Guid.Empty,
+                Guid.Empty,
+                Removed: true);
+
+        private static int DependencyRank(BaseItemKind? kind)
+            => kind switch
+            {
+                BaseItemKind.Season => 1,
+                BaseItemKind.Series => 2,
+                _ => 0,
+            };
+
+        private static BaseItemKind? ParseKind(string? value)
+            => Enum.TryParse<BaseItemKind>(value, ignoreCase: false, out var kind) ? kind : null;
+
+        private static string? FormatId(Guid id)
+            => id == Guid.Empty ? null : id.ToString("N");
+
+        private static Guid? ParseId(string? value)
+            => Guid.TryParseExact(value, "N", out var id) ? id : null;
+
+        private void QueueRetry(TagCacheChange change, string reason)
+        {
+            if (change.Removed)
+            {
+                return;
+            }
+
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    Interlocked.Exchange(ref _repairIncomplete, 1);
+                    MarkDirty();
+                    return;
+                }
+
+                var attempts = change.RetryAttempts == byte.MaxValue
+                    ? byte.MaxValue
+                    : (byte)(change.RetryAttempts + 1);
+                if (!_pending.Record(change with { RetryAttempts = attempts }))
+                {
+                    return;
+                }
+
+                var delay = ComputeRetryDelay(attempts);
+                SetMax(ref _retryBackoffTicks, delay.Ticks);
+                if (attempts <= 3 || (attempts & (attempts - 1)) == 0 || attempts == byte.MaxValue)
+                {
+                    _logger.LogWarning(
+                        $"[TagCache] Pending repair for {change.Id} remains owned; retry attempt {attempts} is queued after {delay}: {reason}");
+                }
+            }
+        }
+
+        internal static TimeSpan ComputeRetryDelay(byte attempts)
+        {
+            var exponent = Math.Min(Math.Max(attempts - 1, 0), 7);
+            return TimeSpan.FromTicks(Math.Min(
+                FlushDebounce.Ticks * (1L << exponent),
+                TimeSpan.FromMinutes(5).Ticks));
+        }
+
+        private bool PublishPreparedEntry(Guid id, TagCacheEntry entry)
+        {
+            var key = id.ToString("N").ToLowerInvariant();
+            lock (_contentGate)
+            {
+                _cache[key] = entry;
+                RecordContentChangeLocked(key, removed: false);
+            }
+
+            return true;
+        }
+
+        private static void SetMax(ref long location, long value)
+        {
+            var current = Interlocked.Read(ref location);
+            while (current < value)
+            {
+                var observed = Interlocked.CompareExchange(ref location, value, current);
+                if (observed == current) return;
+                current = observed;
+            }
         }
 
         /// <summary>
         /// Resolve an id to its live library item and (re)build its cache entry.
         /// Returns true if the cache was modified. Runs on the flush worker only.
         /// </summary>
-        private bool RebuildEntry(Guid id)
+        private bool RebuildEntry(Guid id, bool seriesDiscoveryAlreadyExpanded, out bool unavailable)
         {
             var item = _libraryManager.GetItemById<BaseItem>(id);
-            if (item == null) return false; // gone before we processed it; ItemRemoved cleans up
+            if (item == null)
+            {
+                unavailable = true;
+                return false;
+            }
 
             var kind = item.GetBaseItemKind();
-            if (!TaggableTypes.Contains(kind)) return false;
+            if (!TaggableTypes.Contains(kind))
+            {
+                unavailable = false;
+                return false;
+            }
 
             var entry = BuildEntryForItem(item);
-            if (entry == null) return false;
+            if (entry == null)
+            {
+                unavailable = true;
+                return false;
+            }
+            unavailable = false;
 
             var key = id.ToString("N").ToLowerInvariant();
             // A degraded entry (media probe failed) carries SourceRevision == 0: retain the last-good
             // streams and leave it unconfirmed so the next reconcile rebuilds it. Mirrors the
             // reconcile so an incremental event during a probe outage doesn't drop the streams.
-            if (entry.SourceRevision == 0 && _cache.TryGetValue(key, out var existing) && existing != null)
+            if (entry.SourceRevision == 0
+                && _cache.TryGetValue(key, out var existing)
+                && existing != null
+                && string.Equals(entry.StreamSourceId, existing.StreamSourceId, StringComparison.Ordinal))
             {
-                entry.StreamData = existing.StreamData;
-                entry.AudioLanguages = existing.AudioLanguages;
+                RetainLastGoodProbeData(entry, existing);
             }
+            var queueSeriesDiscovery = false;
             lock (_contentGate)
             {
+                _cache.TryGetValue(key, out existing);
+                queueSeriesDiscovery = kind == BaseItemKind.Series
+                    && !seriesDiscoveryAlreadyExpanded
+                    && existing != null
+                    && TagCacheDependencyGraph.ParentSeriesSurfaceChanged(existing, entry);
                 _cache[key] = entry;
                 RecordContentChangeLocked(key, removed: false);
             }
+
+            if (queueSeriesDiscovery && Volatile.Read(ref _disposed) == 0)
+            {
+                _pending.Record(new TagCacheChange(
+                    id,
+                    BaseItemKind.Series,
+                    Guid.Empty,
+                    Guid.Empty,
+                    Guid.Empty,
+                    Guid.Empty,
+                    Removed: false));
+                ScheduleFlush();
+            }
+
             return true;
         }
 
@@ -1376,6 +2277,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var data = JsonSerializer.Deserialize<TagCacheDiskFormat>(json);
                 if (data?.Items != null)
                 {
+                    if (data.IncompleteRepair)
+                    {
+                        _logger.LogInformation("[TagCache] Discarding cache with an incomplete shutdown repair; rebuilding from the library.");
+                        return;
+                    }
+
                     // Discard a cache written by an older schema (e.g. predating
                     // SeriesId) rather than serving entries the strip paths can't
                     // process. Starting empty is safe — the Build task rebuilds it.
@@ -1419,6 +2326,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         SchemaVersion = CurrentCacheSchemaVersion,
                         Version = Interlocked.Read(ref _version),
                         LastModified = Interlocked.Read(ref _lastModified),
+                        IncompleteRepair = Volatile.Read(ref _repairIncomplete) != 0,
                         Items = new Dictionary<string, TagCacheEntry>(_cache)
                     };
 
@@ -1461,31 +2369,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private void ScheduleDebouncedSave()
         {
             MarkDirty();
-            // Reuse existing timer if possible, otherwise create a new one.
-            // Change() resets the countdown without creating a new object.
-            var existing = _debounceSaveTimer;
-            if (existing != null)
+            lock (_lifecycleGate)
             {
-                try
+                if (Volatile.Read(ref _disposed) != 0) return;
+                // Reuse existing timer if possible, otherwise create a new one.
+                // Change() resets the countdown without creating a new object.
+                var existing = _debounceSaveTimer;
+                if (existing != null)
                 {
-                    existing.Change(TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
-                    return;
+                    try
+                    {
+                        existing.Change(TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
+                        return;
+                    }
+                    catch (ObjectDisposedException) { }
                 }
-                catch (ObjectDisposedException) { }
-            }
-            var timer = new Timer(_ =>
-            {
-                if (_dirty) SaveToDisk();
-            }, null, TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
-            var old = Interlocked.Exchange(ref _debounceSaveTimer, timer);
-            if (old != null && !ReferenceEquals(old, timer))
-            {
-                old.Dispose();
+
+                var timer = new Timer(_ =>
+                {
+                    if (_dirty) SaveToDisk();
+                }, null, TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
+                var old = Interlocked.Exchange(ref _debounceSaveTimer, timer);
+                if (old != null && !ReferenceEquals(old, timer))
+                {
+                    old.Dispose();
+                }
             }
         }
 
         public void Dispose()
         {
+            lock (_lifecycleGate)
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                {
+                    return;
+                }
+            }
+
             var flush = Interlocked.Exchange(ref _flushTimer, null);
             flush?.Dispose(); // stops future callbacks; an in-flight one may still be applying
 
@@ -1494,7 +2415,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // _pending, skip the save, and lose the in-flight flush's applied batch (it only
             // schedules a debounced save that never fires during shutdown). Waiting for _flushing
             // to release means that flush has finished and set _dirty, so the save below catches it.
-            var acquired = AcquireFlushGuard();
+            var acquired = AcquireFlushGuard(maxSpins: _disposeFlushGuardSpins, spinMs: 10);
 
             // Apply anything still queued in the debounce window so a change made moments before
             // shutdown is persisted — matching the old synchronous handler, which applied to the
@@ -1503,7 +2424,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // would leave those items stale until the next event or the daily rebuild.
             try
             {
-                if (ApplyPendingBatch(_pending.Drain(), out var removed))
+                if (!acquired)
+                {
+                    // The owner may be an incremental flush (which self-persists) OR a full
+                    // reconcile that can still be cancelled/throw before its post-swap drain/save.
+                    // Persist a fail-closed marker now; startup discards this snapshot rather than
+                    // trusting pending work that shutdown could not prove was handed off.
+                    Interlocked.Exchange(ref _repairIncomplete, 1);
+                    MarkDirty();
+                    _logger.LogWarning("[TagCache] Shutdown timed out waiting for an in-flight cache writer; marking the disk snapshot incomplete for startup rebuild.");
+                }
+                else if (ApplyPendingBatch(_pending.Drain(), out var removed))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     // Persist a Version bump for a shutdown-time removal so clients reconnecting
@@ -1541,14 +2472,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
                 var probeFailed = false;
+                BaseItem? parentSeries = null;
+                var parentSeriesResolved = false;
+                BaseItem? ResolveParentSeriesOnce()
+                {
+                    if (!parentSeriesResolved)
+                    {
+                        parentSeriesResolved = true;
+                        parentSeries = GetParentSeries(item);
+                    }
+
+                    return parentSeries;
+                }
 
                 // Capture parent series ID for Episodes/Seasons so the Spoiler
                 // Guard filter can strip unwatched-episode entries without a
                 // library lookup per entry on every GetTagCache request.
                 string? seriesIdN = null;
+                string? seasonIdN = null;
                 if (item is MediaBrowser.Controller.Entities.TV.Episode tcEp)
                 {
                     if (tcEp.SeriesId != Guid.Empty) seriesIdN = tcEp.SeriesId.ToString("N");
+                    if (tcEp.SeasonId != Guid.Empty) seasonIdN = tcEp.SeasonId.ToString("N");
                 }
                 else if (item is MediaBrowser.Controller.Entities.TV.Season tcSeason)
                 {
@@ -1564,6 +2509,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     CriticRating = item.CriticRating,
                     LastUpdated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     SeriesId = seriesIdN,
+                    SeasonId = seasonIdN,
                     // Capture the source revision so the reconcile can skip re-probing an
                     // item whose DateLastSaved is unchanged. Set here so BOTH the daily
                     // reconcile and the incremental RebuildEntry populate the gate key.
@@ -1575,6 +2521,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var firstEp = GetFirstEpisode(item);
                     if (firstEp != null)
                     {
+                        entry.StreamSourceId = firstEp.Id.ToString("N");
                         if (entry.Genres == null || entry.Genres.Length == 0)
                         {
                             entry.Genres = firstEp.Genres;
@@ -1583,7 +2530,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var media = ExtractMediaData(firstEp);
                         if (media == null)
                         {
-                            probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                            probeFailed = true;
+                            entry.StreamData = new TagStreamData
+                            {
+                                ItemName = firstEp.Name,
+                                ItemPath = string.IsNullOrEmpty(firstEp.Path) ? null : Path.GetFileName(firstEp.Path),
+                            };
                         }
                         else
                         {
@@ -1600,7 +2552,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     if (kind == BaseItemKind.Season && entry.CommunityRating == null)
                     {
-                        var series = GetParentSeries(item);
+                        var series = ResolveParentSeriesOnce();
                         if (series != null)
                         {
                             entry.CommunityRating = series.CommunityRating;
@@ -1615,7 +2567,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // For Season: store parent series TMDB ID + season number for user review key
                     if (kind == BaseItemKind.Season && item is MediaBrowser.Controller.Entities.TV.Season season)
                     {
-                        var series = GetParentSeries(item);
+                        var series = ResolveParentSeriesOnce();
                         if (series?.ProviderIds?.TryGetValue("Tmdb", out var seriesTmdb) == true)
                             entry.SeriesTmdbId = seriesTmdb;
                         entry.SeasonNumber = season.IndexNumber;
@@ -1623,10 +2575,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
                 else
                 {
+                    entry.StreamSourceId = item.Id.ToString("N");
                     var media = ExtractMediaData(item);
                     if (media == null)
                     {
-                        probeFailed = true; // leave StreamData/AudioLanguages for the caller to retain last-good
+                        probeFailed = true;
+                        entry.StreamData = new TagStreamData
+                        {
+                            ItemName = item.Name,
+                            ItemPath = string.IsNullOrEmpty(item.Path) ? null : Path.GetFileName(item.Path),
+                        };
                     }
                     else
                     {
@@ -1642,7 +2600,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     if (kind == BaseItemKind.Episode && entry.CommunityRating == null)
                     {
-                        var series = GetParentSeries(item);
+                        var series = ResolveParentSeriesOnce();
                         if (series != null)
                         {
                             entry.CommunityRating = series.CommunityRating;
@@ -1653,7 +2611,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // For Episode: store parent series TMDB ID + season/episode numbers for user review key
                     if (kind == BaseItemKind.Episode && item is MediaBrowser.Controller.Entities.TV.Episode ep)
                     {
-                        var series = GetParentSeries(item);
+                        var series = ResolveParentSeriesOnce();
                         if (series?.ProviderIds?.TryGetValue("Tmdb", out var seriesTmdb) == true)
                             entry.SeriesTmdbId = seriesTmdb;
                         entry.SeasonNumber = ep.ParentIndexNumber;
@@ -1742,45 +2700,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private BaseItem? GetFirstEpisode(BaseItem container)
         {
-            try
+            var epQuery = new InternalItemsQuery
             {
-                var epQuery = new InternalItemsQuery
-                {
-                    ParentId = container.Id,
-                    IncludeItemTypes = new[] { BaseItemKind.Episode },
-                    Recursive = true,
-                    Limit = 1,
-                    OrderBy = new[] { (ItemSortBy.PremiereDate, JSortOrder.Ascending) }
-                };
-                return _libraryManager.GetItemList(epQuery).FirstOrDefault();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"[TagCache] Failed to get first episode for {container.Id}: {ex.Message}");
-                return null;
-            }
+                ParentId = container.Id,
+                IncludeItemTypes = new[] { BaseItemKind.Episode },
+                Recursive = true,
+                Limit = 1,
+                OrderBy = new[] { (ItemSortBy.PremiereDate, JSortOrder.Ascending) },
+            };
+            return _libraryManager.GetItemList(epQuery).FirstOrDefault();
         }
 
         private BaseItem? GetParentSeries(BaseItem item)
         {
-            try
+            Guid? seriesId = null;
+            if (item is MediaBrowser.Controller.Entities.TV.Episode ep)
             {
-                Guid? seriesId = null;
-                if (item is MediaBrowser.Controller.Entities.TV.Episode ep)
-                    seriesId = ep.SeriesId;
-                else if (item is MediaBrowser.Controller.Entities.TV.Season season)
-                    seriesId = season.SeriesId;
+                seriesId = ep.SeriesId;
+            }
+            else if (item is MediaBrowser.Controller.Entities.TV.Season season)
+            {
+                seriesId = season.SeriesId;
+            }
 
-                if (seriesId.HasValue && seriesId.Value != Guid.Empty)
-                {
-                    return _libraryManager.GetItemById<BaseItem>(seriesId.Value);
-                }
-            }
-            catch (Exception ex)
+            if (!seriesId.HasValue || seriesId.Value == Guid.Empty)
             {
-                _logger.LogWarning($"[TagCache] Failed to get parent series for {item.Id}: {ex.Message}");
+                return null;
             }
-            return null;
+
+            return _libraryManager.GetItemById<BaseItem>(seriesId.Value)
+                ?? throw new InvalidOperationException(
+                    $"Parent Series {seriesId.Value} for {item.Id} is not yet resolvable");
         }
 
         private class TagCacheDiskFormat
@@ -1791,6 +2741,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public int SchemaVersion { get; set; }
             public long Version { get; set; }
             public long LastModified { get; set; }
+            public bool IncompleteRepair { get; set; }
             public Dictionary<string, TagCacheEntry> Items { get; set; } = new();
         }
     }

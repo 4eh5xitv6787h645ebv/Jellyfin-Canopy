@@ -56,28 +56,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var kind = item.GetBaseItemKind();
             if (!TagCacheService.TaggableTypes.Contains(kind)) return;
 
-            // PERF(S1): only record ids here — no DB query, no media probe. Jellyfin raises
+            // PERF(S1): only record the already-materialized item identity here — no DB query,
+            // descendant discovery, or media probe. Jellyfin raises
             // these events synchronously on the library-scan thread (once per item, many times
             // during a scan), so the heavy BuildEntryForItem work is coalesced and run
-            // off-thread by the service. See TagCacheService.EnqueueUpdate and
+            // off-thread by the service. See TagCacheService.EnqueueItemChange and
             // docs/developers.md#performance-rules (S1).
-            _tagCacheService.EnqueueUpdate(item.Id);
-
-            // An episode change can alter its parent Series/Season derived data
-            // (first-episode genres/streams/ratings), so queue those too. SeriesId and
-            // SeasonId are in-memory properties, so reading them costs nothing and never
-            // touches the database. Empty guids are ignored by EnqueueUpdate.
-            if (kind == BaseItemKind.Episode && item is MediaBrowser.Controller.Entities.TV.Episode ep)
-            {
-                _tagCacheService.EnqueueUpdate(ep.SeriesId);
-                _tagCacheService.EnqueueUpdate(ep.SeasonId);
-            }
+            _tagCacheService.EnqueueItemChange(item, removed: false);
         }
 
         private void OnItemRemoved(object? sender, ItemChangeEventArgs e)
         {
-            if (e.Item == null) return;
-            _tagCacheService.EnqueueRemoval(e.Item.Id);
+            var item = e.Item;
+            if (item == null || !TagCacheService.TaggableTypes.Contains(item.GetBaseItemKind())) return;
+            _tagCacheService.EnqueueItemChange(item, removed: true);
         }
 
         public void Dispose()

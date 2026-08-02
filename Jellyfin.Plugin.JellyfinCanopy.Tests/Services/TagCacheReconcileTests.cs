@@ -344,12 +344,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public void Reconcile_SeriesRatingChange_WithEpisodeProbeDown_KeepsCorrectInheritedRating_ThenRecoversDurably()
+        public void Reconcile_SeriesRatingChange_RefreshesInheritedEpisodeWithoutReprobingItsMedia()
         {
-            // The confirmation scenario: a series rating changes while an inheriting episode's probe
-            // is down. The episode's inherited rating comes from the series (probe-independent), so it
-            // must be correct even during the outage, and the unconfirmed revision must drive recovery
-            // on the next reconcile even though the series "changed" signal is not re-raised.
+            // Parent-only metadata is independent of Episode media. A reconcile can update the
+            // inherited field from its stable snapshot without turning an otherwise confirmed entry
+            // into an unconfirmed probe retry during an unrelated media outage.
             var dir = NewTempDir();
             try
             {
@@ -367,6 +366,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
                 svc.BuildFullCache(null, CT);
                 Assert.Equal(5.0f, svc.GetEntryForTest(Key(epId))!.CommunityRating); // inherited
+                var probesBeforeParentChange = ep.ProbeCount;
 
                 // Series rating changes; episode's own revision does NOT change; episode probe is down.
                 series.CommunityRating = 8.0f;
@@ -377,10 +377,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 var afterFail = svc.GetEntryForTest(Key(epId));
                 Assert.NotNull(afterFail);
                 Assert.Equal(8.0f, afterFail!.CommunityRating); // correct inherited rating despite probe down
-                Assert.Equal(0L, afterFail.SourceRevision);     // unconfirmed
+                Assert.Equal(T0.Ticks, afterFail.SourceRevision); // own Episode source stays confirmed
+                Assert.Equal(probesBeforeParentChange + 1, ep.ProbeCount); // Series container only
 
-                // Probe recovers. Even though seriesRatingChanged no longer fires (series entry settled)
-                // and the episode's own revision is unchanged, the unconfirmed revision forces a rebuild.
+                // Probe recovery does not churn the unchanged Episode either.
                 ep.ThrowOnProbe = false;
                 svc.BuildFullCache(null, CT);
                 var recovered = svc.GetEntryForTest(Key(epId));
@@ -415,10 +415,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         {
             public bool ThrowOnProbe { get; set; }
 
+            public int ProbeCount { get; private set; }
+
             public override string GetClientTypeName() => "Episode";
 
             public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
             {
+                ProbeCount++;
                 if (ThrowOnProbe) throw new InvalidOperationException("transient probe failure");
                 return Array.Empty<MediaSourceInfo>();
             }

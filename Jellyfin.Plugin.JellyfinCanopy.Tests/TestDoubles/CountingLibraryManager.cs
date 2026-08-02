@@ -64,6 +64,10 @@ public sealed class CountingLibraryManager : ILibraryManager
     public void RaiseItemAdded(BaseItem item)
         => _itemAdded?.Invoke(this, new ItemChangeEventArgs { Item = item });
 
+    /// <summary>Raise Jellyfin's synchronous item-updated event.</summary>
+    public void RaiseItemUpdated(BaseItem item)
+        => _itemUpdated?.Invoke(this, new ItemChangeEventArgs { Item = item });
+
     /// <summary>Raise Jellyfin's synchronous item-removed event.</summary>
     public void RaiseItemRemoved(BaseItem item)
         => _itemRemoved?.Invoke(this, new ItemChangeEventArgs { Item = item });
