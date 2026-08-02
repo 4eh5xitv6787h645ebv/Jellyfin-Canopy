@@ -429,27 +429,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         }
 
         protected static HiddenContentSettings BuildHcDefaultSettings(PluginConfiguration src)
-        {
-            return new HiddenContentSettings
-            {
-                Enabled = src.HiddenContentDefaultEnabled,
-                ShowHideButtons = src.HiddenContentDefaultShowHideButtons,
-                ShowHideConfirmation = src.HiddenContentDefaultShowHideConfirmation,
-                ShowButtonSeerr = src.HiddenContentDefaultShowButtonSeerr,
-                ShowButtonLibrary = src.HiddenContentDefaultShowButtonLibrary,
-                ShowButtonDetails = src.HiddenContentDefaultShowButtonDetails,
-                ShowButtonCast = src.HiddenContentDefaultShowButtonCast,
-                FilterLibrary = src.HiddenContentDefaultFilterLibrary,
-                FilterDiscovery = src.HiddenContentDefaultFilterDiscovery,
-                FilterSearch = src.HiddenContentDefaultFilterSearch,
-                FilterCalendar = src.HiddenContentDefaultFilterCalendar,
-                FilterUpcoming = src.HiddenContentDefaultFilterUpcoming,
-                FilterRecommendations = src.HiddenContentDefaultFilterRecommendations,
-                FilterRequests = src.HiddenContentDefaultFilterRequests,
-                FilterNextUp = src.HiddenContentDefaultFilterNextUp,
-                FilterContinueWatching = src.HiddenContentDefaultFilterContinueWatching,
-                ExperimentalHideCollections = src.HiddenContentDefaultExperimentalHideCollections,
-            };
-        }
+            => HiddenContentDefaults.Create(src);
     }
 }

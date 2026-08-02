@@ -53,6 +53,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
+        private readonly IHiddenContentItemActionOwner _hiddenContentItemActionOwner;
         private const string HiddenContentFileName = "hidden-content.json";
         private const string HiddenSettingsResource = "hidden-content-settings.json";
         private const int MaximumAdminItemBatch = 200;
@@ -174,11 +175,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager,
-            ILibraryManager libraryManager)
+            ILibraryManager libraryManager,
+            IHiddenContentItemActionOwner hiddenContentItemActionOwner)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userConfigurationManager = userConfigurationManager;
             _libraryManager = libraryManager;
+            _hiddenContentItemActionOwner = hiddenContentItemActionOwner;
         }
 
         [HttpGet("user-settings/{userId}/hidden-content.json")]
@@ -1607,6 +1610,110 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Produces("application/json")]
         public IActionResult HideFromNextUp(string itemId) => HideFromHomeSurface(itemId, "nextup");
 
+        private static bool TryCreateHiddenContentItemProjection(
+            BaseItem item,
+            out HiddenContentItemProjection projection)
+        {
+            HiddenContentItemKind kind;
+            switch (item)
+            {
+                case MediaBrowser.Controller.Entities.Movies.Movie:
+                    kind = HiddenContentItemKind.Movie;
+                    break;
+                case MediaBrowser.Controller.Entities.TV.Series:
+                    kind = HiddenContentItemKind.Series;
+                    break;
+                case MediaBrowser.Controller.Entities.TV.Episode:
+                    kind = HiddenContentItemKind.Episode;
+                    break;
+                default:
+                    projection = null!;
+                    return false;
+            }
+
+            var episode = item as MediaBrowser.Controller.Entities.TV.Episode;
+            item.ProviderIds.TryGetValue("Tmdb", out var tmdbId);
+            projection = new HiddenContentItemProjection(
+                item.Id,
+                kind,
+                item.Name,
+                tmdbId,
+                episode?.SeriesId,
+                episode?.SeriesName,
+                episode?.ParentIndexNumber,
+                episode?.IndexNumber);
+            return true;
+        }
+
+        private IActionResult ConfigureAccessibleHomeSurfaceHide(
+            Guid userId,
+            HiddenContentItemProjection item,
+            string targetScope)
+        {
+            try
+            {
+                var scope = string.Equals(targetScope, "continuewatching", StringComparison.Ordinal)
+                    ? HiddenContentItemScope.ContinueWatching
+                    : HiddenContentItemScope.NextUp;
+                if (_hiddenContentItemActionOwner is not IHiddenContentLegacyItemActionOwner legacyOwner)
+                {
+                    throw new InvalidOperationException(
+                        "The configured Hidden Content owner does not provide legacy response evidence.");
+                }
+
+                var legacyResult = legacyOwner.ConfigureLegacyHomeSurface(
+                    new HiddenContentActorProjection(userId),
+                    item,
+                    HiddenContentItemConfiguration.LegacyHomeSurface(hidden: true, scope));
+                var result = legacyResult.Action;
+                if (result.Outcome == HiddenContentItemActionOutcome.CapacityExceeded)
+                {
+                    return HiddenItemCapacityExceeded();
+                }
+
+                if (result.Outcome == HiddenContentItemActionOutcome.PayloadTooLarge)
+                {
+                    return StatusCode(StatusCodes.Status413PayloadTooLarge, new
+                    {
+                        success = false,
+                        message = "The resulting hidden-content state exceeds the supported limit."
+                    });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    key = result.Key,
+                    entry = legacyResult.Entry,
+                    itemsRevision = result.ItemsRevision,
+                    settingsRevision = result.SettingsRevision,
+                    hiddenContentEnabled = result.HiddenContentEnabled,
+                    settingsChanged = result.SettingsChanged
+                });
+            }
+            catch (UserStoreUnhealthyException)
+            {
+                return QuarantinedHiddenStore();
+            }
+            catch (Exception ex) when (ex is InvalidDataException || ex is JsonException)
+            {
+                return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
+            }
+            catch (IOException)
+            {
+                return StatusCode(503, new
+                {
+                    success = false,
+                    message = "Hidden-content store is temporarily unavailable. Please retry."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to add {targetScope} hide for user {userId}: {ex.Message}");
+                return StatusCode(500, new { success = false, message = "Failed to hide item." });
+            }
+        }
+
         // Shared implementation for "Remove from Continue Watching" / "Remove from Next Up".
         // Records a scoped HC entry (HideScope=continuewatching|nextup) under a server-side
         // read-modify-write so a concurrent hide can't clobber it. An existing entry's scope
@@ -1630,6 +1737,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return NotFound(new { success = false, message = "Item not found or not accessible." });
             }
 
+            if (TryCreateHiddenContentItemProjection(jfItem, out var projection))
+            {
+                // The user-scoped lookup above is the only authority that may mint
+                // this projection. Supported exact-item mutations invoke the owner once.
+                return ConfigureAccessibleHomeSurfaceHide(userId, projection, targetScope);
+            }
+
+            // Backward-compatibility path for legacy item kinds that predate the
+            // closed native Movie/Series/Episode contract. Platform callers cannot
+            // enter this transport-owned shim.
             string? seriesId = null;
             string? seriesName = null;
             int? seasonNumber = null;
@@ -1901,6 +2018,61 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var canonical = itemGuid.ToString();
             var canonicalN = itemGuid.ToString("N");
 
+            var user = _userManager.GetUserById(userId);
+            if (user == null)
+            {
+                return Forbid();
+            }
+
+            BaseItem? currentItem;
+            try
+            {
+                currentItem = _libraryManager.GetItemById<BaseItem>(itemGuid, user);
+            }
+            catch (Exception ex)
+            {
+                // A host lookup failure is not proof of inaccessibility, so it may
+                // not fall through to orphan repair.
+                _logger.LogError($"Failed to resolve {targetScope} item for user {userId}: {ex.Message}");
+                return StatusCode(500, new { success = false, message = "Failed to unhide." });
+            }
+
+            if (currentItem != null
+                && TryCreateHiddenContentItemProjection(currentItem, out var projection))
+            {
+                try
+                {
+                    var scope = string.Equals(targetScope, "continuewatching", StringComparison.Ordinal)
+                        ? HiddenContentItemScope.ContinueWatching
+                        : HiddenContentItemScope.NextUp;
+                    var result = _hiddenContentItemActionOwner.Configure(
+                        new HiddenContentActorProjection(userId),
+                        projection,
+                        HiddenContentItemConfiguration.LegacyHomeSurface(hidden: false, scope));
+                    if (!result.Changed)
+                    {
+                        return NotFound(new { success = false, message = "No matching hidden-content entry." });
+                    }
+
+                    return Ok(new { success = true, itemsRevision = result.ItemsRevision });
+                }
+                catch (UserStoreUnhealthyException)
+                {
+                    return QuarantinedHiddenStore();
+                }
+                catch (Exception ex) when (ex is InvalidDataException || ex is JsonException)
+                {
+                    return StatusCode(503, new { success = false, message = "Hidden-content store is corrupt and requires administrator recovery." });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Failed to remove {targetScope} hide for user {userId}: {ex.Message}");
+                    return StatusCode(500, new { success = false, message = "Failed to unhide." });
+                }
+            }
+
+            // Legacy repair orchestration only: inaccessible, deleted, excluded, or
+            // unsupported rows may be deleted without ever entering the exact owner.
             try
             {
                 var itemsRevision = 0L;

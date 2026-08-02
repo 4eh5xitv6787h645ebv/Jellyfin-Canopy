@@ -159,6 +159,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.ILiveSessionRegistry, Services.LiveSessionRegistry>();
             serviceCollection.AddHostedService<Services.LiveNotifierService>();
             serviceCollection.AddSingleton<UserConfigurationManager>();
+            // One HTTP-free policy owner for exact, freshly accessible Hidden Content
+            // item decisions. Legacy routes and Platform adapters share this instance.
+            serviceCollection.AddSingleton<IHiddenContentItemActionOwner, HiddenContentItemActionOwner>();
+            serviceCollection.AddSingleton<HiddenContentPlatformItemActionAdapter>();
             serviceCollection.AddSingleton<AutoSeasonRequestService>();
             serviceCollection.AddSingleton<AutoSeasonRequestMonitor>();
             serviceCollection.AddSingleton<AutoMovieRequestService>();

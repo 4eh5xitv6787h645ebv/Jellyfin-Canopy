@@ -242,6 +242,17 @@ the server, and its positive generation is bound into prepared actions so a late
 generation can invalidate older authority. Lookup is case-sensitive and fail-closed:
 an unknown or caller-invented identifier has no definition and cannot be invoked.
 
+Hidden Content's exact-item operation is owned below both HTTP dialects by one
+transport-independent service. It accepts only the authenticated actor projection, a
+fresh `FindAccessible` item projection, and validated configuration input. Native
+mutations carry the current item-resource revision and fail on a stale precondition;
+the legacy full-resource and admin routes retain their existing CAS envelopes outside
+the owner. Optional bounded display and episode metadata may enrich the persisted row,
+but never supplies authority or replaces the exact accessible item id and closed kind.
+Provider-only rows and removal of orphaned, deleted, parental-blocked, or
+library-excluded legacy rows remain explicit admin/repair orchestration: they are never
+converted into a positive exact-item access decision.
+
 `request-item` means submitting a new item-derived Seerr media request. Existing
 request state can be presented as status without another mutation. It must not be
 overloaded to approve, decline, cancel or modify a request: those actions bind a Seerr
