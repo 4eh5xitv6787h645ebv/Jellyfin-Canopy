@@ -375,6 +375,151 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public async Task CoordinatedLeaderCanceledBeforeSideEffectLetsFollowerRetryLeadership()
+        {
+            var store = new PlatformIdempotencyStore();
+            var request = Request("safe-abandonment", "payload");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var leaderCancellation = new CancellationTokenSource();
+
+            var leader = store.ExecuteCoordinatedAsync(
+                request,
+                async (_, cancellationToken) =>
+                {
+                    entered.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    throw new Xunit.Sdk.XunitException("The canceled leader must not continue.");
+                },
+                leaderCancellation.Token);
+            await entered.Task;
+
+            var followerCalls = 0;
+            var follower = store.ExecuteCoordinatedAsync(
+                request,
+                (execution, _) =>
+                {
+                    followerCalls++;
+                    execution.MarkSideEffectStarted();
+                    return Task.FromResult(Result(17));
+                },
+                CancellationToken.None);
+            Assert.Equal(1, store.FollowerCount);
+
+            leaderCancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => leader);
+            var promoted = await follower;
+            Assert.Equal(PlatformIdempotencyOutcomeKind.Executed, promoted.Kind);
+            Assert.Equal(17, promoted.Result!.Value.GetProperty("value").GetInt32());
+            Assert.Equal(1, followerCalls);
+            Assert.Equal(0, store.FollowerCount);
+            Assert.Equal(
+                PlatformIdempotencyOutcomeKind.Replay,
+                (await store.ExecuteAsync(request, _ => Task.FromResult(Result(99)), CancellationToken.None)).Kind);
+        }
+
+        [Fact]
+        public async Task CoordinatedFailureAfterSideEffectBoundaryRemainsIndeterminate()
+        {
+            var store = new PlatformIdempotencyStore();
+            var request = Request("marked-ambiguous", "payload");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => store.ExecuteCoordinatedAsync(
+                request,
+                (execution, _) =>
+                {
+                    execution.MarkSideEffectStarted();
+                    throw new InvalidOperationException("owner outcome unknown");
+                },
+                CancellationToken.None));
+
+            var called = false;
+            var retry = await store.ExecuteCoordinatedAsync(
+                request,
+                (_, _) =>
+                {
+                    called = true;
+                    return Task.FromResult(Result(1));
+                },
+                CancellationToken.None);
+
+            Assert.Equal(PlatformIdempotencyOutcomeKind.Indeterminate, retry.Kind);
+            Assert.False(called);
+        }
+
+        [Fact]
+        public async Task CoordinatedPreMutationRefusalIsSharedWithFollowersButNotRetained()
+        {
+            var store = new PlatformIdempotencyStore();
+            var request = Request("unstored-refusal", "payload");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var leader = store.ExecuteCoordinatedAsync(
+                request,
+                async (execution, _) =>
+                {
+                    entered.TrySetResult();
+                    await release.Task;
+                    return execution.AbandonBeforeSideEffect(Result(17));
+                },
+                CancellationToken.None);
+            await entered.Task;
+
+            var followerCalls = 0;
+            var follower = store.ExecuteCoordinatedAsync(
+                request,
+                (_, _) =>
+                {
+                    followerCalls++;
+                    return Task.FromResult(Result(99));
+                },
+                CancellationToken.None);
+            Assert.Equal(1, store.FollowerCount);
+            release.TrySetResult();
+
+            var leaderOutcome = await leader;
+            var followerOutcome = await follower;
+            Assert.Equal(17, leaderOutcome.Result!.Value.GetProperty("value").GetInt32());
+            Assert.Equal(17, followerOutcome.Result!.Value.GetProperty("value").GetInt32());
+            Assert.False(leaderOutcome.WasCoalescedUnstored);
+            Assert.True(followerOutcome.WasCoalescedUnstored);
+            Assert.Equal(0, followerCalls);
+            Assert.Equal(0, store.EntryCount);
+
+            var retry = await store.ExecuteCoordinatedAsync(
+                request,
+                (execution, _) =>
+                {
+                    execution.MarkSideEffectStarted();
+                    return Task.FromResult(Result(99));
+                },
+                CancellationToken.None);
+            Assert.Equal(PlatformIdempotencyOutcomeKind.Executed, retry.Kind);
+            Assert.Equal(99, retry.Result!.Value.GetProperty("value").GetInt32());
+        }
+
+        [Fact]
+        public async Task CoordinatedPreMutationRefusalCannotBypassItsResultReservation()
+        {
+            var store = new PlatformIdempotencyStore();
+            var request = Request("bounded-refusal", "payload", maximumResultBytes: 8);
+
+            var outcome = await store.ExecuteCoordinatedAsync(
+                request,
+                (execution, _) => Task.FromResult(
+                    execution.AbandonBeforeSideEffect(Result(123))),
+                CancellationToken.None);
+
+            Assert.Equal(PlatformIdempotencyOutcomeKind.Indeterminate, outcome.Kind);
+            Assert.Equal(
+                PlatformIdempotencyOutcomeKind.Indeterminate,
+                (await store.ExecuteCoordinatedAsync(
+                    request,
+                    (_, _) => Task.FromResult(Result(1)),
+                    CancellationToken.None)).Kind);
+        }
+
+        [Fact]
         public async Task ResultLargerThanItsPreExecutionReservationBecomesIndeterminate()
         {
             var store = new PlatformIdempotencyStore();

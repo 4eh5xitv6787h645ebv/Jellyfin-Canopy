@@ -20,8 +20,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         private static readonly Dictionary<string, string> AllowedStateOwners = new(StringComparer.Ordinal)
         {
             ["PlatformActionCapabilityService.cs:_ledger"] = "The sole reviewed bounded short-lived capability nonce owner.",
+            ["PlatformActionAdmissionLimiter.cs:_gates"] = "The reviewed fixed-cap actor/operation admission owner.",
             ["PlatformErrorCode.cs:Definitions"] = "Immutable error-code definition table, not request state.",
             ["PlatformIdempotencyStore.cs:_entries"] = "The sole reviewed bounded idempotency state owner.",
+            ["PlatformPreparedActionContextOwner.cs:_entries"] = "The reviewed fixed-cap prepared action context owner.",
         };
 
         [Fact]

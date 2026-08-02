@@ -162,10 +162,13 @@ bounded, non-streaming results and must not write directly to the response.
 
 ## Idempotent mutations
 
-Platform v1 ships the bounded idempotency kernel before adding mutation routes. Every
-future mutation will require exactly one `Idempotency-Key` value: 1–128 ASCII letters,
-digits, `.`, `_`, `~`, or `-`. The parser is transport-neutral, so a later body-carried
-key has exactly the same normalization and validation rules.
+Platform v1 ships one bounded idempotency kernel for all mutations. Each mutation
+requires exactly one idempotency key containing 1–128 ASCII letters, digits, `.`, `_`,
+`~`, or `-`. The native `/actions/invoke` kernel contract carries `IdempotencyKey` in its
+JSON body because Jellyfin SDK Kotlin's authenticated request seam has no per-request
+header facility. Its production route binding will reject an `Idempotency-Key` header as
+a competing carrier. Other future mutation routes may use the header, but both carriers
+use the same transport-neutral parser and kernel semantics.
 
 The process-local store keys an attempt by authenticated acting user, code-owned
 operation, and idempotency key. The operation supplies a SHA-256 fingerprint of the
@@ -289,6 +292,57 @@ capability, return a previously stored identical idempotent result without consu
 again, and consume only when admitting a new owner execution. Concurrent or later
 consumption of the same nonce is refused as replay. This primitive has no HTTP route,
 controller, provider credential, durable token or long-running operation handle.
+
+### Native action invocation coordinator
+
+This layer is the transport-neutral kernel contract. It deliberately does not register a
+controller, coordinator, dispatcher, or feature adapter in dependency injection yet;
+the production resolve/prepare/invoke routes and the three feature-owner bindings land
+only after their owning services exist. Until that binding lands, the rules below are
+enforced and tested as kernel contracts rather than advertised as a callable endpoint.
+
+The native invocation body contains exactly one `Capability`, one body-carried
+`IdempotencyKey`, and one `Answers` array. Known fields are case-sensitive and duplicate
+known properties are rejected; unknown optional properties remain forward compatible.
+There are at most eight answers, each names one bounded field and carries exactly one
+boolean or bounded unique option-id array. The platform's ordinary 1 MiB/depth/key/string
+bounds still run before this narrower schema.
+
+An authentic capability resolves a server-private prepared context retained in a
+process-local, non-evicting 1,024-entry store until the capability's expiry. That context
+binds the code-owned operation and schema, exact accessible item, kind, and series
+ancestry, operation generation, feature configuration revision, and at most 4 KiB of
+owner-private prepared state. Losing it on expiry or restart fails closed; clients cannot
+reconstruct it by adding operation, item, provider, or precondition fields to the
+invocation body.
+
+Every invocation follows one order: authenticate and inspect the capability; resolve the
+prepared context; reload the current user and exact user-scoped item; re-evaluate the
+operation and feature authority and project typed input; consult idempotency; acquire the
+bounded actor/operation admission lease; repeat the current checks after any queue wait;
+atomically consume the capability; then call one fixed first-party owner. The dispatcher
+has exactly three named ports (Spoiler Guard, Hidden Content, and Seerr), not a registry.
+Owners receive only the reduced actor, accessible-item projection, validated typed input,
+idempotency key, and cancellation token.
+
+Only one owner runs for an actor/operation at a time. At most eight waiters are retained
+per actor/operation, with 1,024 actor/operation keys and 1,024 waiters process-wide;
+excess work fails before capability consumption. Cancellation while queued removes the
+waiter. Cancellation or failure before the explicit capability-consumption boundary lets
+an identical later request retry leadership, while failure after that boundary retains an
+indeterminate tombstone. A bounded admission or current-authority refusal before that
+boundary is shared with followers already waiting on the attempt but is not retained for
+10-minute replay, so a later retry with the same key and still-unconsumed capability can
+succeed after the transient condition clears. If an owner ignores cancellation and
+returns a result, that semantic result remains stored for safe retry, while the canceled
+request still receives the lifecycle's caller-abort or deadline outcome and audit.
+
+An identical `(actor, operation, key, semantic input)` replays its stored result without
+re-consuming the capability. Reusing the key with changed semantic input conflicts, and
+using a fresh key with a consumed capability is a replay refusal. Current user, library,
+parental, item, feature, schema, generation, and authority checks run before any replay is
+released, so stored success never bypasses a later revocation. Unknown operations,
+schemas, owners, missing prepared state, and inconsistent revalidation all fail closed.
 
 ## Pagination
 

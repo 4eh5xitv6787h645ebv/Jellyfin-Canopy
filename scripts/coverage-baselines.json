@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 33607,
-        "totalLines": 42607
+        "coveredLines": 34405,
+        "totalLines": 43519
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 33607,
-        "maximumCoveredLines": 33607
+        "minimumCoveredLines": 34404,
+        "maximumCoveredLines": 34405
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The #593 follow-up adds the transport-free Spoiler Guard Platform adapter that maps only authoritative actor and freshly accessible Movie/Series projections into the already shared installed-item owner. Its tests cover both admitted kinds, preserve the owner's exact semantic result, prove exactly one owner call, and reject unsupported kinds before the owner. Independent review also found and corrected a real parity edge: because the safe Platform projection has no title, re-enabling an existing movie now preserves its durable display metadata and revision instead of erasing the name. A real adapter-plus-owner persistence regression pins that behavior. The adapter measures 100% line coverage. Three clean Coverlet runs on the identical corrected 2026-08-03 source and 42,607-line scope each passed all 2,947 server tests and reproduced exactly 33,607 covered lines. Relative to the reviewed #594 main high-water of 33,585/42,586 (78.864%), this change adds 21 instrumented lines and 22 covered lines, raising the high-water to 33,607/42,607 (78.877%). The identical observation envelope needs no instrumentation tolerance, so the floor and high-water are both 33,607/42,607. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The rebased #591 tree retains main's installed Hidden Content and Spoiler Guard Platform owners and adapters, then adds the transport-neutral first-party invocation coordinator, server-private prepared contexts, named typed owner ports, cancellation-aware actor/operation admission, Android-compatible body-carried idempotency, series-ancestry binding, and cancellation checks after synchronous host seams. Three clean Coverlet runs on the identical 2026-08-03 combined source and 43,519-line scope each passed all 3,008 server tests and measured 34,405, 34,404, and 34,404 covered lines. Relative to the reviewed main high-water of 33,607/42,607 (78.877%), #591 adds 912 instrumented lines and raises the observed high-water by 798 covered lines to 34,405/43,519 (79.057%). The one-line observed instrumentation envelope sets a one-line tolerance and a 34,404-line floor. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
