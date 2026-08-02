@@ -191,6 +191,30 @@ or coordinate multiple server processes.
 Coalesced waits are bounded too: at most 64 followers per in-flight key and 1,024 across
 the process. Excess followers receive the same pre-execution `429 rate_limited` outcome.
 
+## Closed native-pilot operation vocabulary
+
+Native actions do not name a controller, route, HTTP method, service or upstream
+endpoint. They resolve one of three exact code-owned business operations:
+
+| Operation | Family | Authority | Item kinds | Input schema | Generation |
+|---|---|---|---|---|---:|
+| `jellyfin.canopy.spoiler-guard.configure-item` | Spoiler Guard | authenticated | Movie, Series | `jellyfin.canopy.spoiler-guard.item-configuration.v1` | 1 |
+| `jellyfin.canopy.hidden-content.configure-item` | Hidden Content | authenticated | Movie, Series, Episode | `jellyfin.canopy.hidden-content.item-configuration.v1` | 1 |
+| `jellyfin.canopy.seerr.request-item` | Seerr | authenticated | Movie, Series | `jellyfin.canopy.seerr.item-request.v1` | 1 |
+
+Every operation is an exact-item mutation. Its item is resolved through the current
+authenticated user's Jellyfin access policy, its bounded input schema is selected by
+the server, and its positive generation is bound into prepared actions so a later code
+generation can invalidate older authority. Lookup is case-sensitive and fail-closed:
+an unknown or caller-invented identifier has no definition and cannot be invoked.
+
+`request-item` means submitting a new item-derived Seerr media request. Existing
+request state can be presented as status without another mutation. It must not be
+overloaded to approve, decline, cancel or modify a request: those actions bind a Seerr
+request identity rather than only the current Jellyfin item, and any future pilot
+addition needs its own fixed operation, bounded schema, owning service and authority
+review.
+
 ## Pagination
 
 One dialect: opaque forward cursors. Pass the `NextCursor` you were given to fetch the
