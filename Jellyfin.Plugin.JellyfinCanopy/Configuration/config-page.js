@@ -1,4112 +1,1950 @@
-        (() => {
-            const pluginId = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
+/* Jellyfin Canopy — admin config page engine (Verdant ground-up rewrite).
+   One classic served script; sections in dependency order:
+   core → nav/search → dashboards → connections/arr → widgets →
+   binder/save/load → view-mode/wizard → init. Contract anchors
+   (buildConfigFromForm/saveArrInstances/loadConfig, binder key scan, theme
+   detector ordering, pinned arr parse functions) live in their owning
+   sections and are verified by the Configuration test suite. */
+(() => {
 
-            const page = document.querySelector('#JellyfinCanopyPage');
-            const form = document.querySelector('#JellyfinCanopyForm');
+/* SECTION: core — owns: pluginId/page/form, escapeHtml, jcIsHttpUrl,
+   theme detector, dirty-state owner. wires: wireDirtyState. depends: none. */
 
-            // Theme detector: Jellyfin's themes hard-swap theme.css (no CSS
-            // variable contract). Jellyfin 12 does expose the selected theme
-            // through <html data-theme>, so trust its explicit Light identity
-            // first. Theme CSS can leave <html> transparent while painting the
-            // page/body light; color sampling alone then misclassifies the real
-            // Light theme as dark. Unknown/custom themes still fall back to the
-            // first opaque host background we can sample. Threshold 450 bins
-            // the shipped dark/light palettes correctly.
-            // We also re-run on `load` in case the theme sheet hadn't applied
-            // by the time our initial check ran, and once more after ~600 ms
-            // to catch late Jellyfin theme swaps during dashboard navigation.
-            function _jeDetectTheme() {
-                if (!page) return;
-                // Wrap the read in try/catch — during SPA detach getComputedStyle
-                // can throw InvalidAccessError. If anything goes wrong we fall
-                // back to dark (matches the plugin's previous default) so the
-                // rest of the IIFE's listener wiring isn't aborted by a throw
-                // from this purely cosmetic detector.
-                try {
-                    var declaredTheme = (document.documentElement.getAttribute('data-theme') || '').toLowerCase();
-                    if (declaredTheme === 'light') {
-                        page.classList.add('jc-light-theme');
-                        page.classList.remove('jc-dark-theme');
-                        return;
-                    }
+const pluginId = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
+const page = document.querySelector('#JellyfinCanopyPage');
+const form = document.querySelector('#JellyfinCanopyForm');
 
-                    var knownDarkThemes = ['dark', 'appletv', 'blueradiance', 'purplehaze', 'wmc'];
-                    if (knownDarkThemes.indexOf(declaredTheme) !== -1) {
-                        page.classList.remove('jc-light-theme');
-                        page.classList.add('jc-dark-theme');
-                        return;
-                    }
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
-                    var candidates = [
-                        document.documentElement,
-                        document.body,
-                        document.querySelector('.backgroundContainer'),
-                        document.querySelector('.mainAnimatedPage')
-                    ];
-                    var bg = '';
-                    var m = null;
-                    for (var i = 0; i < candidates.length; i++) {
-                        if (!candidates[i]) continue;
-                        bg = getComputedStyle(candidates[i]).backgroundColor;
-                        m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
-                        if (m && (m[4] === undefined || +m[4] >= 0.5)) break;
-                        m = null;
-                    }
-                    if (!m) {
-                        // Named colors (`black`), `transparent`, or `initial`: can't
-                        // tell light vs. dark reliably. Log once so a future broken
-                        // theme is diagnosable rather than silently dark.
-                        console.warn('[JC] theme detector: document background is unparseable (' + bg + '); defaulting to dark');
-                        page.classList.remove('jc-light-theme');
-                        page.classList.add('jc-dark-theme');
-                        return;
-                    }
-                    var sum = (+m[1]) + (+m[2]) + (+m[3]);
-                    var isLight = sum > 450;
-                    page.classList.toggle('jc-light-theme', isLight);
-                    page.classList.toggle('jc-dark-theme',  !isLight);
-                } catch (e) {
-                    console.warn('[JC] theme detection failed, defaulting to dark:', e);
-                    page.classList.remove('jc-light-theme');
-                    page.classList.add('jc-dark-theme');
-                }
-            }
-            _jeDetectTheme();
-            window.addEventListener('load', _jeDetectTheme);
-            setTimeout(_jeDetectTheme, 600);
-            const resetAllUserSettingsBtn = document.querySelector('#resetAllUserSettingsBtn');
-            const clearTagsCacheBtn = document.querySelector('#clearTagsCacheBtn');
-
-            const shortcutListContainer = document.getElementById('shortcut-list-container');
-            const addShortcutSelect = document.getElementById('add-shortcut-select');
-            const addShortcutKeyInput = document.getElementById('add-shortcut-key');
-            const addShortcutBtn = document.getElementById('add-shortcut-btn');
-            const shortcutErrorComment = document.getElementById('shortcut-error-comment');
-
-            const testSeerrBtn = document.getElementById('testSeerrBtn');
-            const seerrStatusIndicator = document.getElementById('seerrStatusIndicator');
-            const testMaintainerrBtn = document.getElementById('testMaintainerrBtn');
-            const maintainerrStatusIndicator = document.getElementById('maintainerrStatusIndicator');
-            const maintainerrStatusText = document.getElementById('maintainerrStatusText');
-
-            const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
-
-            let shortcutOverrides = [];
-
-            const tabs = document.querySelectorAll('.jellyfin-tab-button');
-            const tabContents = document.querySelectorAll('.jellyfin-tab-content');
-
-            // Drag-to-scroll on the tab bar so mouse users can pan the tab strip
-            // the same way touch users do on mobile (the overflow-x auto strip
-            // has no visible scrollbar). Threshold at 5 px before we consider it
-            // a drag, so a normal click through to a tab still registers.
-            (function wireTabBarDrag() {
-                const bar = document.querySelector('.jc-tab-bar');
-                if (!bar) return;
-                let isDown = false;
-                let startX = 0;
-                let startScroll = 0;
-                let dragged = false;
-
-                bar.addEventListener('mousedown', (e) => {
-                    if (e.button !== 0) return;
-                    isDown = true;
-                    dragged = false;
-                    startX = e.pageX;
-                    startScroll = bar.scrollLeft;
-                });
-                bar.addEventListener('mousemove', (e) => {
-                    if (!isDown) return;
-                    const dx = e.pageX - startX;
-                    if (!dragged && Math.abs(dx) > 5) {
-                        dragged = true;
-                        bar.classList.add('jc-dragging');
-                    }
-                    if (dragged) {
-                        bar.scrollLeft = startScroll - dx;
-                        e.preventDefault();
-                    }
-                });
-                const end = () => {
-                    if (!isDown) return;
-                    isDown = false;
-                    // Keep `dragged` set briefly so the synthesized click that
-                    // follows a drag-end can be suppressed by the capture-phase
-                    // click listener below. Cleared on next mousedown.
-                    bar.classList.remove('jc-dragging');
-                };
-                bar.addEventListener('mouseup', end);
-                bar.addEventListener('mouseleave', end);
-
-                // Capture-phase click listener cancels the click that mouseup
-                // would otherwise fire on the tab button at the cursor's final
-                // position — prevents accidental tab activation at drag-end.
-                bar.addEventListener('click', (e) => {
-                    if (dragged) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        dragged = false;
-                    }
-                }, true);
-            })();
-
-            // Mobile section drawer: the sidebar slides in off-canvas below
-            // 900px. The toggle/scrim only exist in the new shell layout, so
-            // everything here no-ops gracefully if the markup changes.
-            (function wireSectionDrawer() {
-                const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
-                const toggle = document.getElementById('jcNavToggle');
-                const scrim = document.getElementById('jcNavScrim');
-                const sidebar = shell?.querySelector('.jc-sidebar');
-                const main = shell?.querySelector('.jc-main');
-                if (!shell || !toggle || !scrim || !sidebar || !main) return;
-                const drawerMedia = window.matchMedia('(max-width: 900px)');
-                const setOpen = (open) => {
-                    const wasOpen = shell.classList.contains('jc-nav-open');
-                    shell.classList.toggle('jc-nav-open', open);
-                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-                    // Off-canvas focus ownership (drawer mode only): while the
-                    // drawer overlays the page, the covered main column must not
-                    // hold focus or be reachable; while it is closed off-canvas,
-                    // the sidebar must not be tabbable behind the viewport edge.
-                    if (drawerMedia.matches) {
-                        main.inert = open;
-                        sidebar.inert = !open;
-                        if (open) {
-                            sidebar.querySelector('#settingsSearchInput, .jc-group-btn')?.focus();
-                        } else if (wasOpen) {
-                            toggle.focus();
-                        }
-                    }
-                };
-                const syncLayoutMode = () => {
-                    if (drawerMedia.matches) {
-                        sidebar.inert = !shell.classList.contains('jc-nav-open');
-                        main.inert = shell.classList.contains('jc-nav-open');
-                    } else {
-                        // Desktop rail: both columns are visible and interactive.
-                        sidebar.inert = false;
-                        main.inert = false;
-                        shell.classList.remove('jc-nav-open');
-                        toggle.setAttribute('aria-expanded', 'false');
-                    }
-                };
-                drawerMedia.addEventListener('change', syncLayoutMode);
-                syncLayoutMode();
-                toggle.addEventListener('click', () => setOpen(!shell.classList.contains('jc-nav-open')));
-                scrim.addEventListener('click', () => setOpen(false));
-                // Selecting a section (or focusing search results) dismisses the drawer.
-                tabs.forEach((t) => t.addEventListener('click', () => setOpen(false)));
-                document.addEventListener('keydown', (e) => {
-                    if (e.key === 'Escape' && shell.classList.contains('jc-nav-open')) setOpen(false);
-                });
-            })();
-
-            // Grouped shell (handoff IA): the rail chooses a product area; its
-            // member sections render as a segmented control in the page header.
-            let jcSyncGroupForTab = null;
-            (function wireGroupShell() {
-                const GROUPS = {
-                    'command-center': { title: 'Command Center', purpose: 'Service health, feature status and quick actions at a glance.' },
-                    'experience':     { title: 'Experience', purpose: 'How Jellyfin looks, plays and handles for every user.' },
-                    'pages':          { title: 'Pages', purpose: 'Calendar, Requests, Bookmarks, Hidden Content and the administrator Maintainerr page.' },
-                    'discovery':      { title: 'Discovery & Community', purpose: 'Trending, reviews, release dates and streaming availability.' },
-                    'connections':    { title: 'Connections & Automation', purpose: 'Seerr, Maintainerr, Sonarr, Radarr, Bazarr and their sync rules.' },
-                    'governance':     { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
-                    'system':         { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' },
-                };
-                const railBtns = Array.from(document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn'));
-                const strip = document.getElementById('jcSectionStrip');
-                const store = document.querySelector('#JellyfinCanopyPage .jc-section-strip-store');
-                const titleEl = document.getElementById('jcPageTitle');
-                const purposeEl = document.getElementById('jcPagePurpose');
-                if (!railBtns.length || !strip || !store) return;
-                // Relocate the section buttons from the hidden store into the strip.
-                Array.from(store.querySelectorAll('.jellyfin-tab-button')).forEach(b => strip.appendChild(b));
-                store.remove();
-
-                const setGroup = (groupId, activateFirst) => {
-                    const meta = GROUPS[groupId];
-                    if (!meta) return;
-                    railBtns.forEach(b => b.classList.toggle('active', b.dataset.group === groupId));
-                    let first = null;
-                    let firstVisible = null;
-                    let members = 0;
-                    strip.querySelectorAll('.jellyfin-tab-button').forEach(b => {
-                        const mine = b.dataset.group === groupId;
-                        b.classList.toggle('jc-in-group', mine);
-                        if (mine) {
-                            members++;
-                            if (!first) first = b;
-                            // During search zero-match sections are display:none —
-                            // a group click must land on the first MATCHING one.
-                            if (!firstVisible && b.style.display !== 'none') firstVisible = b;
-                        }
-                    });
-                    strip.classList.toggle('jc-strip-single', members < 2);
-                    if (titleEl) titleEl.textContent = meta.title;
-                    if (purposeEl) purposeEl.textContent = meta.purpose;
-                    if (activateFirst) {
-                        const target = firstVisible || first;
-                        if (target) target.click();
-                    }
-                };
-                railBtns.forEach(b => b.addEventListener('click', () => setGroup(b.dataset.group, true)));
-                jcSyncGroupForTab = (tabId) => {
-                    const btn = strip.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
-                    if (btn && btn.dataset.group) setGroup(btn.dataset.group, false);
-                };
-            })();
-
-            // Dirty-state owner: every configuration mutation — native input
-            // events AND programmatic ones (shortcut removal, instance removal,
-            // category reorder) — funnels through jcMarkConfigDirty, which also
-            // bumps a revision. saveConfig captures the revision at snapshot
-            // time and clears the flag only when no further mutation landed
-            // while the save was in flight.
-            let jcDirtyRevision = 0;
-            function jcMarkConfigDirty() {
-                jcDirtyRevision++;
-                document.querySelector('.jc-save-dock')?.classList.add('jc-dirty');
-            }
-            function jcDirtyRevisionNow() { return jcDirtyRevision; }
-            function jcClearDirtyIfUnchanged(revision) {
-                if (jcDirtyRevision === revision) {
-                    document.querySelector('.jc-save-dock')?.classList.remove('jc-dirty');
-                }
-            }
-            (function wireDirtyState() {
-                if (!form) return;
-                form.addEventListener('input', jcMarkConfigDirty, true);
-                form.addEventListener('change', jcMarkConfigDirty, true);
-            })();
-
-            // Docs iframe URL — kept in JS rather than hardcoded in the
-            // <iframe src> attribute so we can lazy-load on first Docs
-            // activation (saves the GitHub Pages fetch for admins who
-            // never open this tab).
-            const DOCS_URL = 'https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/';
-
-            // Per-tab scroll memory. When the admin switches tabs we save the
-            // current scrollY under the outgoing tab's id, and when they come
-            // back to a tab we restore whatever they were reading. Defaults to
-            // scroll-to-top on first visit to a tab so the Overview / long
-            // sections always start at the tab's own header.
-            const _jeTabScroll = Object.create(null);
-            let _jePrevTabId = null;
-            function _jeGetScrollTop() {
-                return window.scrollY
-                    || document.documentElement.scrollTop
-                    || document.body.scrollTop
-                    || 0;
-            }
-            function _jeSetScrollTop(y) {
-                try { window.scrollTo({ top: y, behavior: 'instant' }); }
-                catch (e) {
-                    // Old Safari missing behavior:'instant' or iframe contexts.
-                    window.scrollTo(0, y);
-                }
-            }
-
-            function activateTab(tabId) {
-                if (_jePrevTabId && _jePrevTabId !== tabId) {
-                    _jeTabScroll[_jePrevTabId] = _jeGetScrollTop();
-                }
-                tabs.forEach(t => {
-                    t.classList.toggle('active', t.dataset.tab === tabId);
-                });
-                // Keep the group rail + header in step with the active section
-                // regardless of which path activated it (click, restore, search).
-                if (typeof jcSyncGroupForTab === 'function') jcSyncGroupForTab(tabId);
-                tabContents.forEach(content => {
-                    const isActive = content.id === tabId;
-                    content.classList.toggle('active', isActive);
-                });
-                // Restore (or reset) the scroll position after the new tab's
-                // content is in the DOM. rAF waits for the layout pass so the
-                // saved scrollY actually addresses the right document height.
-                // NOTE: load-bearing for the service-status card deep-link at
-                // renderServiceStatusDashboard (scrollTo handler uses a
-                // double-rAF to run after this restore). If this rAF goes
-                // away or gains an extra frame, update that handler to match.
-                const saved = _jeTabScroll[tabId];
-                requestAnimationFrame(() => _jeSetScrollTop(saved || 0));
-                _jePrevTabId = tabId;
-                // Lazy-load the Docs iframe the first time the user opens
-                // the Docs tab. Using `about:blank` as the initial src
-                // prevents the GitHub Pages fetch for admins who never
-                // click into it. We set the real src once and never
-                // reset it, so subsequent tab switches re-reveal the
-                // already-loaded page (keeps the admin's scroll position
-                // and any in-page nav state).
-                if (tabId === 'docs') {
-                    try {
-                        var f = document.getElementById('docsFrame');
-                        if (f && (!f.src || f.src === 'about:blank' || /about:blank/.test(f.src))) {
-                            // Set up a load-timeout fallback before assigning src so
-                            // a silently-blank iframe (DNS/CSP/X-Frame-Options/CDN
-                            // outage) becomes a visible "couldn't load — open in
-                            // new tab" message instead of an empty gray box.
-                            var loaded = false;
-                            f.addEventListener('load', function onLoad() {
-                                loaded = true;
-                                f.removeEventListener('load', onLoad);
-                            });
-                            setTimeout(function() {
-                                if (loaded) return;
-                                var parent = f.parentNode;
-                                if (!parent) return;
-                                var fb = document.createElement('div');
-                                fb.className = 'jc-docs-fallback';
-                                fb.style.cssText = 'padding: 24px; text-align: center; color: #ccc; font-size: 0.95em;';
-                                var msg = document.createElement('div');
-                                msg.textContent = "Couldn't load the embedded documentation. Open it in a new tab instead:";
-                                msg.style.marginBottom = '12px';
-                                var link = document.createElement('a');
-                                link.href = DOCS_URL;
-                                link.target = '_blank';
-                                link.rel = 'noopener';
-                                link.textContent = DOCS_URL;
-                                link.style.color = 'var(--primary-accent-color, #00a4dc)';
-                                fb.appendChild(msg);
-                                fb.appendChild(link);
-                                parent.replaceChild(fb, f);
-                            }, 8000);
-                            f.src = DOCS_URL;
-                        }
-                    } catch (e) {
-                        console.warn('[JC] docs iframe lazy-load failed:', e);
-                    }
-                }
-            }
-
-            tabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    const tabId = tab.dataset.tab;
-                    if (isSearchMode) {
-                        // Jump from search results into the section: leave search
-                        // mode, open the section, and scroll to its first match.
-                        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
-                        clearTimeout(searchDebounce);
-                        searchInput.value = '';
-                        exitSearchMode();
-                        activateTab(tabId);
-                        if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-                    } else {
-                        activateTab(tabId);
-                    }
-                    // Store active tab in sessionStorage to persist across refreshes
-                    try {
-                        sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
-                    } catch (e) {
-                        // Ignore if sessionStorage is not available
-                    }
-                });
-            });
-
-            // Map legacy tab IDs (pre-redesign) to the closest new tab, so users with
-            // a saved sessionStorage value from the old layout don't land on a missing tab.
-            const LEGACY_TAB_MAP = {
-                'enhanced': 'display',
-                'seerr': 'seerr',
-                'arr-links': 'arr'
-            };
-
-            // Restore tab from sessionStorage on page load
+/* Absolute http(s) URL with no credentials, query, or fragment — the shared
+   shape every hand-validated external URL field accepts. The unusual
+   indentation is a contract: config-page-http-url.test.ts regex-extracts
+   `function jcIsHttpUrl(value)` up to its 8-space-indented closing brace and
+   runs the slice against the shared URL-safety matrix. */
+        function jcIsHttpUrl(value) {
             try {
-                let savedTab = sessionStorage.getItem('jellyfinCanopyActiveTab');
-                if (savedTab && LEGACY_TAB_MAP[savedTab]) {
-                    savedTab = LEGACY_TAB_MAP[savedTab];
-                    sessionStorage.setItem('jellyfinCanopyActiveTab', savedTab);
-                }
-                if (savedTab && document.getElementById(savedTab)) {
-                    activateTab(savedTab);
-                } else if (savedTab) {
-                    // Saved tab doesn't match any current tab and isn't a legacy key —
-                    // probably a tab that was later renamed or a stray value. Clear it
-                    // so the user stops silently getting ignored on every page load.
-                    console.info('[JC] discarding unknown saved tab: ' + savedTab);
-                    sessionStorage.removeItem('jellyfinCanopyActiveTab');
-                }
+                const parsed = new URL(String(value));
+                return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+                    && !parsed.username && !parsed.password
+                    && !parsed.search && !parsed.hash;
             } catch (e) {
-                // sessionStorage unavailable (private mode / quota / security) — skip restore.
+                return false;
             }
+        }
 
-            // === Setting-description visibility toggle ===
-            // Some admins want the full explanatory text under every setting;
-            // others (who know the plugin) want a compact page. Persist the
-            // preference in localStorage, default visible, expose a header
-            // button to flip state. Visibility is driven by CSS on the body
-            // class — toggling is instant and costs nothing per render.
-            const descToggleBtn = document.getElementById('toggleDescriptionsBtn');
-            const DESC_PREF_KEY = 'jc-settings-descriptions-visible';
-            function applyDescriptionVisibility(show) {
-                try { document.body.classList.toggle('jc-hide-descriptions', !show); } catch (e) {}
-                if (descToggleBtn) {
-                    descToggleBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
-                    descToggleBtn.classList.toggle('jc-desc-toggle-off', !show);
-                    const state = descToggleBtn.querySelector('.jc-desc-toggle-state');
-                    if (state) state.textContent = show ? 'On' : 'Off';
+/* ---------------------------------------------------------------------------
+   Theme detector. Jellyfin themes hard-swap theme.css with no CSS-variable
+   contract, so classify light/dark here and tag the page root for the
+   stylesheet's paired palettes. Fail-open: dark. The substring ordering in
+   this function (data-theme read → explicit 'light' trust → var candidates
+   sampling) is a test contract.
+   --------------------------------------------------------------------------- */
+function _jeDetectTheme() {
+    if (!page) return;
+    try {
+        const declaredTheme = (document.documentElement.getAttribute('data-theme') || '').toLowerCase();
+        if (declaredTheme === 'light') {
+            page.classList.add('jc-light-theme');
+            page.classList.remove('jc-dark-theme');
+            return;
+        }
+        const knownDark = ['dark', 'appletv', 'blueradiance', 'purplehaze', 'wmc'];
+        if (knownDark.indexOf(declaredTheme) !== -1) {
+            page.classList.remove('jc-light-theme');
+            page.classList.add('jc-dark-theme');
+            return;
+        }
+        var candidates = [
+            document.documentElement,
+            document.body,
+            document.querySelector('.backgroundContainer'),
+            document.querySelector('.mainAnimatedPage'),
+        ];
+        let match = null;
+        let lastBg = '';
+        for (const el of candidates) {
+            if (!el) continue;
+            const bg = getComputedStyle(el).backgroundColor || '';
+            lastBg = bg;
+            const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
+            if (m && (m[4] === undefined || +m[4] >= 0.5)) { match = m; break; }
+        }
+        if (!match) {
+            console.warn('[JC] theme detector: document background is unparseable (' + lastBg + '); defaulting to dark');
+            page.classList.remove('jc-light-theme');
+            page.classList.add('jc-dark-theme');
+            return;
+        }
+        const sum = (+match[1]) + (+match[2]) + (+match[3]);
+        const isLight = sum > 450;
+        page.classList.toggle('jc-light-theme', isLight);
+        page.classList.toggle('jc-dark-theme', !isLight);
+    } catch (e) {
+        console.warn('[JC] theme detection failed, defaulting to dark:', e);
+        try {
+            page.classList.remove('jc-light-theme');
+            page.classList.add('jc-dark-theme');
+        } catch (e2) { /* detached page — nothing to tag */ }
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   Dirty-state owner. One revision counter; the dock's jc-dirty class is the
+   only UI consequence. The revision snapshot lets saveConfig avoid clearing
+   the dirty state over edits that landed while a save was in flight.
+   --------------------------------------------------------------------------- */
+let jcDirtyRevision = 0;
+function jcMarkConfigDirty() {
+    jcDirtyRevision++;
+    const dock = document.querySelector('.jc-save-dock');
+    if (dock) dock.classList.add('jc-dirty');
+}
+function jcDirtyRevisionNow() {
+    return jcDirtyRevision;
+}
+function jcClearDirtyIfUnchanged(revision) {
+    if (jcDirtyRevision !== revision) return;
+    const dock = document.querySelector('.jc-save-dock');
+    if (dock) dock.classList.remove('jc-dirty');
+}
+function wireDirtyState() {
+    if (!form) return;
+    form.addEventListener('input', jcMarkConfigDirty, true);
+    form.addEventListener('change', jcMarkConfigDirty, true);
+}
+
+/* SECTION: nav-search — owns: GROUPS, activateTab, jcSyncGroupForTab, LEGACY_TAB_MAP,
+   tabs/tabContents static NodeLists, all search state. wires: wireNavShell, wireSearch.
+   depends: form, page (core). Integrator: call wireNavShell() before loadConfig()
+   (it performs the sessionStorage tab restore), wireSearch() any time after markup exists.
+   Top-level `let` declarations below are inert state slots (no side effects); all DOM
+   work happens inside the wire functions per the conventions. */
+
+// ---------------------------------------------------------------------------
+// Static NodeLists — cached once (spec: old code captured these at parse time,
+// before the section-strip relocation; relocation moves the same nodes, so the
+// references stay valid; tabs/sections are never added dynamically).
+// ---------------------------------------------------------------------------
+let tabs = null;
+let tabContents = null;
+
+function captureStaticNodeLists() {
+    if (!tabs) {
+        tabs = document.querySelectorAll('.jellyfin-tab-button');
+    }
+    if (!tabContents) {
+        tabContents = document.querySelectorAll('.jellyfin-tab-content');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Group shell
+// ---------------------------------------------------------------------------
+const GROUPS = {
+    'command-center': { title: 'Command Center', purpose: 'Service health, feature status and quick actions at a glance.' },
+    'experience': { title: 'Experience', purpose: 'How Jellyfin looks, plays and handles for every user.' },
+    'pages': { title: 'Pages', purpose: 'Calendar, Requests, Bookmarks, Hidden Content and the administrator Maintainerr page.' },
+    'discovery': { title: 'Discovery & Community', purpose: 'Trending, reviews, release dates and streaming availability.' },
+    'connections': { title: 'Connections & Automation', purpose: 'Seerr, Maintainerr, Sonarr, Radarr, Bazarr and their sync rules.' },
+    'governance': { title: 'Governance', purpose: 'Spoiler policy, user defaults, permissions and maintenance.' },
+    'system': { title: 'System', purpose: 'Assets, diagnostics, developer settings and documentation.' }
+};
+
+// Assigned by wireGroupShell; stays null when the group shell markup is absent.
+// Callers must guard (activateTab does).
+let jcSyncGroupForTab = null;
+
+function wireGroupShell() {
+    captureStaticNodeLists();
+    const railBtns = document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn');
+    const strip = document.querySelector('#jcSectionStrip');
+    const store = document.querySelector('#JellyfinCanopyPage .jc-section-strip-store');
+    const titleEl = document.querySelector('#jcPageTitle');
+    const purposeEl = document.querySelector('#jcPagePurpose');
+    if (!railBtns.length || !strip || !store) {
+        return; // whole group shell no-ops; jcSyncGroupForTab stays null
+    }
+
+    // Mockup-faithful rail: relocate each section button out of the hidden
+    // store into the rail, directly under its group label (same nodes, order
+    // preserved), then drop the store. The header strip element stays in the
+    // DOM (pinned hook) but receives nothing and renders empty.
+    const railGroupSections = {};
+    railBtns.forEach(function (groupBtn) {
+        const holder = document.createElement('div');
+        holder.className = 'jc-rail-sections';
+        holder.dataset.groupSections = groupBtn.dataset.group;
+        groupBtn.insertAdjacentElement('afterend', holder);
+        railGroupSections[groupBtn.dataset.group] = holder;
+    });
+    store.querySelectorAll('.jellyfin-tab-button').forEach(function (b) {
+        const holder = railGroupSections[b.dataset.group];
+        (holder || strip).appendChild(b);
+        b.classList.add('jc-in-rail');
+    });
+    store.remove();
+
+    function setGroup(groupId, activateFirst) {
+        const meta = GROUPS[groupId];
+        if (!meta) {
+            return;
+        }
+        railBtns.forEach(function (b) {
+            b.classList.toggle('active', b.dataset.group === groupId);
+        });
+        let first = null;
+        let firstVisible = null;
+        let members = 0;
+        tabs.forEach(function (b) {
+            const inGroup = b.dataset.group === groupId;
+            b.classList.toggle('jc-in-group', inGroup);
+            if (inGroup) {
+                members++;
+                if (!first) {
+                    first = b;
+                }
+                // During search, zero-match sections are display:none — a group
+                // click must land on the first MATCHING one.
+                if (!firstVisible && b.style.display !== 'none') {
+                    firstVisible = b;
                 }
             }
-            (function initDescriptionVisibility() {
-                let show = true;
-                try {
-                    const stored = localStorage.getItem(DESC_PREF_KEY);
-                    if (stored === 'false') show = false;
-                } catch (e) { /* private mode / quota — default visible */ }
-                applyDescriptionVisibility(show);
-            })();
-            if (descToggleBtn) {
-                descToggleBtn.addEventListener('click', function() {
-                    const currentlyShown = !document.body.classList.contains('jc-hide-descriptions');
-                    const nextShown = !currentlyShown;
-                    applyDescriptionVisibility(nextShown);
-                    try { localStorage.setItem(DESC_PREF_KEY, nextShown ? 'true' : 'false'); }
-                    catch (e) { /* private mode / quota — preference won't persist, UI still toggles */ }
-                });
+        });
+        strip.classList.toggle('jc-strip-single', members < 2);
+        /* The serif header title belongs to the ACTIVE SECTION (activateTab
+           owns it); the group contributes the purpose lede. */
+        if (purposeEl) {
+            purposeEl.textContent = meta.purpose;
+        }
+        if (activateFirst) {
+            const target = firstVisible || first;
+            if (target) {
+                /* Direct activation, NOT target.click(): on mobile the rail
+                   lives in the drawer, and the click pipeline's drawer-closer
+                   would slam it shut before the admin picks a section. */
+                jcActivateSection(target.dataset.tab);
             }
+        }
+    }
 
-            // === Settings Search ===
-            const searchInput = document.getElementById('settingsSearchInput');
-            const searchClear = document.getElementById('settingsSearchClear');
-            const searchCount = document.getElementById('settingsSearchCount');
+    railBtns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            setGroup(btn.dataset.group, true);
+        });
+    });
 
-            const tabButtonsContainer = tabs[0] ? tabs[0].parentElement : null;
-            let isSearchMode = false;
-            const savedDetailsStates = new Map();
-            const SKIP_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'SCRIPT', 'STYLE']);
-            let currentMatchIdx = -1;
-            let allMatches = [];
+    jcSyncGroupForTab = function (tabId) {
+        const btn = strip.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
+        if (btn && btn.dataset.group) {
+            setGroup(btn.dataset.group, false);
+        }
+    };
 
-            let searchDebounce;
-            searchInput.addEventListener('input', () => {
-                clearTimeout(searchDebounce);
-                searchDebounce = setTimeout(() => performSearch(searchInput.value), 150);
+    // Initial sync: reflect the HTML-marked active tab (Overview) in rail,
+    // strip membership and header so the strip renders before any activation.
+    const activeBtn = strip.querySelector('.jellyfin-tab-button.active');
+    if (activeBtn && activeBtn.dataset.group) {
+        setGroup(activeBtn.dataset.group, false);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tab activation with per-tab scroll memory + docs lazy iframe
+// ---------------------------------------------------------------------------
+const DOCS_URL = 'https://4eh5xitv6787h645ebv.github.io/Jellyfin-Canopy/';
+const _jeTabScroll = {}; // tabId -> scrollY
+let _jePrevTabId = null;
+
+function _jeGetScrollTop() {
+    return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+}
+
+function _jeSetScrollTop(y) {
+    try {
+        window.scrollTo({ top: y, behavior: 'instant' });
+    } catch (e) {
+        window.scrollTo(0, y); // old Safari
+    }
+}
+
+function activateTab(tabId) {
+    captureStaticNodeLists();
+    if (_jePrevTabId && _jePrevTabId !== tabId) {
+        _jeTabScroll[_jePrevTabId] = _jeGetScrollTop();
+    }
+    tabs.forEach(function (t) {
+        t.classList.toggle('active', t.dataset.tab === tabId);
+    });
+    const activeSectionBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabId + '"]');
+    const headerTitle = document.querySelector('#jcPageTitle');
+    if (activeSectionBtn && headerTitle && activeSectionBtn.dataset.jcLabel) {
+        headerTitle.textContent = activeSectionBtn.dataset.jcLabel;
+    }
+    if (jcSyncGroupForTab) {
+        jcSyncGroupForTab(tabId);
+    }
+    tabContents.forEach(function (content) {
+        content.classList.toggle('active', content.id === tabId);
+    });
+    // Restore scroll after the layout pass. LOAD-BEARING: the service-status
+    // card deep-link (dashboards section) uses a *double* rAF so it runs after
+    // this restore. If this changes, that handler must change too.
+    const saved = _jeTabScroll[tabId];
+    requestAnimationFrame(function () {
+        _jeSetScrollTop(saved || 0);
+    });
+    _jePrevTabId = tabId;
+
+    if (tabId === 'docs') {
+        try {
+            const f = document.querySelector('#docsFrame');
+            const src = f ? f.getAttribute('src') : null;
+            if (f && (!src || src === 'about:blank')) {
+                // First activation only: never reset afterwards, so revisits
+                // keep iframe scroll position and in-page nav state.
+                let loaded = false;
+                f.addEventListener('load', function () {
+                    loaded = true;
+                }, { once: true });
+                setTimeout(function () {
+                    if (loaded) {
+                        return;
+                    }
+                    const fallback = document.createElement('div');
+                    fallback.className = 'jc-docs-fallback';
+                    fallback.style.padding = '24px';
+                    fallback.style.textAlign = 'center';
+                    fallback.style.color = '#ccc';
+                    fallback.style.fontSize = '0.95em';
+                    fallback.appendChild(document.createTextNode('Couldn\'t load the embedded documentation. Open it in a new tab instead: '));
+                    const link = document.createElement('a');
+                    link.href = DOCS_URL;
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    link.style.color = 'var(--jc-accent)';
+                    link.textContent = DOCS_URL;
+                    fallback.appendChild(link);
+                    if (f.parentNode) {
+                        f.parentNode.replaceChild(fallback, f);
+                    }
+                }, 8000);
+                f.src = DOCS_URL;
+            }
+        } catch (e) {
+            console.warn('[JC] docs iframe lazy-load failed:', e);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tab button clicks + sessionStorage persistence / restore
+// ---------------------------------------------------------------------------
+const LEGACY_TAB_MAP = { 'enhanced': 'display', 'seerr': 'seerr', 'arr-links': 'arr' };
+
+function jcActivateSection(tabId) {
+    if (isSearchMode) {
+        const target = document.querySelector('#' + tabId + ' > fieldset:not(.jc-search-hidden)');
+        clearTimeout(searchDebounce);
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        exitSearchMode();
+        activateTab(tabId);
+        if (target) {
+            setTimeout(function () {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 60);
+        }
+    } else {
+        activateTab(tabId);
+    }
+    try {
+        sessionStorage.setItem('jellyfinCanopyActiveTab', tabId);
+    } catch (e) {
+        // sessionStorage unavailable — skip persistence
+    }
+}
+
+function wireTabButtons() {
+    captureStaticNodeLists();
+    tabs.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            jcActivateSection(btn.dataset.tab);
+        });
+    });
+}
+
+function restoreSavedTab() {
+    try {
+        let savedTab = sessionStorage.getItem('jellyfinCanopyActiveTab');
+        if (savedTab && LEGACY_TAB_MAP[savedTab]) {
+            savedTab = LEGACY_TAB_MAP[savedTab];
+            sessionStorage.setItem('jellyfinCanopyActiveTab', savedTab);
+        }
+        if (savedTab && document.getElementById(savedTab)) {
+            activateTab(savedTab);
+        } else if (savedTab !== null) {
+            console.info('[JC] discarding unknown saved tab: ' + savedTab);
+            sessionStorage.removeItem('jellyfinCanopyActiveTab');
+        }
+        // No saved tab -> leave the HTML-marked active tab (Overview) alone.
+    } catch (e) {
+        // sessionStorage unavailable — skip restore
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mobile section drawer
+// ---------------------------------------------------------------------------
+function wireSectionDrawer() {
+    captureStaticNodeLists();
+    const shell = document.querySelector('#JellyfinCanopyPage .jc-shell');
+    const toggle = document.querySelector('#jcNavToggle');
+    const scrim = document.querySelector('#jcNavScrim');
+    const sidebar = shell ? shell.querySelector('.jc-sidebar') : null;
+    const main = shell ? shell.querySelector('.jc-main') : null;
+    if (!shell || !toggle || !scrim || !sidebar || !main) {
+        return; // drawer no-ops gracefully
+    }
+
+    const drawerMedia = window.matchMedia('(max-width: 900px)');
+    let isOpen = false;
+
+    function setOpen(open) {
+        const wasOpen = isOpen;
+        isOpen = open;
+        shell.classList.toggle('jc-nav-open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (drawerMedia.matches) {
+            // Off-canvas focus ownership: the covered main column must not be
+            // focusable while the drawer overlays it; the closed sidebar must
+            // not be tabbable behind the viewport edge.
+            main.inert = open;
+            sidebar.inert = !open;
+            if (open) {
+                const focusTarget = sidebar.querySelector('#settingsSearchInput, .jc-group-btn');
+                if (focusTarget) {
+                    focusTarget.focus();
+                }
+            } else if (wasOpen) {
+                toggle.focus();
+            }
+        }
+    }
+
+    function syncLayoutMode() {
+        if (drawerMedia.matches) {
+            sidebar.inert = !isOpen;
+            main.inert = isOpen;
+        } else {
+            sidebar.inert = false;
+            main.inert = false;
+            shell.classList.remove('jc-nav-open');
+            toggle.setAttribute('aria-expanded', 'false');
+            isOpen = false;
+        }
+    }
+
+    toggle.addEventListener('click', function () {
+        setOpen(!isOpen);
+    });
+    scrim.addEventListener('click', function () {
+        setOpen(false);
+    });
+    tabs.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            setOpen(false);
+        });
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && isOpen) {
+            setOpen(false);
+        }
+    });
+    if (typeof drawerMedia.addEventListener === 'function') {
+        drawerMedia.addEventListener('change', syncLayoutMode);
+    } else if (typeof drawerMedia.addListener === 'function') {
+        drawerMedia.addListener(syncLayoutMode);
+    }
+    syncLayoutMode();
+}
+
+// ---------------------------------------------------------------------------
+// Tab-bar drag-to-scroll
+// ---------------------------------------------------------------------------
+function wireTabBarDrag() {
+    const bar = document.querySelector('.jc-tab-bar');
+    if (!bar) {
+        return;
+    }
+    let isDown = false;
+    let dragged = false;
+    let startX = 0;
+    let startScroll = 0;
+
+    bar.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) {
+            return; // left button only
+        }
+        isDown = true;
+        dragged = false;
+        startX = e.pageX;
+        startScroll = bar.scrollLeft;
+    });
+    bar.addEventListener('mousemove', function (e) {
+        if (!isDown) {
+            return;
+        }
+        const dx = e.pageX - startX;
+        if (!dragged) {
+            if (Math.abs(dx) < 5) {
+                return; // below drag threshold — keep it a plain click
+            }
+            dragged = true;
+            bar.classList.add('jc-dragging');
+        }
+        bar.scrollLeft = startScroll - dx;
+        e.preventDefault();
+    });
+    function endDrag() {
+        // Keep `dragged` set so the synthesized click after drag-end is suppressed.
+        isDown = false;
+        bar.classList.remove('jc-dragging');
+    }
+    bar.addEventListener('mouseup', endDrag);
+    bar.addEventListener('mouseleave', endDrag);
+    bar.addEventListener('click', function (e) {
+        if (dragged) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragged = false;
+        }
+    }, true);
+}
+
+function wireNavShell() {
+    captureStaticNodeLists();
+    wireTabBarDrag();
+    wireSectionDrawer();
+    wireGroupShell();
+    wireTabButtons();
+    restoreSavedTab();
+}
+
+// ---------------------------------------------------------------------------
+// Settings search
+// ---------------------------------------------------------------------------
+const SKIP_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'SCRIPT', 'STYLE']);
+const savedDetailsStates = new Map(); // details element -> open state
+let isSearchMode = false;
+let currentMatchIdx = -1;
+let allMatches = [];
+let searchDebounce = null;
+let searchInput = null;
+let searchClear = null;
+let searchCount = null;
+let _jeDisplayCache = null; // WeakMap: parent element -> is flex/grid (reset per search pass)
+
+function getSearchableText(element) {
+    let text = element.textContent.toLowerCase();
+    element.querySelectorAll('[id], [name], [data-text], [data-icon]').forEach(function (el) {
+        if (el.id) {
+            text += ' ' + el.id.toLowerCase();
+        }
+        const name = el.getAttribute('name');
+        if (name) {
+            text += ' ' + name.toLowerCase();
+        }
+        if (el.dataset.text) {
+            text += ' ' + el.dataset.text.toLowerCase();
+        }
+        if (el.dataset.icon) {
+            text += ' ' + el.dataset.icon.toLowerCase();
+        }
+    });
+    return text;
+}
+
+function _jeTabButtonLabel(btn) {
+    // Clone and strip icons so ligature names ("dashboard") don't leak into the label.
+    const clone = btn.cloneNode(true);
+    clone.querySelectorAll('i.material-icons, img').forEach(function (n) {
+        n.remove();
+    });
+    return (clone.textContent || '').trim();
+}
+
+function _jeParentIsFlexOrGrid(parent) {
+    if (!_jeDisplayCache) {
+        _jeDisplayCache = new WeakMap();
+    }
+    if (_jeDisplayCache.has(parent)) {
+        return _jeDisplayCache.get(parent);
+    }
+    const result = /(flex|grid)$/.test(getComputedStyle(parent).display);
+    _jeDisplayCache.set(parent, result);
+    return result;
+}
+
+function highlightTextIn(root, query) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+            const parent = node.parentElement;
+            if (!parent) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            if (SKIP_TAGS.has(parent.tagName)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            // Never highlight dependency-hint chrome, an existing mark, or
+            // Essentials/wizard content.
+            if (parent.closest('.jc-search-match, .jc-search-tab-label, .dep-hint-text, .dep-required-icon, .jc-dep-banner, [class*="parent-hint-"], #jcWizard, #jcEssentials')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    const textNodes = [];
+    while (walker.nextNode()) {
+        if (walker.currentNode.nodeValue.toLowerCase().includes(query)) {
+            textNodes.push(walker.currentNode);
+        }
+    }
+
+    textNodes.forEach(function (node) {
+        const text = node.nodeValue;
+        const lower = text.toLowerCase();
+        const frag = document.createDocumentFragment();
+        let pos = 0;
+        let idx = lower.indexOf(query);
+        while (idx !== -1) {
+            if (idx > pos) {
+                frag.appendChild(document.createTextNode(text.slice(pos, idx)));
+            }
+            const mark = document.createElement('mark');
+            mark.className = 'jc-search-match';
+            mark.textContent = text.slice(idx, idx + query.length);
+            frag.appendChild(mark);
+            pos = idx + query.length;
+            idx = lower.indexOf(query, pos);
+        }
+        if (pos < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(pos)));
+        }
+        const parent = node.parentNode;
+        if (!parent) {
+            return;
+        }
+        // Flex/grid protection (checks ordered cheap-first): if the fragment has
+        // multiple pieces and the parent lays out flex/grid, wrap them so the
+        // parent still sees one child (otherwise justify-content scatters the
+        // pieces, e.g. "Auto Sea…son Requests").
+        if (frag.childNodes.length > 1 && _jeParentIsFlexOrGrid(parent)) {
+            const wrap = document.createElement('span');
+            wrap.className = 'jc-search-wrap';
+            wrap.appendChild(frag);
+            parent.replaceChild(wrap, node);
+        } else {
+            parent.replaceChild(frag, node);
+        }
+    });
+}
+
+function clearHighlights() {
+    document.querySelectorAll('.jc-search-match').forEach(function (mark) {
+        const parent = mark.parentNode;
+        if (!parent) {
+            return;
+        }
+        parent.replaceChild(document.createTextNode(mark.textContent), mark);
+        parent.normalize();
+    });
+    document.querySelectorAll('.jc-search-wrap').forEach(function (wrap) {
+        const parent = wrap.parentNode;
+        if (!parent) {
+            return;
+        }
+        while (wrap.firstChild) {
+            parent.insertBefore(wrap.firstChild, wrap);
+        }
+        wrap.remove();
+        parent.normalize();
+    });
+    allMatches = [];
+    currentMatchIdx = -1;
+}
+
+function enterSearchMode() {
+    if (isSearchMode) {
+        return;
+    }
+    isSearchMode = true;
+    form.classList.add('jc-search-mode');
+    form.querySelectorAll('details').forEach(function (d) {
+        savedDetailsStates.set(d, d.open);
+    });
+    tabContents.forEach(function (tc) {
+        const label = document.createElement('div');
+        label.className = 'jc-search-tab-label';
+        const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
+        label.textContent = (navBtn && _jeTabButtonLabel(navBtn)) || tc.id;
+        tc.prepend(label);
+    });
+}
+
+function exitSearchMode() {
+    isSearchMode = false;
+    form.classList.remove('jc-search-mode');
+    tabContents.forEach(function (tc) {
+        tc.classList.remove('jc-tab-name-match');
+    });
+    clearHighlights();
+    document.querySelectorAll('.jc-search-tab-label').forEach(function (n) {
+        n.remove();
+    });
+    tabs.forEach(function (t) {
+        t.style.display = '';
+        t.classList.remove('jc-search-reveal');
+    });
+    document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(function (gb) {
+        gb.style.display = '';
+    });
+    document.querySelectorAll('.jc-nav-count').forEach(function (n) {
+        n.remove();
+    });
+    // LOAD-BEARING inline-style reset: performSearch's inline 'block'/'none'
+    // would otherwise beat `.jellyfin-tab-content.active { display: grid }`,
+    // collapsing matched tabs to single-column or keeping unmatched tabs hidden
+    // after their next activation. Outside search mode the `.active` class
+    // alone owns visibility.
+    tabContents.forEach(function (tc) {
+        tc.style.display = '';
+    });
+    document.querySelectorAll('.jc-search-hidden').forEach(function (n) {
+        n.classList.remove('jc-search-hidden');
+    });
+    savedDetailsStates.forEach(function (open, d) {
+        d.open = open;
+    });
+    savedDetailsStates.clear();
+
+    // Re-activate the persisted tab (fall back to overview when
+    // missing/unknown/storage-throws).
+    let savedTab = 'overview';
+    try {
+        const stored = sessionStorage.getItem('jellyfinCanopyActiveTab');
+        if (stored) {
+            savedTab = LEGACY_TAB_MAP[stored] || stored;
+        }
+    } catch (e) {
+        // sessionStorage unavailable — fall back to overview
+    }
+    if (!document.getElementById(savedTab)) {
+        savedTab = 'overview';
+    }
+    activateTab(savedTab);
+
+    if (searchCount) {
+        searchCount.style.display = 'none';
+    }
+    if (searchClear) {
+        searchClear.style.display = 'none';
+    }
+}
+
+function performSearch(query) {
+    query = String(query || '').toLowerCase().trim();
+    if (!query) {
+        if (isSearchMode) {
+            exitSearchMode();
+        }
+        return;
+    }
+    // 2-character minimum: 1-char queries match thousands of text nodes.
+    if (query.length < 2) {
+        if (isSearchMode) {
+            exitSearchMode();
+        }
+        if (searchCount) {
+            searchCount.textContent = 'Type 2+ characters to search';
+            searchCount.style.display = 'block';
+        }
+        if (searchClear) {
+            searchClear.style.display = 'block';
+        }
+        return;
+    }
+
+    if (!isSearchMode) {
+        enterSearchMode();
+    }
+    clearHighlights();
+    _jeDisplayCache = new WeakMap();
+
+    let sectionCount = 0;
+    const groupMatchCounts = {};
+
+    tabContents.forEach(function (tc) {
+        let tabHasMatch = false;
+        tc.querySelectorAll(':scope > fieldset').forEach(function (fs) {
+            // Index skips Essentials/wizard content by contract.
+            if (fs.closest('#jcWizard, #jcEssentials')) {
+                return;
+            }
+            if (!getSearchableText(fs).includes(query)) {
+                fs.classList.add('jc-search-hidden');
+                return;
+            }
+            fs.classList.remove('jc-search-hidden');
+            tabHasMatch = true;
+            sectionCount++;
+            fs.querySelectorAll('details').forEach(function (d) {
+                if (getSearchableText(d).includes(query)) {
+                    d.classList.remove('jc-search-hidden');
+                    d.open = true;
+                } else {
+                    d.classList.add('jc-search-hidden');
+                }
             });
+            highlightTextIn(fs, query);
+        });
 
-            searchInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') {
-                    clearTimeout(searchDebounce);  // kill the debounce so a stale non-empty query can't re-enter search mode after we exit
-                    searchInput.value = '';
-                    performSearch('');
-                    searchInput.blur();
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (allMatches.length > 0) {
-                        goToMatch(currentMatchIdx + (e.shiftKey ? -1 : 1));
+        tc.style.display = tabHasMatch ? 'block' : 'none';
+
+        const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
+        let nameMatch = false;
+        if (navBtn) {
+            navBtn.style.display = tabHasMatch ? '' : 'none';
+            navBtn.classList.toggle('jc-search-reveal', tabHasMatch);
+            let badge = navBtn.querySelector('.jc-nav-count');
+            if (tabHasMatch) {
+                const count = tc.querySelectorAll(':scope > fieldset:not(.jc-search-hidden)').length;
+                if (!badge) {
+                    const h3 = navBtn.querySelector('h3');
+                    if (h3) {
+                        badge = document.createElement('span');
+                        badge.className = 'jc-nav-count';
+                        h3.appendChild(badge);
                     }
                 }
+                if (badge) {
+                    badge.textContent = String(count);
+                }
+                const g = navBtn.dataset.group;
+                if (g) {
+                    groupMatchCounts[g] = (groupMatchCounts[g] || 0) + count;
+                }
+            } else if (badge) {
+                badge.remove();
+            }
+            // Tab-name ranking: name-matched tabs sort first via CSS order: -1.
+            nameMatch = tabHasMatch && _jeTabButtonLabel(navBtn).toLowerCase().includes(query);
+        }
+        tc.classList.toggle('jc-tab-name-match', nameMatch);
+    });
+
+    document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(function (gb) {
+        const count = groupMatchCounts[gb.dataset.group] || 0;
+        gb.style.display = count > 0 ? '' : 'none';
+        let badge = gb.querySelector('.jc-nav-count');
+        if (count > 0) {
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'jc-nav-count';
+                gb.appendChild(badge);
+            }
+            badge.textContent = String(count);
+        } else if (badge) {
+            badge.remove();
+        }
+    });
+
+    allMatches = Array.from(form.querySelectorAll('.jc-search-match'));
+    currentMatchIdx = -1;
+
+    if (searchCount) {
+        if (allMatches.length > 0) {
+            searchCount.textContent = '0 of ' + allMatches.length;
+        } else if (sectionCount > 0) {
+            searchCount.textContent = sectionCount + ' section' + (sectionCount !== 1 ? 's' : '') + ' found';
+        } else {
+            searchCount.textContent = 'No results';
+        }
+        searchCount.style.display = 'block';
+    }
+    if (searchClear) {
+        searchClear.style.display = 'block';
+    }
+}
+
+function goToMatch(index) {
+    if (!allMatches.length) {
+        return;
+    }
+    if (currentMatchIdx >= 0 && allMatches[currentMatchIdx]) {
+        allMatches[currentMatchIdx].classList.remove('jc-search-match-active');
+    }
+    if (index >= allMatches.length) {
+        index = 0;
+    }
+    if (index < 0) {
+        index = allMatches.length - 1;
+    }
+    currentMatchIdx = index;
+    const match = allMatches[index];
+    match.classList.add('jc-search-match-active');
+    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (searchCount) {
+        searchCount.textContent = (index + 1) + ' of ' + allMatches.length;
+    }
+}
+
+function wireSearch() {
+    captureStaticNodeLists();
+    searchInput = document.querySelector('#settingsSearchInput');
+    searchClear = document.querySelector('#settingsSearchClear');
+    searchCount = document.querySelector('#settingsSearchCount');
+    // Guard: the search container may be absent/hidden (jc-essentials-mode);
+    // the rest of the page must keep working without it.
+    if (!searchInput || !searchClear || !searchCount) {
+        return;
+    }
+
+    searchInput.addEventListener('input', function () {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(function () {
+            performSearch(searchInput.value);
+        }, 150);
+    });
+
+    searchInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            // Kill any pending stale query so it can't re-enter search mode after exit.
+            clearTimeout(searchDebounce);
+            searchInput.value = '';
+            performSearch('');
+            searchInput.blur();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (allMatches.length) {
+                goToMatch(currentMatchIdx + (e.shiftKey ? -1 : 1));
+            }
+        }
+    });
+
+    searchClear.addEventListener('click', function () {
+        clearTimeout(searchDebounce);
+        searchInput.value = '';
+        performSearch('');
+        searchInput.focus();
+    });
+}
+
+/* SECTION: dashboards — owns: renderServiceStatusDashboard, renderFeaturesDashboard,
+   renderOptionalPluginsDashboard, checkInstalledPlugins, setProbeWarning,
+   checklistRowState, readFieldValue, readFieldChecked, resetAllUserSettings,
+   updateClearTagCachesQuickBtnVisibility, plugin-detection flags
+   (hasFileTransformation, hasIntroSkipper, hasInPlayerEpisodePreview, hasKefinTweaks),
+   _jeDisabledPlugins, _jeProbeWarnings, OPTIONAL_PLUGINS, retest-all state.
+   wires: wireDashboards.
+   depends: pluginId, escapeHtml, _jeSuppressTestAlerts, clearConnectionTestCache,
+   getPersistedTestResult, _jeNormalizeArrUrl, updateAllDependencies (core);
+   jcNormalizeMaintainerrBaseUrl, jcFingerprintConnectionValue,
+   cancelActiveMaintainerrTest (connections section); buildConfigFromForm (binder
+   section); ApiClient, Dashboard (host).
+   NOTE: renderChecklist()/updateStatusDashboard() aliases are removed per the
+   approved dead-code list — all call sites use renderServiceStatusDashboard(). */
+
+const RETEST_ALL_MIN_COOLDOWN_MS = 4000;
+const RETEST_ALL_MAX_WAIT_MS = 25000;
+
+const SERVICE_STATE_PRIORITY = { error: 0, warn: 1, pending: 2, ok: 3, off: 4 };
+const SERVICE_STATUS_GLYPHS = {
+    ok: 'check_circle',
+    warn: 'warning',
+    error: 'error',
+    pending: 'hourglass_empty'
+};
+
+const OPTIONAL_PLUGINS = [
+    {
+        key: 'fileTransformation',
+        name: 'File Transformation',
+        icon: 'transform',
+        url: 'https://github.com/IAmParadox27/jellyfin-plugin-file-transformation',
+        purpose: 'Required by Custom Tabs, Plugin Pages, and other plugins that modify the web client.'
+    },
+    {
+        key: 'introSkipper',
+        name: 'Intro Skipper',
+        icon: 'skip_next',
+        url: 'https://github.com/intro-skipper/intro-skipper',
+        purpose: 'Source of timestamps for Auto-skip Intro / Auto-skip Outro.'
+    },
+    {
+        key: 'inPlayerEpisodePreview',
+        name: 'In-Player Episode Preview',
+        icon: 'movie_filter',
+        url: 'https://github.com/Namo2/InPlayerEpisodePreview',
+        purpose: 'Enables the in-player Episode Preview keyboard shortcut.'
+    },
+    {
+        key: 'kefinTweaks',
+        name: 'KefinTweaks',
+        icon: 'bookmark_border',
+        url: 'https://github.com/ranaldsgift/KefinTweaks',
+        purpose: 'Renders the Watchlist UI in Jellyfin. Required to view watchlisted items from the Seerr Watchlist features. Installs as a web-mod (not a normal plugin), detected via its injected scripts.'
+    }
+];
+
+// Plugin-detection flags. Tri-state: true = installed AND Active, false = missing
+// or not Active, null = probe not run / failed. Read by the features dashboard,
+// the optional-plugins dashboard, and core dependency gating.
+let hasFileTransformation = null;
+let hasIntroSkipper = null;
+let hasInPlayerEpisodePreview = null;
+let hasKefinTweaks = null;
+let _jeDisabledPlugins = {};
+const _jeProbeWarnings = {};
+
+const _jeStatusDashboardWarnedSelectors = new Set();
+
+let _jeRetestLastRun = 0;
+let _jeRetestPollTimer = null;
+let _jeRetestHardStopTimer = null;
+
+function readFieldValue(sel) {
+    const el = document.querySelector(sel);
+    if (!el) {
+        if (!_jeStatusDashboardWarnedSelectors.has(sel)) {
+            _jeStatusDashboardWarnedSelectors.add(sel);
+            console.warn('[JC] status dashboard: selector "' + sel + '" not found');
+        }
+        return '';
+    }
+    return String(el.value || '').trim();
+}
+
+function readFieldChecked(sel) {
+    const el = document.querySelector(sel);
+    if (!el) {
+        if (!_jeStatusDashboardWarnedSelectors.has(sel)) {
+            _jeStatusDashboardWarnedSelectors.add(sel);
+            console.warn('[JC] status dashboard: selector "' + sel + '" not found');
+        }
+        return false;
+    }
+    return !!el.checked;
+}
+
+function readArrCardField(card, sel) {
+    const el = card.querySelector(sel);
+    return el ? String(el.value || '').trim() : '';
+}
+
+// Maps a persisted connection-test result (connections section cache) onto a
+// checklist row. No cached result (or binding mismatch, handled inside
+// getPersistedTestResult) → pending with the caller's default detail.
+/* checklistRowState is owned by the connections section. */
+
+// Cached test results use 'amber' for soft failures; the dashboard vocabulary is
+// ok/warn/error/pending/off.
+function mapChecklistState(state) {
+    return state === 'amber' ? 'warn' : state;
+}
+
+/* Contract alias: the connection-test cache refreshes dashboards through this
+   name (the maintainerr drift-guard harness stubs it). */
+function renderChecklist() {
+    renderServiceStatusDashboard();
+}
+
+function renderServiceStatusDashboard() {
+    const root = document.querySelector('#jc-service-dashboard');
+    if (!root) {
+        return;
+    }
+    root.textContent = '';
+
+    const cards = [];
+
+    // 1. TMDB — always present, presence-based only. Quirk preserved: cached
+    // 'tmdb' test results are deliberately ignored by this card.
+    const tmdbKey = readFieldValue('#TMDB_API_KEY');
+    cards.push({
+        id: 'tmdb',
+        name: 'TMDB',
+        tab: 'elsewhere',
+        icon: 'vpn_key',
+        state: tmdbKey ? 'ok' : 'off',
+        detail: tmdbKey ? 'API key set' : 'No API key',
+        scrollTo: '#TMDB_API_KEY'
+    });
+
+    // 2. Seerr — only when relevant.
+    const seerrEnabled = readFieldChecked('#seerrEnabled');
+    const seerrUrlsRaw = readFieldValue('#seerrUrls');
+    const seerrUrlCount = seerrUrlsRaw
+        .split('\n')
+        .map(function (line) { return line.trim(); })
+        .filter(Boolean)
+        .length;
+    const seerrKey = readFieldValue('#SeerrApiKey');
+    if (seerrEnabled && seerrUrlCount > 0 && seerrKey) {
+        const row = checklistRowState('seerr', 'Configured — not yet verified');
+        cards.push({
+            id: 'seerr',
+            name: 'Seerr',
+            tab: 'seerr',
+            icon: 'bolt',
+            state: mapChecklistState(row.state),
+            detail: row.detail + (seerrUrlCount > 1 ? ' · ' + seerrUrlCount + ' URLs' : '')
+        });
+    } else if (seerrEnabled) {
+        cards.push({
+            id: 'seerr',
+            name: 'Seerr',
+            tab: 'seerr',
+            icon: 'bolt',
+            state: 'warn',
+            detail: (seerrUrlCount === 0 && !seerrKey) ? 'Enabled but URL and API key missing'
+                : (seerrUrlCount === 0 ? 'URL missing' : 'API key missing')
+        });
+    } else if (seerrUrlsRaw || seerrKey) {
+        cards.push({
+            id: 'seerr',
+            name: 'Seerr',
+            tab: 'seerr',
+            icon: 'bolt',
+            state: 'off',
+            detail: 'Configured but integration disabled'
+        });
+    }
+
+    // 3. Maintainerr — URL-only by design (Maintainerr 3.18 has no API auth).
+    const maintainerrEnabled = readFieldChecked('#maintainerrEnabled');
+    const maintainerrRaw = readFieldValue('#maintainerrUrl');
+    const normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl(maintainerrRaw);
+    if (maintainerrEnabled && normalizedMaintainerrUrl) {
+        const row = checklistRowState(
+            'maintainerr',
+            'Configured — not yet verified',
+            jcFingerprintConnectionValue(normalizedMaintainerrUrl)
+        );
+        cards.push({
+            id: 'maintainerr',
+            name: 'Maintainerr',
+            tab: 'maintainerr',
+            icon: 'cleaning_services',
+            state: mapChecklistState(row.state),
+            detail: row.detail,
+            scrollTo: '#maintainerrUrl'
+        });
+    } else if (maintainerrEnabled) {
+        cards.push({
+            id: 'maintainerr',
+            name: 'Maintainerr',
+            tab: 'maintainerr',
+            icon: 'cleaning_services',
+            state: 'warn',
+            detail: maintainerrRaw ? 'Enabled but URL is invalid' : 'Enabled but URL missing'
+        });
+    } else if (maintainerrRaw) {
+        cards.push({
+            id: 'maintainerr',
+            name: 'Maintainerr',
+            tab: 'maintainerr',
+            icon: 'cleaning_services',
+            state: 'off',
+            detail: 'Configured but integration disabled'
+        });
+    }
+
+    // 4. Sonarr / Radarr — one card per instance card.
+    [
+        { type: 'sonarr', listSel: '#sonarrInstancesList', defaultName: 'Sonarr', icon: 'tv' },
+        { type: 'radarr', listSel: '#radarrInstancesList', defaultName: 'Radarr', icon: 'movie' }
+    ].forEach(function (svc) {
+        document.querySelectorAll(svc.listSel + ' .arr-instance-card').forEach(function (card) {
+            const url = readArrCardField(card, '.arr-instance-url');
+            const apiKey = readArrCardField(card, '.arr-instance-apikey');
+            if (!url && !apiKey) {
+                return;
+            }
+            const nameInput = card.querySelector('.arr-instance-name');
+            const name = (nameInput && String(nameInput.value || '').trim()) || svc.defaultName;
+            const cacheKey = svc.type + ':' + _jeNormalizeArrUrl(url);
+            const enabledCb = card.querySelector('.arr-instance-enabled');
+            let state;
+            let detail;
+            if (enabledCb && !enabledCb.checked) {
+                // Overrides any cached test state — a stale green/red on a
+                // disabled instance is misleading.
+                state = 'off';
+                detail = 'Disabled';
+            } else if (!url) {
+                state = 'warn';
+                detail = 'URL missing';
+            } else if (!apiKey) {
+                state = 'warn';
+                detail = 'API key missing';
+            } else {
+                const row = checklistRowState(cacheKey, 'Configured — not yet verified');
+                state = mapChecklistState(row.state);
+                detail = row.detail;
+            }
+            cards.push({
+                id: cacheKey,
+                name: name,
+                tab: 'arr',
+                icon: svc.icon,
+                state: state,
+                detail: detail
             });
+        });
+    });
 
-            searchClear.addEventListener('click', () => {
-                clearTimeout(searchDebounce);  // kill the debounce — see Escape handler
-                searchInput.value = '';
-                performSearch('');
-                searchInput.focus();
-            });
+    // 5. Bazarr — no test endpoint.
+    const bazarrUrl = readFieldValue('#bazarrUrl');
+    const bazarrMappings = readFieldValue('#bazarrUrlMappings');
+    if (bazarrUrl || bazarrMappings) {
+        cards.push({
+            id: 'bazarr',
+            name: 'Bazarr',
+            tab: 'arr',
+            icon: 'subtitles',
+            state: bazarrUrl ? 'ok' : 'warn',
+            detail: bazarrUrl ? 'URL configured' : 'Only URL mappings set'
+        });
+    }
 
+    if (!cards.length) {
+        const empty = document.createElement('div');
+        empty.className = 'jc-checklist-empty';
+        empty.textContent = 'Configure TMDB, Seerr, Maintainerr, or an *arr instance to see its status here.';
+        root.appendChild(empty);
+        return;
+    }
 
+    cards.sort(function (a, b) {
+        const pa = SERVICE_STATE_PRIORITY[a.state] !== undefined ? SERVICE_STATE_PRIORITY[a.state] : 99;
+        const pb = SERVICE_STATE_PRIORITY[b.state] !== undefined ? SERVICE_STATE_PRIORITY[b.state] : 99;
+        return pa - pb;
+    });
 
-            /**
-             * Collects searchable text from an element, including IDs, names, and data attributes.
-             * @param {HTMLElement} element - The DOM element to extract text from
-             * @returns {string} Lowercase concatenation of text content and attribute values
-             */
-            function getSearchableText(element) {
-                var text = element.textContent.toLowerCase();
-                element.querySelectorAll('[id], [name], [data-text], [data-icon]').forEach(function(el) {
-                    if (el.id) text += ' ' + el.id.toLowerCase();
-                    if (el.name) text += ' ' + el.name.toLowerCase();
-                    if (el.dataset.text) text += ' ' + el.dataset.text.toLowerCase();
-                    if (el.dataset.icon) text += ' ' + el.dataset.icon.toLowerCase();
-                });
-                return text;
+    cards.forEach(function (card) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'jc-service-card jc-state-' + card.state;
+        btn.dataset.target = card.tab;
+        btn.dataset.statusId = card.id;
+
+        const icon = document.createElement('i');
+        icon.className = 'material-icons jc-service-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = card.state === 'off'
+            ? (card.icon || 'radio_button_unchecked')
+            : (SERVICE_STATUS_GLYPHS[card.state] || card.icon || 'radio_button_unchecked');
+
+        const body = document.createElement('div');
+        body.className = 'jc-service-body';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'jc-service-name';
+        nameEl.textContent = card.name;
+        const detailEl = document.createElement('div');
+        detailEl.className = 'jc-service-detail';
+        detailEl.textContent = card.detail;
+        body.appendChild(nameEl);
+        body.appendChild(detailEl);
+
+        btn.appendChild(icon);
+        btn.appendChild(body);
+
+        btn.addEventListener('click', function () {
+            const tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + card.tab + '"]');
+            if (tabBtn) {
+                tabBtn.click();
             }
-
-            /**
-             * Removes all search highlight marks and restores original text nodes.
-             */
-            function clearHighlights() {
-                form.querySelectorAll('.jc-search-match').forEach(mark => {
-                    const parent = mark.parentNode;
-                    parent.replaceChild(document.createTextNode(mark.textContent), mark);
-                    parent.normalize();
-                });
-                // Unwrap the flex/grid protection spans added by
-                // highlightTextIn. After the marks above were unwrapped,
-                // the wrapper contains only text nodes — move them up to
-                // the parent and drop the wrapper, so normalize() can
-                // merge back into a single text node identical to before
-                // the search.
-                form.querySelectorAll('.jc-search-wrap').forEach(wrap => {
-                    const parent = wrap.parentNode;
-                    while (wrap.firstChild) parent.insertBefore(wrap.firstChild, wrap);
-                    parent.removeChild(wrap);
-                    parent.normalize();
-                });
-                allMatches = [];
-                currentMatchIdx = -1;
-            }
-
-            /**
-             * Walks text nodes in an element and wraps query matches in highlight mark elements.
-             * @param {HTMLElement} element - The container to search within
-             * @param {string} query - Lowercase search term to highlight
-             */
-            function highlightTextIn(element, query) {
-                const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
-                    acceptNode: function(node) {
-                        if (SKIP_TAGS.has(node.parentElement.tagName)) return NodeFilter.FILTER_REJECT;
-                        if (node.parentElement.closest('.jc-search-match, .jc-search-tab-label, .dep-hint-text, .dep-required-icon, .jc-dep-banner, [class*="parent-hint-"]'))
-                            return NodeFilter.FILTER_REJECT;
-                        return NodeFilter.FILTER_ACCEPT;
-                    }
-                });
-                var textNodes = [];
-                while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-                // Per-parent display cache. getComputedStyle forces style
-                // recomputation and — called naively once per text node during
-                // a big search — caused the settings search to feel
-                // extremely laggy on every keystroke. Most matches in a
-                // fieldset share a parent (e.g., all text nodes inside one
-                // .fieldDescription), so a WeakMap keyed on the parent
-                // element cuts the call count to one per distinct parent.
-                var parentDisplayCache = new WeakMap();
-                function isFlexOrGridParent(parent) {
-                    if (parentDisplayCache.has(parent)) return parentDisplayCache.get(parent);
-                    var d = getComputedStyle(parent).display;
-                    var flex = /(flex|grid)$/.test(d);
-                    parentDisplayCache.set(parent, flex);
-                    return flex;
-                }
-
-                textNodes.forEach(function(node) {
-                    var text = node.textContent;
-                    var lower = text.toLowerCase();
-                    if (!lower.includes(query)) return;
-
-                    var frag = document.createDocumentFragment();
-                    var last = 0;
-                    var idx;
-                    while ((idx = lower.indexOf(query, last)) !== -1) {
-                        if (idx > last) frag.appendChild(document.createTextNode(text.substring(last, idx)));
-                        var mark = document.createElement('mark');
-                        mark.className = 'jc-search-match';
-                        mark.textContent = text.substring(idx, idx + query.length);
-                        frag.appendChild(mark);
-                        last = idx + query.length;
-                    }
-                    if (last < text.length) frag.appendChild(document.createTextNode(text.substring(last)));
-
-                    // If the text node lives directly inside a flex/grid
-                    // container, splitting it into mark + remainder nodes
-                    // creates multiple flex/grid items. Those items then
-                    // get repositioned by justify-content / align-items on
-                    // the parent — e.g. a <summary> with space-between
-                    // would spread the <mark> to the start and the
-                    // trailing text to the end, splitting "Auto Season
-                    // Requests" into "Auto Sea" . "son Requests" on a
-                    // search for "auto sea". Wrap in an inline span so
-                    // the parent still sees a single child.
-                    //
-                    // Order the checks cheap-first: childNodes.length is
-                    // an O(1) lookup with no style side-effects, while
-                    // isFlexOrGridParent triggers getComputedStyle on a
-                    // cache miss. If the fragment has only one child
-                    // (the whole text matched exactly), no splitting
-                    // happens and we can skip the style check entirely.
-                    var parent = node.parentNode;
-                    if (frag.childNodes.length > 1 && isFlexOrGridParent(parent)) {
-                        var wrapper = document.createElement('span');
-                        wrapper.className = 'jc-search-wrap';
-                        wrapper.appendChild(frag);
-                        parent.replaceChild(wrapper, node);
-                    } else {
-                        parent.replaceChild(frag, node);
-                    }
-                });
-            }
-
-            /**
-             * Navigates to a specific search match by index and scrolls it into view.
-             * @param {number} index - Zero-based index of the match to navigate to
-             */
-            function goToMatch(index) {
-                if (allMatches.length === 0) return;
-                if (currentMatchIdx >= 0 && currentMatchIdx < allMatches.length) {
-                    allMatches[currentMatchIdx].classList.remove('jc-search-match-active');
-                }
-                if (index >= allMatches.length) index = 0;
-                if (index < 0) index = allMatches.length - 1;
-                currentMatchIdx = index;
-                allMatches[currentMatchIdx].classList.add('jc-search-match-active');
-                allMatches[currentMatchIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                searchCount.textContent = (currentMatchIdx + 1) + ' of ' + allMatches.length;
-            }
-
-            /**
-             * Enters search mode: saves detail open/closed states, hides tab buttons, and adds tab labels.
-             */
-            function enterSearchMode() {
-                if (isSearchMode) return;
-                isSearchMode = true;
-                form.classList.add('jc-search-mode');
-                form.querySelectorAll('details').forEach(d => {
-                    savedDetailsStates.set(d, d.open);
-                });
-                tabContents.forEach(tc => {
-                    const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tc.id + '"]');
-                    // btn.textContent would include Material Icons font
-                    // ligature names ("dashboard", "view_list", …) which
-                    // render as glyphs but read as raw strings in
-                    // textContent. That leaked into tab headers like
-                    // "dashboardOverview" / "view_listPages". Clone the
-                    // button, strip out the icon elements, then read.
-                    let label = tc.id;
-                    if (btn) {
-                        const clone = btn.cloneNode(true);
-                        clone.querySelectorAll('i.material-icons, img').forEach(el => el.remove());
-                        label = clone.textContent.trim() || tc.id;
-                    }
-                    const labelEl = document.createElement('div');
-                    labelEl.className = 'jc-search-tab-label';
-                    labelEl.textContent = label;
-                    tc.insertBefore(labelEl, tc.firstChild);
-                });
-            }
-
-            /**
-             * Exits search mode: restores tab visibility, detail states, and clears highlights.
-             */
-            function exitSearchMode() {
-                isSearchMode = false;
-                form.classList.remove('jc-search-mode');
-                form.querySelectorAll('.jc-tab-name-match').forEach(tc => tc.classList.remove('jc-tab-name-match'));
-                clearHighlights();
-                form.querySelectorAll('.jc-search-tab-label').forEach(el => el.remove());
-                document.querySelectorAll('.jellyfin-tab-button').forEach(btn => { btn.style.display = ''; btn.classList.remove('jc-search-reveal'); });
-                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(btn => { btn.style.display = ''; });
-                document.querySelectorAll('.jc-nav-count').forEach(el => el.remove());
-                // Clear inline display from every tab content. performSearch sets
-                // `style.display = 'block'|'none'` per tab; without this reset the
-                // inline value wins over `.jellyfin-tab-content.active { display: grid }`,
-                // collapsing matched tabs to single-column or hiding tabs that had no
-                // match the next time the user clicks them. The .active class alone
-                // owns visibility outside of search mode.
-                form.querySelectorAll('.jellyfin-tab-content').forEach(tc => { tc.style.display = ''; });
-                form.querySelectorAll('.jc-search-hidden').forEach(el => el.classList.remove('jc-search-hidden'));
-                form.querySelectorAll('details').forEach(d => {
-                    if (savedDetailsStates.has(d)) d.open = savedDetailsStates.get(d);
-                });
-                savedDetailsStates.clear();
-                let savedTab = 'overview';
-                try {
-                    savedTab = sessionStorage.getItem('jellyfinCanopyActiveTab') || 'overview';
-                    if (LEGACY_TAB_MAP[savedTab]) savedTab = LEGACY_TAB_MAP[savedTab];
-                    if (!document.getElementById(savedTab)) savedTab = 'overview';
-                } catch (e) {
-                    // Ignore if sessionStorage is not available
-                }
-                activateTab(savedTab);
-                searchCount.style.display = 'none';
-                searchClear.style.display = 'none';
-            }
-
-            /**
-             * Filters visible sections by query, highlights matches, and updates the match counter.
-             * @param {string} query - The search term entered by the user
-             */
-            function performSearch(query) {
-                query = query.toLowerCase().trim();
-
-                if (!query) {
-                    if (isSearchMode) exitSearchMode();
-                    return;
-                }
-
-                // 1-character queries like "a" or "e" match ~2000–4000 text
-                // nodes across the entire settings page, each triggering a
-                // DOM mutation. That costs 3–6 s and feels like the page
-                // froze. A 2-char minimum keeps the search responsive and
-                // still lets short feature names (e.g. "ui", "tv", "4k")
-                // through. If the user is mid-edit (backspaced a longer
-                // query down to 1 char), exit search mode and clear stale
-                // highlights, then surface a hint via the counter so the
-                // search UI doesn't look broken.
-                if (query.length < 2) {
-                    if (isSearchMode) exitSearchMode();
-                    searchCount.textContent = 'Type 2+ characters to search';
-                    searchCount.style.display = 'block';
-                    searchClear.style.display = 'block';
-                    return;
-                }
-
-                if (!isSearchMode) enterSearchMode();
-
-                clearHighlights();
-                let sectionCount = 0;
-                const groupMatchCounts = new Map();
-
-                tabContents.forEach(tabContent => {
-                    let tabHasMatch = false;
-                    const fieldsets = tabContent.querySelectorAll(':scope > fieldset');
-
-                    fieldsets.forEach(fieldset => {
-                        const fullText = getSearchableText(fieldset);
-
-                        if (!fullText.includes(query)) {
-                            fieldset.classList.add('jc-search-hidden');
+            if (card.scrollTo) {
+                // Double rAF: deliberately lands one frame after activateTab's
+                // single-rAF scroll restore so the deep link wins deterministically.
+                requestAnimationFrame(function () {
+                    requestAnimationFrame(function () {
+                        const target = document.querySelector(card.scrollTo);
+                        if (!target) {
+                            console.warn('[JC] service-status deep-link target not found:', card.scrollTo);
                             return;
                         }
-
-                        fieldset.classList.remove('jc-search-hidden');
-                        tabHasMatch = true;
-                        sectionCount++;
-
-                        const detailsEls = fieldset.querySelectorAll('details');
-                        detailsEls.forEach(detail => {
-                            if (getSearchableText(detail).includes(query)) {
-                                detail.classList.remove('jc-search-hidden');
-                                detail.open = true;
-                            } else {
-                                detail.classList.add('jc-search-hidden');
-                            }
-                        });
-
-                        highlightTextIn(fieldset, query);
+                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     });
-
-                    tabContent.style.display = tabHasMatch ? 'block' : 'none';
-
-                    // The shell nav stays usable during search: matching sections
-                    // get a count badge (and stay clickable to jump), zero-match
-                    // sections are revealed-off; the rail aggregates per group.
-                    const navBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
-                    if (navBtn) {
-                        navBtn.style.display = tabHasMatch ? '' : 'none';
-                        navBtn.classList.toggle('jc-search-reveal', tabHasMatch);
-                        let badge = navBtn.querySelector('.jc-nav-count');
-                        if (tabHasMatch) {
-                            const count = tabContent.querySelectorAll(':scope > fieldset:not(.jc-search-hidden)').length;
-                            if (!badge) {
-                                badge = document.createElement('span');
-                                badge.className = 'jc-nav-count';
-                                navBtn.querySelector('h3')?.appendChild(badge);
-                            }
-                            badge.textContent = String(count);
-                            const group = navBtn.dataset.group;
-                            if (group) groupMatchCounts.set(group, (groupMatchCounts.get(group) || 0) + count);
-                        } else if (badge) {
-                            badge.remove();
-                        }
-                    }
-
-                    // Rank tab-contents whose tab button's label itself
-                    // contains the query above tabs that matched only by
-                    // buried content. Searching "elsewhere" now surfaces
-                    // the Elsewhere tab first even though other tabs
-                    // (Overview service-status, Seerr) reference it too.
-                    // The CSS .jc-tab-name-match rule (flex order: -1)
-                    // does the actual reordering in the form container.
-                    const btn = document.querySelector('.jellyfin-tab-button[data-tab="' + tabContent.id + '"]');
-                    let tabLabel = tabContent.id.toLowerCase();
-                    if (btn) {
-                        const clone = btn.cloneNode(true);
-                        clone.querySelectorAll('i.material-icons, img').forEach(el => el.remove());
-                        tabLabel = clone.textContent.trim().toLowerCase();
-                    }
-                    tabContent.classList.toggle('jc-tab-name-match', tabHasMatch && tabLabel.includes(query));
                 });
-
-                // Rail groups: badge aggregate counts, dim zero-match groups.
-                document.querySelectorAll('#JellyfinCanopyPage .jc-group-btn').forEach(gb => {
-                    const count = groupMatchCounts.get(gb.dataset.group) || 0;
-                    gb.style.display = count > 0 ? '' : 'none';
-                    let badge = gb.querySelector('.jc-nav-count');
-                    if (count > 0) {
-                        if (!badge) {
-                            badge = document.createElement('span');
-                            badge.className = 'jc-nav-count';
-                            gb.appendChild(badge);
-                        }
-                        badge.textContent = String(count);
-                    } else if (badge) {
-                        badge.remove();
-                    }
-                });
-
-                allMatches = Array.from(form.querySelectorAll('.jc-search-match'));
-                currentMatchIdx = -1;
-
-                if (allMatches.length > 0) {
-                    searchCount.textContent = '0 of ' + allMatches.length;
-                } else {
-                    searchCount.textContent = sectionCount > 0
-                        ? sectionCount + ' section' + (sectionCount !== 1 ? 's' : '') + ' found'
-                        : 'No results';
-                }
-                searchCount.style.display = 'block';
-                searchClear.style.display = 'block';
-            }
-
-        const defaultShortcuts = [
-            { Name: "OpenSearch", Key: "/", Label: "Open Search", Category: "Global" },
-            { Name: "GoToHome", Key: "Shift+H", Label: "Go to Home", Category: "Global" },
-            { Name: "GoToDashboard", Key: "D", Label: "Go to Dashboard", Category: "Global" },
-            { Name: "QuickConnect", Key: "Q", Label: "Quick Connect", Category: "Global" },
-            { Name: "PlayRandomItem", Key: "R", Label: "Play Random Item", Category: "Global" },
-            { Name: "CycleAspectRatio", Key: "A", Label: "Cycle Aspect Ratio", Category: "Player" },
-            { Name: "ShowPlaybackInfo", Key: "I", Label: "Show Playback Info", Category: "Player" },
-            { Name: "SubtitleMenu", Key: "S", Label: "Subtitle Menu", Category: "Player" },
-            { Name: "CycleSubtitleTracks", Key: "C", Label: "Cycle Subtitle Tracks", Category: "Player" },
-            { Name: "CycleAudioTracks", Key: "V", Label: "Cycle Audio Tracks", Category: "Player" },
-            { Name: "IncreasePlaybackSpeed", Key: "+", Label: "Increase Playback Speed", Category: "Player" },
-            { Name: "DecreasePlaybackSpeed", Key: "-", Label: "Decrease Playback Speed", Category: "Player" },
-            { Name: "ResetPlaybackSpeed", Key: "R", Label: "Reset Playback Speed", Category: "Player" },
-            { Name: "BookmarkCurrentTime", Key: "B", Label: "Bookmark Current Time", Category: "Player" },
-            { Name: "OpenEpisodePreview", Key: "P", Label: "Open Episode Preview", Category: "Player" },
-            { Name: "SkipIntroOutro", Key: "O", Label: "Skip Intro/Outro", Category: "Player" },
-            { Name: "FrameStepBack", Key: ",", Label: "Step Back One Frame", Category: "Player" },
-            { Name: "FrameStepForward", Key: ".", Label: "Step Forward One Frame", Category: "Player" },
-            { Name: "JumpToLastPosition", Key: "Z", Label: "Jump to Last Position", Category: "Player" }
-        ];
-
-        function renderOverrides() {
-            shortcutListContainer.innerHTML = '';
-            if (shortcutOverrides.length === 0) {
-                shortcutListContainer.innerHTML = '<p class="fieldDescription" style="text-align: center;">No overrides configured. All shortcuts are using default values.</p>';
-            }
-            shortcutOverrides.forEach((shortcut, index) => {
-                const row = document.createElement('div');
-                row.className = 'inputContainer';
-                row.style.display = 'flex';
-                row.style.alignItems = 'center';
-                row.style.gap = '1em';
-
-                const label = document.createElement('label');
-                label.className = 'inputLabel';
-                label.textContent = shortcut.Label;
-                label.style.flex = '1';
-
-                const input = document.createElement('input');
-                input.setAttribute('is', 'emby-input');
-                input.type = 'text';
-                input.value = shortcut.Key;
-                input.style.flex = '1';
-                input.style.textAlign = 'center';
-                input.addEventListener('input', (e) => {
-                    let value = e.target.value;
-                    // Automatically convert single lowercase letters to uppercase ***
-                    if (value.match(/^[a-z]$/)) {
-                        value = value.toUpperCase();
-                        e.target.value = value;
-                    }
-                    shortcutOverrides[index].Key = value;
-                });
-
-
-                const buttonContainer = document.createElement('div');
-                const removeBtn = document.createElement('button');
-                removeBtn.setAttribute('is', 'emby-button');
-                removeBtn.type = 'button';
-                removeBtn.textContent = 'Remove';
-                removeBtn.className = 'raised button-cancel';
-                removeBtn.style.marginLeft = '1em';
-                removeBtn.addEventListener('click', () => {
-                    shortcutOverrides.splice(index, 1);
-                    jcMarkConfigDirty();
-                    renderOverrides();
-                    populateAddShortcutDropdown();
-                });
-
-                buttonContainer.appendChild(removeBtn);
-                row.appendChild(label);
-                row.appendChild(input);
-                row.appendChild(buttonContainer);
-                shortcutListContainer.appendChild(row);
-            });
-        }
-
-        function populateAddShortcutDropdown() {
-            addShortcutSelect.innerHTML = '';
-            const overriddenNames = shortcutOverrides.map(s => s.Name);
-            const availableShortcuts = defaultShortcuts.filter(s => !overriddenNames.includes(s.Name));
-
-            availableShortcuts.forEach(shortcut => {
-                const option = document.createElement('option');
-                option.value = shortcut.Name;
-                option.textContent = shortcut.Label;
-                addShortcutSelect.appendChild(option);
-            });
-            addShortcutBtn.disabled = availableShortcuts.length === 0;
-            addShortcutKeyInput.disabled = availableShortcuts.length === 0;
-        }
-
-        function showValidationError(elementToShake, message) {
-            shortcutErrorComment.textContent = message;
-            shortcutErrorComment.style.display = 'block';
-            elementToShake.classList.add('shake');
-
-            setTimeout(() => {
-                elementToShake.classList.remove('shake');
-                shortcutErrorComment.style.display = 'none';
-            }, 8000);
-        }
-
-        addShortcutBtn.addEventListener('click', () => {
-            const selectedName = addShortcutSelect.value;
-            let newKey = addShortcutKeyInput.value.trim();
-
-            // Automatically convert single lowercase letters to uppercase ***
-            if (newKey.match(/^[a-z]$/)) {
-                newKey = newKey.toUpperCase();
-            }
-
-            // Check 0: See if there is a key being added
-            if (!selectedName || !newKey) {
-                showValidationError(addShortcutBtn, 'Please enter a key to use as an override.');
-                return;
-            }
-
-            // Check 1: See if the key is already used in another custom override.
-            const overrideConflict = shortcutOverrides.find(s => s.Key.toLowerCase() === newKey.toLowerCase());
-
-            if (overrideConflict) {
-                const errorMessage = "The key '" + newKey + "' is already assigned to '" + overrideConflict.Label + "' as an override.";
-                showValidationError(addShortcutKeyInput.parentElement, errorMessage);
-                return;
-            }
-
-            // Check 2: See if the key is used by another default shortcut.
-            const defaultConflict = defaultShortcuts.find(s => s.Key.toLowerCase() === newKey.toLowerCase() && s.Name !== selectedName);
-
-            if (defaultConflict) {
-                const errorMessage = "The key '" + newKey + "' is already used by '" + defaultConflict.Label + "'.";
-                showValidationError(addShortcutKeyInput.parentElement, errorMessage);
-                return;
-            }
-
-            const defaultConfig = defaultShortcuts.find(s => s.Name === selectedName);
-            if (defaultConfig) {
-                shortcutOverrides.push({ ...defaultConfig, Key: newKey });
-                renderOverrides();
-                populateAddShortcutDropdown();
-                addShortcutKeyInput.value = '';
             }
         });
 
-        async function testSeerrConnection() {
-            const urls = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
-            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
+        root.appendChild(btn);
+    });
+}
 
-            if (!urls.length || !apiKey) {
-                Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key to test the connection.' });
-                return;
+function renderFeaturesDashboard() {
+    const root = document.querySelector('#jc-features-dashboard');
+    if (!root) {
+        return;
+    }
+    root.textContent = '';
+
+    function bool(id) {
+        const el = document.querySelector('#' + id);
+        return !!(el && el.checked);
+    }
+
+    function val(id) {
+        const el = document.querySelector('#' + id);
+        return el ? String(el.value || '').trim() : '';
+    }
+
+    // Any instance card with url+key. Enabled-ness deliberately NOT checked here
+    // (unlike hasAnyArrService).
+    function anyArrConfigured() {
+        const arrCards = document.querySelectorAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
+        return Array.prototype.some.call(arrCards, function (card) {
+            return !!(readArrCardField(card, '.arr-instance-url') && readArrCardField(card, '.arr-instance-apikey'));
+        });
+    }
+
+    // Note: deliberately does NOT require the enable toggle.
+    function seerrConfigured() {
+        return !!(val('seerrUrls') && val('SeerrApiKey'));
+    }
+
+    function feat(name, enabled, tab, detail, warn) {
+        if (!enabled) {
+            return { name: name, tab: tab, state: 'off', detail: 'Disabled' };
+        }
+        return { name: name, tab: tab, state: warn ? 'warn' : 'on', detail: detail };
+    }
+
+    const arrConfigured = anyArrConfigured();
+    const seerrReady = seerrConfigured();
+    const tmdbMissing = !val('TMDB_API_KEY');
+    const introSkipperMissing = hasIntroSkipper !== true;
+    const kefinTweaksMissing = hasKefinTweaks !== true;
+    const tagCount = [
+        'qualityTagsEnabled',
+        'genreTagsEnabled',
+        'languageTagsEnabled',
+        'ratingTagsEnabled',
+        'peopleTagsEnabled'
+    ].filter(bool).length;
+
+    const rows = [
+        feat('Remove from Continue Watching', bool('removeContinueWatchingEnabled'), 'display', 'Enabled', false),
+        feat('Hide Favorites Tab', bool('hideFavoritesTab'), 'display', 'Enabled', false),
+        feat('Media Tags', tagCount > 0, 'display', tagCount + ' tag type(s) enabled', false),
+        feat('Random Button', bool('randomButtonEnabled'), 'display', 'Enabled', false),
+        feat('Custom Pause Screen', bool('pauseScreenEnabled'), 'playback', 'Enabled', false),
+        feat('Long press for 2x speed', bool('longPress2xEnabled'), 'playback', 'Enabled (touch devices)', false),
+        feat('Auto-skip Intro/Outro', bool('autoSkipIntro') || bool('autoSkipOutro'), 'playback',
+            introSkipperMissing ? 'Enabled but Intro Skipper plugin is missing' : 'Enabled', introSkipperMissing),
+        feat('Tab-switch actions', bool('autoPauseEnabled') || bool('autoResumeEnabled') || bool('autoPipEnabled'), 'playback',
+            'Auto-pause / resume / PiP', false),
+        feat('Bookmarks', bool('bookmarksEnabled'), 'pages', 'Enabled', false),
+        feat('Hidden Content', bool('hiddenContentEnabled'), 'pages', 'Enabled', false),
+        feat('Requests Page', bool('downloadsPageEnabled'), 'pages',
+            (!seerrReady && !arrConfigured) ? 'Enabled but neither Seerr nor *arr is configured' : 'Enabled',
+            !seerrReady && !arrConfigured),
+        feat('Calendar Page', bool('calendarPageEnabled'), 'pages',
+            !arrConfigured ? 'Enabled but no *arr instance is configured' : 'Enabled', !arrConfigured),
+        feat('Custom splash / branding', bool('enableCustomSplashScreen'), 'extras', 'Enabled', false),
+        feat('Elsewhere (streaming providers)', bool('elsewhereEnabled'), 'elsewhere',
+            tmdbMissing ? 'Enabled but TMDB API key is missing' : 'Enabled', tmdbMissing),
+        feat('Seerr integration', bool('seerrEnabled'), 'seerr',
+            !seerrReady ? 'Enabled but Seerr URL or API key missing' : 'Enabled', !seerrReady),
+        feat('Watchlist sync', bool('addRequestedMediaToWatchlist') || bool('syncSeerrWatchlist'), 'seerr',
+            kefinTweaksMissing ? 'Enabled but KefinTweaks plugin not installed (watchlist UI won\'t render)' : 'Enabled',
+            kefinTweaksMissing),
+        feat('*arr detail-page links', bool('arrLinksEnabled'), 'arr',
+            !arrConfigured ? 'Enabled but no *arr instance is configured' : 'Enabled', !arrConfigured),
+        feat('*arr tags sync', bool('arrTagsSyncEnabled'), 'arr',
+            !arrConfigured ? 'Enabled but no *arr instance is configured' : 'Enabled', !arrConfigured)
+    ];
+
+    const FEATURE_STATE_PRIORITY = { warn: 0, on: 1, off: 2 };
+    rows.sort(function (a, b) {
+        const pa = FEATURE_STATE_PRIORITY[a.state] !== undefined ? FEATURE_STATE_PRIORITY[a.state] : 99;
+        const pb = FEATURE_STATE_PRIORITY[b.state] !== undefined ? FEATURE_STATE_PRIORITY[b.state] : 99;
+        return pa - pb;
+    });
+
+    if (!rows.length) {
+        const empty = document.createElement('div');
+        empty.className = 'jc-checklist-empty';
+        empty.textContent = 'No features configured yet.';
+        root.appendChild(empty);
+        return;
+    }
+
+    const FEATURE_GLYPHS = { on: 'check_circle', warn: 'warning', off: 'radio_button_unchecked' };
+    rows.forEach(function (row) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'jc-feature-row jc-state-' + row.state;
+        btn.dataset.target = row.tab;
+
+        const icon = document.createElement('i');
+        icon.className = 'material-icons jc-feature-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = FEATURE_GLYPHS[row.state] || 'radio_button_unchecked';
+
+        const body = document.createElement('div');
+        body.className = 'jc-feature-body';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'jc-feature-name';
+        nameEl.textContent = row.name;
+        const detailEl = document.createElement('div');
+        detailEl.className = 'jc-feature-detail';
+        detailEl.textContent = row.detail;
+        body.appendChild(nameEl);
+        body.appendChild(detailEl);
+
+        btn.appendChild(icon);
+        btn.appendChild(body);
+
+        btn.addEventListener('click', function () {
+            const tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + row.tab + '"]');
+            if (tabBtn) {
+                tabBtn.click();
             }
+        });
 
-            const _testToken = (typeof beginConnectionTest === 'function') ? beginConnectionTest() : undefined;
-            testSeerrBtn.disabled = true;
-            seerrStatusIndicator.textContent = 'sync';
-            seerrStatusIndicator.classList.add('status-check');
-            seerrStatusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
+        root.appendChild(btn);
+    });
+}
 
-            let validated = false;
-            let lastError = '';
-            for (const url of urls) {
-                try {
-                    const validationUrl = ApiClient.getUrl(`/JellyfinCanopy/seerr/validate`, {
-                        url: url
-                    });
+function optionalPluginFlag(key) {
+    switch (key) {
+        case 'fileTransformation': return hasFileTransformation;
+        case 'introSkipper': return hasIntroSkipper;
+        case 'inPlayerEpisodePreview': return hasInPlayerEpisodePreview;
+        case 'kefinTweaks': return hasKefinTweaks;
+        default: return null;
+    }
+}
 
-                    const res = await ApiClient.ajax({ type: 'GET', url: validationUrl, dataType: 'json', headers: { 'X-Arr-ApiKey': apiKey } });
+function renderOptionalPluginsDashboard() {
+    const root = document.querySelector('#jc-optional-plugins');
+    if (!root) {
+        return;
+    }
+    root.textContent = '';
 
-                    if (res && res.ok) {
-                        validated = true;
-                        break;
-                    }
-                } catch (e) {
-                    console.error(`Seerr validation failed for ${url}:`, e);
-                    // Jellyfin's ApiClient.ajax rejects with the Response object
-                    // (modern fetch), which doesn't expose responseText/responseJSON.
-                    // Read the body asynchronously so connectionErrorMessage can
-                    // surface the typed code/cfRay/message envelope.
-                    if (e && typeof e.json === 'function') {
-                        try { e.responseJSON = await e.clone().json(); } catch (_) { /* not JSON */ }
-                    }
-                    lastError = connectionErrorMessage(e, 'Seerr', url);
-                }
-            }
+    const OPTIONAL_PLUGIN_GLYPHS = {
+        installed: 'check_circle',
+        warn: 'warning',
+        unknown: 'help_outline',
+        missing: 'radio_button_unchecked'
+    };
 
-            testSeerrBtn.disabled = false;
-            seerrStatusIndicator.classList.remove('status-check');
-
-            if (validated) {
-                seerrStatusIndicator.textContent = 'check_circle';
-                seerrStatusIndicator.style.color = '#52b54b';
-                try { setConnectionTestResult('seerr', 'ok', 'Connected', _testToken); } catch (e) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
-            } else {
-                seerrStatusIndicator.textContent = 'error';
-                seerrStatusIndicator.style.color = '#dc3545';
-                try { setConnectionTestResult('seerr', 'error', (lastError && lastError.length < 80) ? lastError : 'Connection failed', _testToken); } catch (e) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Connection Failed', message: lastError || 'Could not connect to any provided URL.' });
-            }
+    OPTIONAL_PLUGINS.forEach(function (plugin) {
+        const flag = optionalPluginFlag(plugin.key);
+        let state;
+        let statusText;
+        if (flag === true) {
+            state = 'installed';
+            statusText = 'Installed';
+        } else if (flag === false && _jeDisabledPlugins[plugin.key]) {
+            // Copy is known to be imprecise for Restart/Superseded; the raw
+            // status is available in _jeDisabledPlugins.
+            state = 'warn';
+            statusText = 'Installed but disabled in Dashboard > Plugins';
+        } else if (flag === false) {
+            state = 'missing';
+            statusText = 'Not installed';
+        } else {
+            state = 'unknown';
+            statusText = 'Checking…';
         }
 
-        let maintainerrTestGeneration = 0;
-        let activeMaintainerrTestController = null;
+        const card = document.createElement('div');
+        card.className = 'jc-optional-plugin-card jc-state-' + state;
 
-        function jcSetMaintainerrTestStatus(icon, text, color, busy) {
-            maintainerrStatusIndicator.textContent = icon;
-            maintainerrStatusIndicator.style.color = color || '';
-            maintainerrStatusIndicator.classList.toggle('status-check', busy === true);
-            maintainerrStatusText.textContent = text;
-            testMaintainerrBtn.setAttribute('aria-busy', busy === true ? 'true' : 'false');
+        const icon = document.createElement('i');
+        icon.className = 'material-icons jc-optional-plugin-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = OPTIONAL_PLUGIN_GLYPHS[state];
+
+        const body = document.createElement('div');
+        body.className = 'jc-optional-plugin-body';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'jc-optional-plugin-name';
+        nameEl.textContent = plugin.name;
+        const statusEl = document.createElement('div');
+        statusEl.className = 'jc-optional-plugin-status';
+        statusEl.textContent = statusText;
+        const purposeEl = document.createElement('div');
+        purposeEl.className = 'jc-optional-plugin-purpose';
+        purposeEl.textContent = plugin.purpose;
+        body.appendChild(nameEl);
+        body.appendChild(statusEl);
+        body.appendChild(purposeEl);
+
+        card.appendChild(icon);
+        card.appendChild(body);
+
+        if (plugin.url) {
+            const link = document.createElement('a');
+            link.className = 'jc-optional-plugin-link';
+            link.href = plugin.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.title = 'Open ' + plugin.name + ' on GitHub';
+            link.setAttribute('aria-label', 'Open ' + plugin.name + ' on GitHub');
+            const linkIcon = document.createElement('i');
+            linkIcon.className = 'material-icons';
+            linkIcon.setAttribute('aria-hidden', 'true');
+            linkIcon.textContent = 'open_in_new';
+            link.appendChild(linkIcon);
+            card.appendChild(link);
         }
 
-        function cancelActiveMaintainerrTest(resetUi) {
-            maintainerrTestGeneration++;
-            if (activeMaintainerrTestController) {
-                activeMaintainerrTestController.abort();
-                activeMaintainerrTestController = null;
-            }
-            if (resetUi === true) {
-                testMaintainerrBtn.disabled = false;
-                jcSetMaintainerrTestStatus('', '', '', false);
-            }
-        }
+        root.appendChild(card);
+    });
+}
 
-        function jcIsCurrentMaintainerrTest(generation, url, controller) {
-            const input = document.querySelector('#maintainerrUrl');
-            return generation === maintainerrTestGeneration
-                && controller === activeMaintainerrTestController
-                && !controller.signal.aborted
-                && input
-                && jcNormalizeMaintainerrBaseUrl(input.value || '') === url;
-        }
+function checkInstalledPlugins() {
+    return ApiClient.ajax({
+        type: 'GET',
+        url: ApiClient.getUrl('/Plugins'),
+        dataType: 'json'
+    }).then(function (plugins) {
+        setProbeWarning('plugins', null);
+        _jeDisabledPlugins = {};
+        const list = Array.isArray(plugins) ? plugins : [];
+        const KNOWN_INACTIVE_STATUSES = ['Disabled', 'Restart', 'NotSupported', 'Malfunctioned', 'Superseded'];
 
-        function jcParseMaintainerrTestStatus(value) {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-            const status = value;
-            if (typeof status.ok !== 'boolean'
-                || typeof status.ready !== 'boolean'
-                || typeof status.version !== 'string'
-                || !status.version.trim()
-                || status.version.length > 80
-                || /[\u0000-\u001f\u007f-\u009f]/.test(status.version)
-                || typeof status.jellyfinMode !== 'boolean'
-                || typeof status.capable !== 'boolean'
-                || typeof status.identityMatch !== 'boolean'
-                || status.ok !== (status.capable && status.identityMatch)
-                || (status.capable && (!status.ready || !status.jellyfinMode))) {
-                return null;
-            }
-
-            const identityWarning = status.identityWarning;
-            if ((status.identityMatch && identityWarning !== undefined)
-                || (!status.identityMatch
-                    && identityWarning !== 'identity_unknown'
-                    && identityWarning !== 'identity_mismatch')) {
-                return null;
-            }
-
-            const capabilityNames = [
-                'collections',
-                'collectionContent',
-                'itemStatus',
-                'rules',
-                'storageMetrics',
-                'overlays'
-            ];
-            const capabilities = status.capabilities;
-            if (!capabilities
-                || typeof capabilities !== 'object'
-                || Array.isArray(capabilities)
-                || Object.keys(capabilities).length !== capabilityNames.length) {
-                return null;
-            }
-            for (const name of capabilityNames) {
-                const expected = name === 'itemStatus'
-                    ? status.capable && status.identityMatch
-                    : status.capable;
-                if (capabilities[name] !== expected) return null;
-            }
-
-            const validError = status.capable
-                ? status.error === undefined
-                : !status.ready
-                    ? status.error === 'not_ready'
-                    : !status.jellyfinMode
-                        ? status.error === 'not_ready' || status.error === 'wrong_service'
-                        : status.error === 'not_ready' || status.error === 'unsupported';
-            if (!validError) {
-                return null;
-            }
-
-            return {
-                ready: status.ready,
-                version: status.version,
-                jellyfinMode: status.jellyfinMode,
-                capable: status.capable,
-                identityMatch: status.identityMatch,
-                identityWarning: identityWarning,
-                error: status.error
-            };
-        }
-
-        async function testMaintainerrConnection() {
-            cancelActiveMaintainerrTest(true);
-            const input = document.querySelector('#maintainerrUrl');
-            const url = jcNormalizeMaintainerrBaseUrl(input ? input.value || '' : '');
-            if (!url) {
-                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
-                Dashboard.alert({
-                    title: 'Missing or invalid URL',
-                    message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
-                });
-                return;
-            }
-
-            const generation = maintainerrTestGeneration;
-            const controller = new AbortController();
-            activeMaintainerrTestController = controller;
-            const testToken = beginConnectionTest();
-            const cacheBinding = jcFingerprintConnectionValue(url);
-            testMaintainerrBtn.disabled = true;
-            jcSetMaintainerrTestStatus(
-                'sync',
-                'Testing\u2026',
-                'var(--primary-accent-color, #00a4dc)',
-                true
-            );
-
-            try {
-                const result = await ApiClient.ajax({
-                    type: 'POST',
-                    url: ApiClient.getUrl('/JellyfinCanopy/maintainerr/test'),
-                    dataType: 'json',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ url: url }),
-                    signal: controller.signal
-                });
-                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
-
-                const status = jcParseMaintainerrTestStatus(result);
-                if (!status) {
-                    const malformedError = new Error('Maintainerr returned a malformed test response');
-                    malformedError.responseJSON = { error: 'malformed_response' };
-                    throw malformedError;
-                }
-                const identityState = status.identityWarning === 'identity_mismatch'
-                    ? 'mismatch'
-                    : status.identityWarning === 'identity_unknown'
-                        ? 'unknown'
-                        : 'matched';
-                const version = status.version.slice(0, 32);
-
-                if (!status.ready || !status.jellyfinMode || !status.capable) {
-                    const validationError = new Error('Maintainerr validation failed');
-                    validationError.responseJSON = { error: status.error };
-                    throw validationError;
-                }
-
-                const warning = identityState !== 'matched';
-                const detail = (version ? 'Maintainerr ' + version : 'Connected')
-                    + (identityState === 'mismatch'
-                        ? ' · different Jellyfin server'
-                        : identityState === 'unknown'
-                            ? ' · Jellyfin identity not confirmed'
-                            : '');
-                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
-                setConnectionTestResult(
-                    'maintainerr',
-                    warning ? 'amber' : 'ok',
-                    detail,
-                    testToken,
-                    cacheBinding
-                );
-                jcSetMaintainerrTestStatus(
-                    warning ? 'warning' : 'check_circle',
-                    warning ? 'Connected with warning' : 'Connected',
-                    warning ? '#ffb300' : '#52b54b',
-                    false
-                );
-                jcTestAlert({
-                    title: warning ? 'Connected with warning' : 'Success',
-                    message: identityState === 'mismatch'
-                        ? 'Maintainerr is reachable but is connected to a different Jellyfin server. Per-item status will remain disabled until the identities match.'
-                        : identityState === 'unknown'
-                            ? 'Maintainerr is reachable, but its Jellyfin server identity could not be confirmed. Per-item status will remain disabled until identity can be verified.'
-                            : 'Successfully connected to Maintainerr' + (version ? ' ' + version : '') + '.'
-                });
-            } catch (error) {
-                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
-                let code = '';
-                try {
-                    const body = error && error.responseJSON
-                        ? error.responseJSON
-                        : (error && typeof error.clone === 'function' ? await error.clone().json() : null);
-                    code = body && typeof body.error === 'string' ? body.error.slice(0, 48) : '';
-                } catch (_) { /* sanitized fallback below */ }
-                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) return;
-                const messages = {
-                    invalid_configuration: 'The Maintainerr URL is invalid',
-                    not_ready: 'Maintainerr is reachable but not ready',
-                    not_jellyfin: 'Maintainerr is not configured for Jellyfin',
-                    unsupported: 'Maintainerr does not expose the required read-only capabilities',
-                    blocked_target: 'The destination is blocked by Canopy network policy',
-                    timeout: 'The connection timed out',
-                    canceled: 'The connection test was canceled',
-                    redirect: 'Maintainerr returned a redirect',
-                    wrong_service: 'The destination is not Maintainerr 3.18',
-                    malformed_body: 'Maintainerr returned an invalid response',
-                    malformed_response: 'Maintainerr returned an invalid response',
-                    response_too_large: 'Maintainerr returned an oversized response',
-                    too_large: 'Maintainerr returned too many records',
-                    throttled: 'Maintainerr requests are temporarily limited',
-                    identity_mismatch: 'Maintainerr is connected to a different Jellyfin server',
-                    configuration_changed: 'The Maintainerr configuration changed during the test',
-                    upstream_error: 'Maintainerr could not complete the read-only test',
-                    disabled: 'The Maintainerr integration is disabled',
-                    unavailable: 'Maintainerr is temporarily unavailable'
-                };
-                const detail = messages[code] || 'Connection could not be verified';
-                setConnectionTestResult(
-                    'maintainerr',
-                    'error',
-                    detail,
-                    testToken,
-                    cacheBinding
-                );
-                jcSetMaintainerrTestStatus('error', 'Failed', '#dc3545', false);
-                jcTestAlert({
-                    title: 'Connection failed',
-                    message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
-                });
-            } finally {
-                if (jcIsCurrentMaintainerrTest(generation, url, controller)) {
-                    activeMaintainerrTestController = null;
-                    testMaintainerrBtn.disabled = false;
-                    maintainerrStatusIndicator.classList.remove('status-check');
-                    testMaintainerrBtn.setAttribute('aria-busy', 'false');
-                }
-            }
-        }
-
-        async function testTmdbConnection(event) {
-            const apiKey = (document.querySelector('#TMDB_API_KEY').value || '').trim();
-
-            if (!apiKey) {
-                Dashboard.alert({ title: 'Missing Information', message: 'Please provide a TMDB API key to test the connection.' });
-                return;
-            }
-
-            const _testToken = (typeof beginConnectionTest === 'function') ? beginConnectionTest() : undefined;
-
-            // Determine which status indicator to update based on button context
-            const button = event.target.closest('button');
-            const statusIndicator = button.parentElement.querySelector('.material-icons') || tmdbStatusIndicator;
-
-            // Disable all test buttons during the test
-            const allTestButtons = document.querySelectorAll('.testTmdbBtn');
-            allTestButtons.forEach(btn => btn.disabled = true);
-
-            statusIndicator.textContent = 'sync';
-            statusIndicator.classList.add('status-check');
-            statusIndicator.style.color = 'var(--primary-accent-color, #00a4dc)';
-
-            try {
-                const validationUrl = ApiClient.getUrl(`/JellyfinCanopy/tmdb/validate`, { apiKey: apiKey });
-                await ApiClient.ajax({ type: 'GET', url: validationUrl });
-
-                statusIndicator.textContent = 'check_circle';
-                statusIndicator.style.color = '#52b54b';
-                try { setConnectionTestResult('tmdb', 'ok', 'API key valid', _testToken); } catch (err) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Success', message: 'Successfully connected to TMDB!' });
-
-            } catch (e) {
-                console.error('TMDB validation failed:', e);
-                var errorMessage;
-                if (e.status === 401) {
-                    errorMessage = 'The API key is invalid. Check that you copied it correctly.';
-                } else if (e.status === 500 || e.status === 0 || !e.status) {
-                    errorMessage = 'Could not reach TMDB servers. Check your network connection.';
-                } else {
-                    errorMessage = 'Connection failed (error ' + e.status + '). Check the key and your network.';
-                }
-
-                statusIndicator.textContent = 'error';
-                statusIndicator.style.color = '#dc3545';
-                try {
-                    var shortDetail = e.status === 401 ? 'API key rejected'
-                        : (e.status === 500 || e.status === 0 || !e.status) ? 'Unreachable'
-                        : 'Error ' + e.status;
-                    setConnectionTestResult('tmdb', 'error', shortDetail, _testToken);
-                } catch (err) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Connection Failed', message: errorMessage });
-            } finally {
-                allTestButtons.forEach(btn => btn.disabled = false);
-                if (statusIndicator) {
-                    statusIndicator.classList.remove('status-check');
-                }
-            }
-        }
-
-        // Plugin detection state.
-        //
-        // Each `hasX` is tri-state: `null` (not yet probed or probe failed),
-        // `true` (installed AND Status === "Active"), `false` (not installed
-        // OR installed but disabled). When the plugin is installed-but-
-        // disabled, we additionally record it in `_jeDisabledPlugins` so the
-        // Optional Dependencies card can surface "Installed (disabled)"
-        // instead of the blunt "Not installed".
-        var hasIntroSkipper = null;
-        var hasInPlayerEpisodePreview = null;
-        var hasFileTransformation = null;
-        var hasKefinTweaks = null;
-        var _jeDisabledPlugins = {}; // key -> true when installed but Status !== 'Active'
-
-        /**
-         * Checks installed optional integration plugins (File Transformation, Intro
-         * Skipper, In-Player Episode Preview, KefinTweaks) and updates the Optional
-         * Dependencies dashboard. Called during loadConfig() on page load.
-         */
-        function checkInstalledPlugins() {
-            ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/Plugins'),
-                dataType: 'json'
-            }).then(function(plugins) {
-                setProbeWarning('plugins', null);
-                // Status-aware plugin lookup. Returns tri-state:
-                //   true  → installed AND active
-                //   false → either not installed OR disabled
-                // When disabled, also records it in _jeDisabledPlugins[key] so
-                // the Optional Dependencies card can show "Installed (disabled)".
-                _jeDisabledPlugins = {};
-                function probe(key, names) {
-                    var match = null;
-                    var lowered = names.map(function(n) { return n.toLowerCase(); });
-                    for (var i = 0; i < plugins.length; i++) {
-                        var nm = (plugins[i].Name || '').toLowerCase();
-                        if (lowered.indexOf(nm) !== -1) { match = plugins[i]; break; }
-                    }
-                    if (!match) return false;
-                    // Jellyfin returns Status as one of: Active, Disabled, Restart,
-                    // NotSupported, Malfunctioned, Superseded. Anything else → log
-                    // once and treat as disabled so the dashboard surfaces a warning
-                    // rather than silently passing through. Old builds that omit
-                    // Status entirely are caught here too — better to see "Installed
-                    // but status unknown" than misreport as Active.
-                    //
-                    // Rendering note: `_jeDisabledPlugins[key]` captures the raw
-                    // Status string. The Optional Dependencies dashboard renders
-                    // "Installed but disabled in Dashboard > Plugins" for any
-                    // non-Active value. That copy is accurate for Disabled but
-                    // slightly misleading for Restart ("waiting for server restart")
-                    // and Superseded ("replaced by newer version, probably still
-                    // usable"). Callers wanting distinct copy per status should
-                    // branch on the raw value.
-                    var status = match.Status;
-                    var active = status === 'Active';
-                    if (!active) {
-                        _jeDisabledPlugins[key] = status || 'Status unknown';
-                        if (status && ['Disabled', 'Restart', 'NotSupported', 'Malfunctioned', 'Superseded'].indexOf(status) === -1) {
-                            console.warn('[JC] plugin ' + match.Name + ' has unexpected Status value: ' + JSON.stringify(status));
-                        }
-                    }
-                    return active;
-                }
-                hasFileTransformation = probe('fileTransformation', ['File Transformation']);
-                hasIntroSkipper       = probe('introSkipper',       ['Intro Skipper', 'SkipIntro']);
-                hasInPlayerEpisodePreview = probe('inPlayerEpisodePreview', ['In Player Episode Preview', 'In-Player Episode Preview', 'InPlayerEpisodePreview']);
-
-                // KefinTweaks installs as a web-mod (files in /config/KefinTweaks/
-                // injected via File Transformation into index.html), NOT as a
-                // .NET plugin — so it never appears in /Plugins. Detect it at
-                // runtime instead: the injector sets `window.KefinTweaksConfig`
-                // and adds script tags whose src contains "KefinTweaks".
-                try {
-                    hasKefinTweaks = !!(window.KefinTweaksConfig ||
-                        document.querySelector('script[src*="KefinTweaks"]'));
-                } catch (e) {
-                    // Extremely unlikely (the selector is literal and the window
-                    // read is same-origin), but a future isolation/CSP quirk could
-                    // throw — log so we can distinguish "detection bug" from
-                    // "legitimately not installed" in bug reports.
-                    console.warn('[JC] KefinTweaks detection threw; treating as absent:', e);
-                    hasKefinTweaks = false;
-                }
-
-                // Toggle body classes so descriptions hide install-only content
-                // (e.g., "Install the Custom Tabs plugin...") and surface a positive
-                // "detected" badge when an integration plugin is already present.
-                document.body.classList.toggle('jc-has-introskipper',      hasIntroSkipper       === true);
-                document.body.classList.toggle('jc-has-inplayerepisodepreview', hasInPlayerEpisodePreview === true);
-                document.body.classList.toggle('jc-has-kefintweaks',       hasKefinTweaks        === true);
-
-                // Re-run dependencies now that plugin info is available
-                updateAllDependencies();
-            }).catch(function(err) {
-                // Plugin list request failed (network, auth expiry, server offline, ...).
-                // Leave hasIntroSkipper at null so individual deps show
-                // "unknown" rather than incorrectly disabling toggles. Still refresh
-                // the dashboard so cards don't sit stuck on "Checking..." forever.
-                console.warn('[JC] plugin detection failed; resetting detection state to avoid stale UI:', err);
-                // Reset detection state so prior-success flags don't contradict
-                // the visible "couldn't reach /Plugins" warning. Body classes,
-                // module flags, and dep gates all flip back to "unknown" so the
-                // UI is internally consistent after a failed retry.
-                hasIntroSkipper = null;
-                hasInPlayerEpisodePreview = null;
-                hasFileTransformation = null;
-                hasKefinTweaks = null;
-                document.body.classList.remove('jc-has-introskipper', 'jc-has-inplayerepisodepreview', 'jc-has-kefintweaks');
-                setProbeWarning('plugins', "Couldn't reach the Jellyfin /Plugins endpoint to verify which integrations are installed (auth expiry, network, or server issue). Dependency hints and \"plugin detected\" badges are now hidden until you retry.");
-                try { updateAllDependencies(); } catch (e) {
-                    console.warn('[JC] updateAllDependencies threw during plugin-detect fallback:', e);
-                }
-                try {
-                    updateStatusDashboard();
-                } catch (e) {
-                    console.warn('[JC] updateStatusDashboard threw during plugin-detect fallback:', e);
-                }
+        function probe(key, names) {
+            const lowered = names.map(function (n) { return n.toLowerCase(); });
+            const match = list.find(function (p) {
+                return p && typeof p.Name === 'string' && lowered.indexOf(p.Name.toLowerCase()) !== -1;
             });
-            // Probe-warning retry — re-runs plugin detection (which also re-runs
-            // the Custom Tabs config probe inside its .then). One handler only;
-            // checkInstalledPlugins is idempotent.
-            var probeRetry = document.getElementById('jc-probe-retry-btn');
-            if (probeRetry && !probeRetry.dataset.jcWired) {
-                probeRetry.dataset.jcWired = '1';
-                probeRetry.onclick = function() {
-                    setProbeWarning('plugins', null);
-                    checkInstalledPlugins();
-                };
-            }
-        }
-
-        // Surfaces a single probe-failure banner above the form. Multiple probes
-        // (plugin list, Custom Tabs config schema) can fail independently — the
-        // banner aggregates them so the admin sees one actionable message instead
-        // of nothing. Pass an empty/null msg to clear the banner for that source.
-        var _jeProbeWarnings = Object.create(null);
-        function setProbeWarning(source, msg) {
-            if (msg) _jeProbeWarnings[source] = msg;
-            else delete _jeProbeWarnings[source];
-            var banner = document.getElementById('jc-probe-warning');
-            var msgEl = document.getElementById('jc-probe-warning-msg');
-            if (!banner || !msgEl) return;
-            var keys = Object.keys(_jeProbeWarnings);
-            if (keys.length === 0) {
-                banner.style.display = 'none';
-                msgEl.textContent = '';
-            } else {
-                msgEl.textContent = ' — ' + keys.map(function(k) { return _jeProbeWarnings[k]; }).join(' / ');
-                banner.style.display = '';
-            }
-        }
-
-        // Auto Movie Request - Quality Profile Mode helpers
-        function clearSelectOptions(selectEl) {
-            while (selectEl.options.length > 0) {
-                selectEl.remove(0);
-            }
-        }
-
-        function addSelectOption(selectEl, value, text) {
-            var opt = document.createElement('option');
-            opt.value = value;
-            opt.textContent = text;
-            selectEl.appendChild(opt);
-        }
-
-        function resetSelectWithMessage(selectEl, value, message) {
-            clearSelectOptions(selectEl);
-            addSelectOption(selectEl, value, message);
-        }
-
-        function initAutoMovieQualityMode() {
-            var qualityModeSelect = document.querySelector('#autoMovieRequestQualityMode');
-            var customSettingsDiv = document.querySelector('#autoMovieRequestCustomSettings');
-            if (!qualityModeSelect || !customSettingsDiv) return;
-
-            qualityModeSelect.addEventListener('change', function() {
-                customSettingsDiv.style.display = (qualityModeSelect.value === 'custom') ? 'block' : 'none';
-                if (qualityModeSelect.value === 'custom') {
-                    loadAutoMovieRadarrServers();
-                }
-            });
-        }
-
-        var _autoMovieServerListenerAdded = false;
-        function loadAutoMovieRadarrServers(savedConfig) {
-            var serverSelect = document.querySelector('#autoMovieRequestServer');
-            var profileSelect = document.querySelector('#autoMovieRequestProfile');
-            var folderSelect = document.querySelector('#autoMovieRequestRootFolder');
-            if (!serverSelect) return;
-
-            resetSelectWithMessage(serverSelect, '-1', 'Loading...');
-
-            ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/seerr/radarr'),
-                dataType: 'json'
-            }).then(function(servers) {
-                resetSelectWithMessage(serverSelect, '-1', 'Select Server...');
-                var serverList = Array.isArray(servers) ? servers : [servers];
-                serverList.forEach(function(server) {
-                    if (server && typeof server.id === 'number') {
-                        addSelectOption(serverSelect, server.id, server.name || ('Server ' + server.id));
-                    }
-                });
-
-                var savedServerId = savedConfig ? savedConfig.AutoMovieRequestCustomServerId : null;
-                if (savedServerId !== null && savedServerId !== undefined && savedServerId >= 0) {
-                    serverSelect.value = savedServerId;
-                    loadAutoMovieServerDetails(savedServerId, savedConfig);
-                }
-            }).catch(function(err) {
-                resetSelectWithMessage(serverSelect, '-1', 'Failed to load servers');
-                console.warn('[Auto-Movie-Request] Failed to load Radarr servers:', err);
-            });
-
-            if (!_autoMovieServerListenerAdded) {
-                _autoMovieServerListenerAdded = true;
-                serverSelect.addEventListener('change', function() {
-                    var serverId = parseInt(serverSelect.value);
-                    if (!isNaN(serverId) && serverId >= 0) {
-                        loadAutoMovieServerDetails(serverId);
-                    } else {
-                        resetSelectWithMessage(profileSelect, '0', 'Select a server first...');
-                        resetSelectWithMessage(folderSelect, '', 'Select a server first...');
-                    }
-                });
-            }
-        }
-
-        function loadAutoMovieServerDetails(serverId, savedConfig) {
-            var profileSelect = document.querySelector('#autoMovieRequestProfile');
-            var folderSelect = document.querySelector('#autoMovieRequestRootFolder');
-            if (!profileSelect || !folderSelect) return;
-
-            resetSelectWithMessage(profileSelect, '0', 'Loading...');
-            resetSelectWithMessage(folderSelect, '', 'Loading...');
-
-            ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/seerr/radarr/' + serverId),
-                dataType: 'json'
-            }).then(function(details) {
-                resetSelectWithMessage(profileSelect, '0', 'Select Profile...');
-                (details.profiles || []).forEach(function(profile) {
-                    addSelectOption(profileSelect, profile.id, profile.name || ('Profile ' + profile.id));
-                });
-
-                resetSelectWithMessage(folderSelect, '', 'Select Folder...');
-                (details.rootFolders || []).forEach(function(folder) {
-                    addSelectOption(folderSelect, folder.path, folder.path);
-                });
-
-                var savedProfileId = (savedConfig && savedConfig.AutoMovieRequestCustomProfileId) || 0;
-                if (savedProfileId > 0) profileSelect.value = savedProfileId;
-                var savedRootFolder = (savedConfig && savedConfig.AutoMovieRequestCustomRootFolder) || '';
-                if (savedRootFolder) folderSelect.value = savedRootFolder;
-            }).catch(function(err) {
-                resetSelectWithMessage(profileSelect, '0', 'Failed to load');
-                resetSelectWithMessage(folderSelect, '', 'Failed to load');
-                console.warn('[Auto-Movie-Request] Failed to load server details:', err);
-            });
-        }
-
-        // ==================== Multi-Instance Arr Management ====================
-
-        function createEl(tag, attrs, children) {
-            var el = document.createElement(tag);
-            if (attrs) {
-                Object.keys(attrs).forEach(function(k) {
-                    if (k === 'textContent') el.textContent = attrs[k];
-                    else if (k === 'style') el.setAttribute('style', attrs[k]);
-                    else if (k === 'className') el.className = attrs[k];
-                    else el.setAttribute(k, attrs[k]);
-                });
-            }
-            if (children) {
-                children.forEach(function(c) { if (c) el.appendChild(c); });
-            }
-            return el;
-        }
-
-        // Persisted *arr instance identities are opaque 128-bit hexadecimal tokens.
-        // Never derive one in the browser from URL/API-key material: legacy derivation
-        // and validation are server-owned, and credentials must not become client-visible
-        // identity material. New cards receive cryptographic random ids when available;
-        // an empty fallback is safe because the server save hook will fill it.
-        function normalizeArrInstanceId(value) {
-            var normalized = String(value || '').toLowerCase();
-            return /^[0-9a-f]{32}$/.test(normalized) ? normalized : '';
-        }
-
-        function createArrInstanceId() {
-            try {
-                var bytes = new Uint8Array(16);
-                window.crypto.getRandomValues(bytes);
-                return Array.from(bytes, function(b) {
-                    return b.toString(16).padStart(2, '0');
-                }).join('');
-            } catch (_) {
-                return '';
-            }
-        }
-
-        function createInstanceCard(type, instance, startOpen) {
-            var defaultName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
-            var namePlaceholder = type === 'sonarr' ? 'e.g., TV Shows, Anime' : 'e.g., Movies, 4K Movies';
-            var urlPlaceholder = type === 'sonarr' ? 'e.g., http://192.168.1.100:8989' : 'e.g., http://192.168.1.100:7878';
-
-            // Default Enabled to true when the stored JSON omits the field (backwards compat with
-            // configs written before the Enabled flag existed).
-            var initiallyEnabled = instance.Enabled !== false;
-
-            // Enabled toggle lives in the summary row so admins can flip it without expanding
-            // the card. stopPropagation on pointer events prevents the <details> from toggling
-            // open/closed when the user clicks the checkbox itself.
-            // Styled via .arr-instance-enabled CSS (see configPage.css). We intentionally
-            // do NOT use is="emby-checkbox" — that custom element expects a <label> wrapper
-            // with a sibling <span>, which we can't provide inside a <details><summary> row
-            // without breaking the flex layout of the name/URL/disabled chip.
-            var ariaName = (instance.Name || '').trim() || defaultName;
-            var enabledCheckbox = createEl('input', {
-                type: 'checkbox',
-                className: 'arr-instance-enabled',
-                'aria-label': 'Enable ' + ariaName + ' instance',
-                title: 'Uncheck to skip this instance in all fan-out paths (links, calendar, queue, tag sync) without deleting its URL/API key'
-            });
-            if (initiallyEnabled) enabledCheckbox.checked = true;
-            ['click', 'mousedown', 'keydown'].forEach(function(evt) {
-                enabledCheckbox.addEventListener(evt, function(e) { e.stopPropagation(); });
-            });
-
-            // Summary row (visible when collapsed). Order: [▶ disclosure] [☑ enabled] [name] [(disabled)] [url]
-            var summaryDisabledSpan = createEl('span', {
-                className: 'arr-instance-summary-disabled',
-                textContent: '(disabled)',
-                style: 'color: #e5a00d; font-size: 0.85em; margin-right: 0.5em; display: ' + (initiallyEnabled ? 'none' : 'inline')
-            });
-            var summaryNameSpan = createEl('span', { className: 'arr-instance-summary-name', textContent: instance.Name || defaultName });
-            var summaryUrlSpan = createEl('span', { className: 'arr-instance-summary-url', textContent: instance.Url || '' });
-            var summaryEl = document.createElement('summary');
-            summaryEl.appendChild(enabledCheckbox);
-            summaryEl.appendChild(summaryNameSpan);
-            summaryEl.appendChild(summaryDisabledSpan);
-            summaryEl.appendChild(summaryUrlSpan);
-
-            // Body header: [name input (flex:1)] [Remove]. The Enabled toggle used to live here
-            // too, which crowded the row and left the name input pinched against it. Moved to
-            // the summary above so this row has only the rename + remove affordances.
-            var nameInput = createEl('input', { className: 'arr-instance-name emby-input', type: 'text', placeholder: namePlaceholder, value: instance.Name || '', style: 'flex:1' });
-            var removeBtn = createEl('button', { className: 'arr-instance-remove', type: 'button', title: 'Remove instance', textContent: 'Remove' });
-            var header = createEl('div', { className: 'arr-instance-header' }, [nameInput, removeBtn]);
-
-            var urlLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'URL (internal)' });
-            var urlInput = createEl('input', { className: 'arr-instance-url emby-input', type: 'text', placeholder: urlPlaceholder, value: instance.Url || '' });
-            var defaultPort = type === 'sonarr' ? '8989' : '7878';
-            var urlDesc = createEl('div', { className: 'fieldDescription', textContent: 'The Jellyfin server uses this URL to talk to ' + (type === 'sonarr' ? 'Sonarr' : 'Radarr') + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and set the External URL below for user-facing links.' });
-            var urlContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [urlLabel, urlInput, urlDesc]);
-
-            // Optional external/public URL used only for user-clickable links in the browser.
-            // Empty = reuse the internal URL above (unchanged behaviour). Never used for
-            // server-side fetches.
-            var externalLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'External URL (optional)' });
-            var externalInput = createEl('input', { className: 'arr-instance-externalurl emby-input', type: 'text', placeholder: 'e.g., https://' + type + '.example.com', value: instance.ExternalUrl || '' });
-            var externalDesc = createEl('div', { className: 'fieldDescription', textContent: 'Public URL a user\'s browser opens for links to this instance. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.' });
-            var externalContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [externalLabel, externalInput, externalDesc]);
-
-            var apiLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'API Key' });
-            var apiInput = createEl('input', { className: 'arr-instance-apikey emby-input', type: 'text', autocomplete: 'off', placeholder: 'API key (find in Settings > General > Security)', value: instance.ApiKey || '' });
-            var statusIcon = createEl('span', { className: 'material-icons arr-instance-status', style: 'transition: color 0.3s ease;' });
-            var testBtn = createEl('button', { className: 'emby-button raised arr-instance-test', type: 'button' });
-            testBtn.appendChild(createEl('span', { textContent: 'Test' }));
-            var apiRow = createEl('div', { style: 'display: flex; align-items: center; gap: 1em;' }, [apiInput, statusIcon, testBtn]);
-            var apiDesc = createEl('div', { className: 'fieldDescription', textContent: 'Find this in ' + (type === 'sonarr' ? 'Sonarr' : 'Radarr') + ' under Settings > General > Security > API Key' });
-            var apiContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [apiLabel, apiRow, apiDesc]);
-
-            // URL Mappings shown inline (no nested <details>) — the whole card already
-            // expands behind its own <details>, so doubling up on collapses hides a
-            // frequently-edited field one extra click deep.
-            var mappingsLabel = createEl('label', { className: 'inputLabel inputLabelUnfocused', textContent: 'URL Mappings (optional)' });
-            var mappingsTextarea = createEl('textarea', { className: 'arr-instance-urlmappings emby-textarea emby-input', style: 'display:block; height: 8vh !important; margin-top: 0.25em;', placeholder: 'jellyfin_url|arr_url (one per line)' });
-            mappingsTextarea.value = instance.UrlMappings || '';
-            var mappingsDesc = createEl('div', { className: 'fieldDescription', textContent: 'Map Jellyfin access URLs to this instance\'s URL. Format: jellyfin_url|arr_url (one per line). Useful for reverse-proxy setups.' });
-            var mappingsContainer = createEl('div', { className: 'inputContainer', style: 'margin-top: 0.5em;' }, [mappingsLabel, mappingsTextarea, mappingsDesc]);
-
-            var body = createEl('div', { className: 'arr-instance-card-body' }, [header, urlContainer, externalContainer, apiContainer, mappingsContainer]);
-
-            // The card is a <details> element
-            var card = document.createElement('details');
-            card.className = 'arr-instance-card';
-            if (!initiallyEnabled) card.classList.add('arr-instance-disabled');
-            card.dataset.type = type;
-            card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)
-                // A blank URL identifies an actually-new card. Legacy populated rows
-                // intentionally stay blank here so the server applies its deterministic
-                // migration rather than inventing a different browser-side scheme.
-                || (!(instance.Url || '').trim() ? createArrInstanceId() : '');
-            if (startOpen) card.open = true;
-            card.appendChild(summaryEl);
-            card.appendChild(body);
-
-            // Keep summary text in sync with name/url inputs
-            nameInput.addEventListener('input', function() {
-                var n = nameInput.value.trim() || defaultName;
-                summaryNameSpan.textContent = n;
-                enabledCheckbox.setAttribute('aria-label', 'Enable ' + n + ' instance');
-            });
-            urlInput.addEventListener('input', function() {
-                summaryUrlSpan.textContent = urlInput.value.trim();
-            });
-
-            // Toggle visual dim state + summary "(disabled)" chip when the Enabled checkbox
-            // changes. The backend is the authority — this is UI feedback only until Save.
-            // Also re-renders the Overview Service Status card so a disabled instance
-            // instantly shows as "Disabled" instead of a stale red/green badge.
-            //
-            // setBodyDisabled marks every form control inside the card body read-only when
-            // the toggle is off so edits can't silently persist — collectInstancesFromDom
-            // reads input values directly and respects the Enabled flag on save.
-            function setBodyDisabled(disabled) {
-                body.querySelectorAll('input, textarea, button, select').forEach(function(el) {
-                    if (disabled) {
-                        el.setAttribute('disabled', '');
-                    } else {
-                        el.removeAttribute('disabled');
-                    }
-                });
-            }
-            setBodyDisabled(!initiallyEnabled);
-            enabledCheckbox.addEventListener('change', function() {
-                var en = enabledCheckbox.checked;
-                summaryDisabledSpan.style.display = en ? 'none' : 'inline';
-                card.classList.toggle('arr-instance-disabled', !en);
-                setBodyDisabled(!en);
-                try { renderServiceStatusDashboard(); } catch (e) {
-                    console.warn('[JC] renderServiceStatusDashboard threw from arr-instance enable-toggle:', e);
-                }
-            });
-
-            // Confirm before removing
-            removeBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                var instName = nameInput.value.trim() || defaultName;
-                Dashboard.confirm('Remove "' + instName + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.', 'Remove Instance', function(confirmed) {
-                    if (confirmed) {
-                        card.remove();
-                        jcMarkConfigDirty();
-                        updateAllDependencies();
-                    }
-                });
-            });
-
-            testBtn.addEventListener('click', function() { testInstanceConnection(card); });
-            apiInput.style.flex = '1';
-            return card;
-        }
-
-        // Tracks whether each instance-list JSON parsed cleanly on load.
-        // When false, saveArrInstances refuses to overwrite the stored value and legacy fields
-        // to avoid turning a read-side corruption into permanent data loss.
-        var _arrParseOK = { sonarr: true, radarr: true };
-
-        function tryParseInstanceList(raw, type, container) {
-            if (!raw) { _arrParseOK[type] = true; return []; }
-            try {
-                var parsed = JSON.parse(raw);
-                if (!Array.isArray(parsed)) throw new Error(type + 'Instances JSON is not an array');
-                _arrParseOK[type] = true;
-                return parsed;
-            } catch (e) {
-                _arrParseOK[type] = false;
-                var errorClass = e instanceof SyntaxError ? 'SyntaxError' : 'InvalidShape';
-                console.error('[JC Config] Failed to parse ' + type + 'Instances (' + errorClass + ') — refusing to overwrite on save.');
-                insertCorruptBanner(container, type);
-                return [];
-            }
-        }
-
-        function insertCorruptBanner(container, type) {
-            var label = type === 'sonarr' ? 'Sonarr' : 'Radarr';
-            var banner = document.createElement('div');
-            banner.className = 'arr-corrupt-banner';
-            banner.setAttribute('data-arr-corrupt', type);
-            banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid #dc3545; background: rgba(220,53,69,0.15); border-radius: 4px;';
-
-            var heading = document.createElement('strong');
-            heading.textContent = '⚠ Stored ' + label + ' instance configuration is corrupted.';
-            var detail = document.createElement('div');
-            detail.style.marginTop = '0.3em';
-            detail.textContent = 'The saved JSON could not be parsed. Saving this page will NOT overwrite the stored value or the legacy ' +
-                label + ' URL/API key — so existing configuration is preserved. To recover: either fix the stored JSON directly in Jellyfin\'s plugin config, ' +
-                'or click the button below to reset this list (destroys the unreadable value).';
-            banner.appendChild(heading);
-            banner.appendChild(detail);
-
-            var resetBtn = document.createElement('button');
-            resetBtn.className = 'emby-button raised';
-            resetBtn.style.marginTop = '0.6em';
-            resetBtn.type = 'button';
-            resetBtn.textContent = 'Reset ' + label + ' instances (clears stored value)';
-            resetBtn.addEventListener('click', function() {
-                Dashboard.confirm(
-                    'Reset the corrupt ' + label + ' instance configuration? The stored JSON is unreadable so any instances it contained cannot be recovered. You will need to add them again. The reset takes effect when you click Save.',
-                    'Reset Instances',
-                    function(confirmed) {
-                        if (!confirmed) return;
-                        _arrParseOK[type] = true;
-                        banner.remove();
-                        // On next Save, the empty array will be written and legacy fields cleared normally.
-                    }
-                );
-            });
-            banner.appendChild(resetBtn);
-
-            container.appendChild(banner);
-        }
-
-        function loadArrInstances(config) {
-            var sonarrList = document.querySelector('#sonarrInstancesList');
-            var radarrList = document.querySelector('#radarrInstancesList');
-            sonarrList.textContent = '';
-            radarrList.textContent = '';
-            _arrParseOK = { sonarr: true, radarr: true };
-
-            var sonarrInstances = tryParseInstanceList(config.SonarrInstances, 'sonarr', sonarrList);
-            var radarrInstances = tryParseInstanceList(config.RadarrInstances, 'radarr', radarrList);
-
-            // Migration: only when parse succeeded AND no instances but legacy fields are populated.
-            // Skip migration when parse failed — the legacy fields may be stale or already migrated.
-            if (_arrParseOK.sonarr && sonarrInstances.length === 0 && config.SonarrUrl && config.SonarrApiKey) {
-                sonarrInstances.push({
-                    Name: 'Sonarr',
-                    Url: config.SonarrUrl,
-                    ExternalUrl: config.SonarrExternalUrl || '',
-                    ApiKey: config.SonarrApiKey,
-                    UrlMappings: config.SonarrUrlMappings || ''
-                });
-            }
-            if (_arrParseOK.radarr && radarrInstances.length === 0 && config.RadarrUrl && config.RadarrApiKey) {
-                radarrInstances.push({
-                    Name: 'Radarr',
-                    Url: config.RadarrUrl,
-                    ExternalUrl: config.RadarrExternalUrl || '',
-                    ApiKey: config.RadarrApiKey,
-                    UrlMappings: config.RadarrUrlMappings || ''
-                });
-            }
-
-            sonarrInstances.forEach(function(inst) {
-                sonarrList.appendChild(createInstanceCard('sonarr', inst));
-            });
-            radarrInstances.forEach(function(inst) {
-                radarrList.appendChild(createInstanceCard('radarr', inst));
-            });
-        }
-
-        // Requests Page requirements line — the page draws from two INDEPENDENT
-        // data sources and is useful with EITHER one, so the requirement is met
-        // as soon as one source is configured:
-        //   • Downloads list  ← at least one ENABLED *arr service (Sonarr and/or
-        //     Radarr). A movie-only setup with just Radarr, or a TV-only setup
-        //     with just Sonarr, is enough — neither is individually mandatory.
-        //   • Requests/Issues list ← Seerr (URL + API key).
-        // The download section renders with no Seerr, and the requests section
-        // renders with no *arr, so forcing all three (the old behaviour) blocked
-        // legitimate single-service setups from the page. The surrounding info
-        // banner stays visible; only the "Requirements:" sentence toggles. Runs
-        // off the live DOM so typing a URL/API key updates immediately without a
-        // save-and-reload.
-        function updateRequestsRequirementsBanner() {
-            var line = document.getElementById('requestsPageRequirementsLine');
-            if (!line) return;
-            var list = document.getElementById('requestsPageRequirementsList');
-
-            // At least one enabled Sonarr/Radarr instance with URL + API key.
-            // Reuses the shared arr check so disabled-only instances don't count
-            // as "configured" (they're skipped by every fan-out caller).
-            var arrOK = hasAnyArrService();
-            // Seerr side uses the same "enabled AND a valid URL + API key" test as
-            // the rest of the config page (the #seerr section gate). The requests
-            // and issues sections only render when SeerrEnabled is on, so
-            // creds typed in while the integration is left disabled must NOT count
-            // as a working source — otherwise the banner would report "ready" over
-            // an empty page.
-            var seerrOK = hasSeerrConfigured();
-
-            if (arrOK || seerrOK) {
-                line.style.display = 'none';
-                return;
-            }
-
-            // Nothing configured yet — point the admin at either data source.
-            if (list) {
-                list.textContent = 'Configure Seerr (for requests) and/or Sonarr or Radarr (for downloads) — URL and API key each.';
-            }
-            line.style.display = '';
-        }
-
-        // Shared check for optional external/public URL fields: an external URL is only kept
-        // when it is an absolute http(s) URL WITHOUT embedded credentials (user:pass@ would be
-        // served to every authenticated client) and WITHOUT a query string or fragment (item
-        // paths are appended by concatenation, so ?x=1 would corrupt every link). Anything else
-        // is dropped so a malformed value never reaches browser link building.
-        function jcIsHttpUrl(value) {
-            if (!value) return false;
-            try {
-                var u = new URL(value.trim());
-                return (u.protocol === 'http:' || u.protocol === 'https:')
-                    && !u.username && !u.password
-                    && !u.search && !u.hash;
-            } catch (_) {
+            if (!match) {
                 return false;
             }
+            const active = match.Status === 'Active';
+            if (!active) {
+                _jeDisabledPlugins[key] = match.Status || 'Status unknown';
+                if (KNOWN_INACTIVE_STATUSES.indexOf(match.Status) === -1) {
+                    console.warn('[JC] plugin ' + match.Name + ' has unexpected Status value: ' + match.Status);
+                }
+            }
+            return active;
         }
 
-        var JC_MAINTAINERR_MAX_URL_LENGTH = 2048;
-        var JC_MAINTAINERR_MAX_MAPPINGS_LENGTH = 64 * 1024;
-        var JC_MAINTAINERR_MAX_MAPPING_ROWS = 32;
+        hasFileTransformation = probe('fileTransformation', ['File Transformation']);
+        hasIntroSkipper = probe('introSkipper', ['Intro Skipper', 'SkipIntro']);
+        hasInPlayerEpisodePreview = probe('inPlayerEpisodePreview',
+            ['In Player Episode Preview', 'In-Player Episode Preview', 'InPlayerEpisodePreview']);
 
-        // Mirror ServiceUrlResolver.TryNormalizeHttpBaseUrl for the Maintainerr
-        // controls. This client-side gate is for immediate, coherent admin
-        // feedback; the server repeats the same trust-boundary validation.
-        function jcIsSafeMaintainerrPathSegment(segment) {
-            var current = segment;
-            for (var depth = 0; depth < 4; depth++) {
-                var decoded;
-                try {
-                    decoded = decodeURIComponent(current);
-                } catch (_) {
-                    return false;
-                }
-                if (decoded === '.' || decoded === '..'
-                    || decoded.indexOf('/') !== -1
-                    || decoded.indexOf('\\') !== -1
-                    || /[\u0000-\u001f\u007f-\u009f]/.test(decoded)) {
-                    return false;
-                }
-                if (decoded.indexOf('%') === -1) return true;
-                if (decoded === current) return false;
-                current = decoded;
-            }
-            return false;
+        // KefinTweaks is a web-mod, not a /Plugins entry: runtime detection.
+        try {
+            hasKefinTweaks = !!(window.KefinTweaksConfig || document.querySelector('script[src*="KefinTweaks"]'));
+        } catch (e) {
+            console.warn('[JC] KefinTweaks detection threw; treating as absent:', e);
+            hasKefinTweaks = false;
         }
 
-        function jcNormalizeMaintainerrBaseUrl(value) {
-            if (typeof value !== 'string') return '';
-            var trimmed = value.trim();
-            if (!trimmed
-                || trimmed.length > JC_MAINTAINERR_MAX_URL_LENGTH
-                || /[\u0000-\u001f\u007f-\u009f]/.test(trimmed)
-                || trimmed.indexOf('\\') !== -1
-                || trimmed.indexOf('//') === 0) {
-                return '';
-            }
+        document.body.classList.toggle('jc-has-introskipper', hasIntroSkipper === true);
+        document.body.classList.toggle('jc-has-inplayerepisodepreview', hasInPlayerEpisodePreview === true);
+        document.body.classList.toggle('jc-has-kefintweaks', hasKefinTweaks === true);
 
-            var parsed;
-            try {
-                parsed = new URL(trimmed);
-            } catch (_) {
-                return '';
-            }
-            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-                || !parsed.hostname
-                || parsed.username
-                || parsed.password
-                || parsed.search
-                || parsed.hash) {
-                return '';
-            }
-
-            // URL canonicalizes literal dot segments, so inspect the original
-            // escaped path before using the parsed/normalized representation.
-            var schemeSeparator = trimmed.indexOf('://');
-            var authorityEnd = schemeSeparator < 0 ? -1 : trimmed.indexOf('/', schemeSeparator + 3);
-            var rawPath = authorityEnd < 0 ? '' : trimmed.slice(authorityEnd);
-            if (rawPath.split('/').some(function(segment) {
-                return !jcIsSafeMaintainerrPathSegment(segment);
-            })) {
-                return '';
-            }
-
-            var authority = parsed.protocol + '//' + parsed.host;
-            var path = parsed.pathname.replace(/^\/+|\/+$/g, '');
-            var normalized = path ? authority + '/' + path : authority;
-            return normalized.length <= JC_MAINTAINERR_MAX_URL_LENGTH ? normalized : '';
-        }
-
-        /**
-         * Parse and normalize Maintainerr mappings once for both Validate and
-         * Save. Issues contain row numbers/reasons only—never URL values.
-         */
-        function jcValidateMaintainerrMappings(value) {
-            var raw = typeof value === 'string' ? value : '';
-            if (raw.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
-                return {
-                    value: '',
-                    validCount: 0,
-                    invalidCount: 1,
-                    issues: ['Maintainerr mappings exceed the 64 KiB limit.']
-                };
-            }
-
-            var rows = [];
-            var issues = [];
-            var seenSources = Object.create(null);
-            var nonemptyCount = 0;
-            raw.split(/\r\n?|\n/).forEach(function(line, index) {
-                var trimmed = line.trim();
-                if (!trimmed) return;
-                nonemptyCount++;
-                if (nonemptyCount > JC_MAINTAINERR_MAX_MAPPING_ROWS) return;
-
-                var lineLabel = 'Maintainerr line ' + (index + 1);
-                var parts = trimmed.split('|');
-                if (parts.length !== 2) {
-                    issues.push(lineLabel + ': use exactly one pipe between two URLs.');
-                    return;
-                }
-                var source = jcNormalizeMaintainerrBaseUrl(parts[0]);
-                var target = jcNormalizeMaintainerrBaseUrl(parts[1]);
-                if (!source || !target) {
-                    issues.push(lineLabel + ': both sides must be bounded HTTP(S) base URLs without credentials, query, fragment, or traversal.');
-                    return;
-                }
-                if (source.toLowerCase() === target.toLowerCase()) {
-                    issues.push(lineLabel + ': the Jellyfin and Maintainerr URLs must be different.');
-                    return;
-                }
-                var sourceKey = source.toLowerCase();
-                if (seenSources[sourceKey]) {
-                    issues.push(lineLabel + ': the Jellyfin source URL is duplicated.');
-                    return;
-                }
-                seenSources[sourceKey] = true;
-                rows.push(source + '|' + target);
-            });
-
-            if (nonemptyCount > JC_MAINTAINERR_MAX_MAPPING_ROWS) {
-                issues.push('Maintainerr mappings are limited to 32 nonempty rows; extra rows were dropped.');
-            }
-            var normalizedMappings = rows.join('\n');
-            if (normalizedMappings.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
-                return {
-                    value: '',
-                    validCount: 0,
-                    invalidCount: issues.length + 1,
-                    issues: issues.concat(
-                        'Normalized Maintainerr mappings exceed the 64 KiB limit.'
-                    )
-                };
-            }
-            return {
-                value: normalizedMappings,
-                validCount: rows.length,
-                invalidCount: issues.length,
-                issues: issues
-            };
-        }
-
-        function collectInstancesFromDom(selector, defaultName) {
-            var out = [];
-            var incomplete = [];
-            var renamed = [];
-            var droppedExternal = [];
-            // The instance Name is the ONLY per-service key the runtime targets by (arr links,
-            // calendar, tag sync and the action-sheet Search/grab/monitor/add all resolve an
-            // instance by Name). Two enabled instances with the same Name make those actions
-            // ambiguous — worst case a grab/monitor hits the wrong box — so disambiguate on save.
-            var seen = Object.create(null);
-            document.querySelectorAll(selector).forEach(function(card) {
-                var url = card.querySelector('.arr-instance-url').value.trim();
-                var apiKey = card.querySelector('.arr-instance-apikey').value.trim();
-                if (url && apiKey) {
-                    var enabledCb = card.querySelector('.arr-instance-enabled');
-                    var rawName = card.querySelector('.arr-instance-name').value.trim() || defaultName;
-                    var externalEl = card.querySelector('.arr-instance-externalurl');
-                    var externalRaw = externalEl ? externalEl.value.trim() : '';
-                    var externalUrl = '';
-                    if (externalRaw) {
-                        if (jcIsHttpUrl(externalRaw)) {
-                            externalUrl = externalRaw;
-                        } else {
-                            droppedExternal.push((rawName || defaultName) + ': ' + externalRaw);
-                        }
-                    }
-                    var name = rawName;
-                    var key = name.toLowerCase();
-                    if (seen[key]) {
-                        var suffix = seen[key] + 1;
-                        seen[key] = suffix;
-                        name = rawName + ' (' + suffix + ')';
-                        seen[name.toLowerCase()] = 1;
-                        renamed.push(rawName + '” → “' + name);
-                    } else {
-                        seen[key] = 1;
-                    }
-                    out.push({
-                        // Preserve a validated persisted id. Legacy/invalid blanks are
-                        // deterministically repaired by the authoritative server save hook.
-                        InstanceId: normalizeArrInstanceId(card.dataset.instanceId),
-                        Name: name,
-                        Url: url,
-                        ExternalUrl: externalUrl,
-                        ApiKey: apiKey,
-                        UrlMappings: card.querySelector('.arr-instance-urlmappings').value || '',
-                        // Default to true when the checkbox is missing (shouldn't happen, but
-                        // guards against DOM surgery from another script).
-                        Enabled: enabledCb ? enabledCb.checked : true
-                    });
-                } else if (url && !apiKey) {
-                    // Card has a URL but no API key — it would be silently dropped. Collect the
-                    // name so we can warn the admin before the save commits.
-                    incomplete.push(card.querySelector('.arr-instance-name').value.trim() || defaultName);
-                }
-            });
-            return { instances: out, incomplete: incomplete, renamed: renamed, droppedExternal: droppedExternal };
-        }
-
-        function saveArrInstances(config) {
-            // Only overwrite stored state when the load parse succeeded. Otherwise leave the stored
-            // JSON AND legacy fields untouched so the admin can recover the original value.
-            var incompleteWarnings = [];
-
-            if (_arrParseOK.sonarr) {
-                var sonarrResult = collectInstancesFromDom('#sonarrInstancesList .arr-instance-card', 'Sonarr');
-                var sonarrInstances = sonarrResult.instances;
-                sonarrResult.incomplete.forEach(function(name) {
-                    incompleteWarnings.push('Sonarr instance "' + name + '" has a URL but no API key — it was not saved.');
-                });
-                sonarrResult.renamed.forEach(function(r) {
-                    incompleteWarnings.push('Renamed duplicate Sonarr instance “' + r + '” so actions target the right instance.');
-                });
-                (sonarrResult.droppedExternal || []).forEach(function(d) {
-                    incompleteWarnings.push('Dropped invalid Sonarr External URL (must be an http(s) URL without credentials or query/fragment) — ' + d);
-                });
-                config.SonarrInstances = JSON.stringify(sonarrInstances);
-                if (sonarrInstances.length > 0) {
-                    config.SonarrUrl = sonarrInstances[0].Url;
-                    config.SonarrExternalUrl = sonarrInstances[0].ExternalUrl || '';
-                    config.SonarrApiKey = sonarrInstances[0].ApiKey;
-                    config.SonarrUrlMappings = sonarrInstances[0].UrlMappings;
-                } else {
-                    config.SonarrUrl = '';
-                    config.SonarrExternalUrl = '';
-                    config.SonarrApiKey = '';
-                    config.SonarrUrlMappings = '';
-                }
-            }
-
-            if (_arrParseOK.radarr) {
-                var radarrResult = collectInstancesFromDom('#radarrInstancesList .arr-instance-card', 'Radarr');
-                var radarrInstances = radarrResult.instances;
-                radarrResult.incomplete.forEach(function(name) {
-                    incompleteWarnings.push('Radarr instance "' + name + '" has a URL but no API key — it was not saved.');
-                });
-                radarrResult.renamed.forEach(function(r) {
-                    incompleteWarnings.push('Renamed duplicate Radarr instance “' + r + '” so actions target the right instance.');
-                });
-                (radarrResult.droppedExternal || []).forEach(function(d) {
-                    incompleteWarnings.push('Dropped invalid Radarr External URL (must be an http(s) URL without credentials or query/fragment) — ' + d);
-                });
-                config.RadarrInstances = JSON.stringify(radarrInstances);
-                if (radarrInstances.length > 0) {
-                    config.RadarrUrl = radarrInstances[0].Url;
-                    config.RadarrExternalUrl = radarrInstances[0].ExternalUrl || '';
-                    config.RadarrApiKey = radarrInstances[0].ApiKey;
-                    config.RadarrUrlMappings = radarrInstances[0].UrlMappings;
-                } else {
-                    config.RadarrUrl = '';
-                    config.RadarrExternalUrl = '';
-                    config.RadarrApiKey = '';
-                    config.RadarrUrlMappings = '';
-                }
-            }
-
-            return incompleteWarnings;
-        }
-
-        // Bind add-instance buttons
-        document.querySelector('#addSonarrInstance').addEventListener('click', function() {
-            document.querySelector('#sonarrInstancesList').appendChild(
-                createInstanceCard('sonarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
-            );
+        updateAllDependencies();
+        renderOptionalPluginsDashboard();
+        renderFeaturesDashboard();
+    }).catch(function (e) {
+        console.warn('[JC] plugin detection failed; resetting detection state to avoid stale UI:', e);
+        hasFileTransformation = null;
+        hasIntroSkipper = null;
+        hasInPlayerEpisodePreview = null;
+        hasKefinTweaks = null;
+        document.body.classList.remove('jc-has-introskipper');
+        document.body.classList.remove('jc-has-inplayerepisodepreview');
+        document.body.classList.remove('jc-has-kefintweaks');
+        setProbeWarning('plugins', 'Couldn\'t reach the Jellyfin /Plugins endpoint to verify which integrations are installed (auth expiry, network, or server issue). Dependency hints and "plugin detected" badges are now hidden until you retry.');
+        try {
             updateAllDependencies();
+        } catch (e2) {
+            console.warn('[JC] updateAllDependencies failed after plugin probe error:', e2);
+        }
+        try {
+            renderServiceStatusDashboard();
+        } catch (e3) {
+            console.warn('[JC] status dashboard refresh failed after plugin probe error:', e3);
+        }
+        renderOptionalPluginsDashboard();
+        renderFeaturesDashboard();
+    });
+}
+
+function setProbeWarning(source, msg) {
+    if (msg) {
+        _jeProbeWarnings[source] = msg;
+    } else {
+        delete _jeProbeWarnings[source];
+    }
+    const banner = document.querySelector('#jc-probe-warning');
+    const msgEl = document.querySelector('#jc-probe-warning-msg');
+    if (!banner || !msgEl) {
+        return;
+    }
+    const messages = Object.keys(_jeProbeWarnings).map(function (k) { return _jeProbeWarnings[k]; });
+    if (!messages.length) {
+        banner.style.display = 'none';
+        msgEl.textContent = '';
+        return;
+    }
+    msgEl.textContent = ' — ' + messages.join(' / ');
+    banner.style.display = '';
+}
+
+
+async function resetAllUserSettings() {
+    if (!confirm('Are you sure?\n\nThis will save the current configuration and overwrite every per-user default for ALL users on this server.')) {
+        return;
+    }
+    Dashboard.showLoadingMsg();
+    try {
+        const config = await buildConfigFromForm();
+        // Save first so the server applies the CURRENT form.
+        await ApiClient.updatePluginConfiguration(pluginId, config);
+        await ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('/JellyfinCanopy/reset-all-users-settings'),
+            dataType: 'json'
         });
-        document.querySelector('#addRadarrInstance').addEventListener('click', function() {
-            document.querySelector('#radarrInstancesList').appendChild(
-                createInstanceCard('radarr', { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
-            );
-            updateAllDependencies();
+        Dashboard.hideLoadingMsg();
+        Dashboard.alert({
+            title: 'Success',
+            message: 'Configuration saved and applied to all users successfully!\n\nSettings will take effect after users refresh their browsers.'
         });
+    } catch (e) {
+        Dashboard.hideLoadingMsg();
+        console.error('Failed to save and apply settings:', e);
+        Dashboard.alert({
+            title: 'Error',
+            message: 'Failed to save and apply settings to all users. Check server logs for details.'
+        });
+    }
+}
 
-        // ==================== End Multi-Instance Arr Management ====================
+function clearTagCaches() {
+    if (!confirm('Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.')) {
+        return;
+    }
+    // Full config round-trip: uses server state, does NOT include unsaved form edits.
+    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        config.ClearLocalStorageTimestamp = Date.now();
+        return ApiClient.updatePluginConfiguration(pluginId, config);
+    }).then(function () {
+        Dashboard.alert({
+            title: 'Success',
+            message: 'Cache clear signal sent. All clients will clear their caches on next page load.'
+        });
+    }).catch(function (e) {
+        console.warn('[JC] failed to set cache clear timestamp:', e);
+        Dashboard.alert({
+            title: 'Error',
+            message: 'Failed to set cache clear timestamp. Check server logs for details.'
+        });
+    });
+}
 
-        // Tracks whether the most recent `renderQualityCatOrderAdmin` call ran
-        // to completion. If false at save time, we skip writing positional
-        // *Order values back to config so a render failure can't clobber the
-        // user's saved order with default DOM positions.
-        var _qualityCatRenderOK = false;
+// The quick action is only relevant when the server-side tag cache is off.
+function updateClearTagCachesQuickBtnVisibility() {
+    const quickBtn = document.querySelector('#clearTagCachesQuickBtn');
+    if (!quickBtn) {
+        return;
+    }
+    const serverModeCb = document.querySelector('#tagCacheServerMode');
+    quickBtn.hidden = !!(serverModeCb && serverModeCb.checked);
+}
 
-        // Reorders the admin quality-category rows to match the saved *Order values from the plugin config
-        function renderQualityCatOrderAdmin(config) {
-            _qualityCatRenderOK = false;
-            try {
-                var container = document.getElementById('qualityCategoriesAdmin');
-                if (!container) return;
-                var rows = Array.from(container.querySelectorAll('.jc-quality-cat-admin-row'));
-                rows.sort(function (a, b) {
-                    var aOrder = parseInt(config[a.dataset.orderKey], 10);
-                    var bOrder = parseInt(config[b.dataset.orderKey], 10);
-                    if (!Number.isFinite(aOrder)) aOrder = parseInt(a.dataset.defaultOrder, 10);
-                    if (!Number.isFinite(bOrder)) bOrder = parseInt(b.dataset.defaultOrder, 10);
-                    if (aOrder !== bOrder) return aOrder - bOrder;
-                    return parseInt(a.dataset.defaultOrder, 10) - parseInt(b.dataset.defaultOrder, 10);
-                });
-                rows.forEach(function (row) { container.appendChild(row); });
-                refreshQualityCatAdminArrows(container);
-                _qualityCatRenderOK = true;
-            } catch (err) {
-                console.error('Jellyfin Canopy: renderQualityCatOrderAdmin failed; will skip *Order save', err);
-            }
-        }
-
-        // Updates the disabled/opacity styling on the up/down buttons so the
-        // top row can't go up and the bottom row can't go down.
-        function refreshQualityCatAdminArrows(container) {
-            var rows = container.querySelectorAll('.jc-quality-cat-admin-row');
-            rows.forEach(function (row, idx) {
-                var up = row.querySelector('.jc-cat-up');
-                var down = row.querySelector('.jc-cat-down');
-                var first = idx === 0;
-                var last = idx === rows.length - 1;
-                if (up) {
-                    up.disabled = first;
-                    up.style.opacity = first ? '0.4' : '1';
-                    up.style.cursor = first ? 'not-allowed' : 'pointer';
-                }
-                if (down) {
-                    down.disabled = last;
-                    down.style.opacity = last ? '0.4' : '1';
-                    down.style.cursor = last ? 'not-allowed' : 'pointer';
-                }
-            });
-        }
-
-        // Wire up/down arrow clicks for the admin quality-category list.
-        // Uses event delegation on the container so this only registers once.
-        (function () {
-            document.addEventListener('click', function (e) {
-                var btn = e.target.closest && e.target.closest('#qualityCategoriesAdmin .jc-cat-up, #qualityCategoriesAdmin .jc-cat-down');
-                if (!btn || btn.disabled) return;
-                e.preventDefault();
-                var row = btn.closest('.jc-quality-cat-admin-row');
-                if (!row) return;
-                var parent = row.parentNode;
-                if (!parent) return;
-                var isUp = btn.classList.contains('jc-cat-up');
-                var sibling = isUp ? row.previousElementSibling : row.nextElementSibling;
-                if (!sibling || !sibling.classList.contains('jc-quality-cat-admin-row')) return;
-                if (isUp) {
-                    parent.insertBefore(row, sibling);
-                } else {
-                    parent.insertBefore(sibling, row);
-                }
-                refreshQualityCatAdminArrows(parent);
-                jcMarkConfigDirty();
-            });
-        })();
-
-        // Tracks whether the most recent `renderPagesOrderAdmin` call ran to
-        // completion. If false at save time, we skip writing PagesOrder back to
-        // config so a render failure can't clobber the saved order.
-        var _pagesOrderRenderOK = false;
-
-        // Reorders the admin page-order rows to match the saved PagesOrder CSV.
-        // Rows whose page id isn't listed in the CSV are appended LAST, preserving
-        // their default DOM order. CSV ids that match no row are naturally ignored.
-        function renderPagesOrderAdmin(config) {
-            _pagesOrderRenderOK = false;
-            try {
-                var container = document.getElementById('pagesOrderAdmin');
-                if (!container) return;
-                var rows = Array.from(container.querySelectorAll('.jc-pages-order-row'));
-                var defaultIdx = new Map();
-                rows.forEach(function (row, i) { defaultIdx.set(row, i); });
-                var order = String(config.PagesOrder || '')
-                    .split(',')
-                    .map(function (s) { return s.trim(); })
-                    .filter(Boolean);
-                rows.sort(function (a, b) {
-                    var aIdx = order.indexOf(a.dataset.pageId);
-                    var bIdx = order.indexOf(b.dataset.pageId);
-                    // Missing ids sort after present ones; ties (both present or
-                    // both missing) keep default DOM order.
-                    if (aIdx === -1) aIdx = Number.MAX_SAFE_INTEGER;
-                    if (bIdx === -1) bIdx = Number.MAX_SAFE_INTEGER;
-                    if (aIdx !== bIdx) return aIdx - bIdx;
-                    return defaultIdx.get(a) - defaultIdx.get(b);
-                });
-                rows.forEach(function (row) { container.appendChild(row); });
-                refreshPagesOrderArrows(container);
-                _pagesOrderRenderOK = true;
-            } catch (err) {
-                console.error('Jellyfin Canopy: renderPagesOrderAdmin failed; will skip PagesOrder save', err);
-            }
-        }
-
-        // Updates the disabled/opacity styling on the page-order up/down buttons so
-        // the top row can't go up and the bottom row can't go down.
-        function refreshPagesOrderArrows(container) {
-            var rows = container.querySelectorAll('.jc-pages-order-row');
-            rows.forEach(function (row, idx) {
-                var up = row.querySelector('.jc-page-up');
-                var down = row.querySelector('.jc-page-down');
-                var first = idx === 0;
-                var last = idx === rows.length - 1;
-                if (up) {
-                    up.disabled = first;
-                    up.style.opacity = first ? '0.4' : '1';
-                    up.style.cursor = first ? 'not-allowed' : 'pointer';
-                }
-                if (down) {
-                    down.disabled = last;
-                    down.style.opacity = last ? '0.4' : '1';
-                    down.style.cursor = last ? 'not-allowed' : 'pointer';
-                }
-            });
-        }
-
-        // Wire up/down arrow clicks for the admin page-order list.
-        // Uses event delegation on the container so this only registers once.
-        (function () {
-            document.addEventListener('click', function (e) {
-                var btn = e.target.closest && e.target.closest('#pagesOrderAdmin .jc-page-up, #pagesOrderAdmin .jc-page-down');
-                if (!btn || btn.disabled) return;
-                e.preventDefault();
-                var row = btn.closest('.jc-pages-order-row');
-                if (!row) return;
-                var parent = row.parentNode;
-                if (!parent) return;
-                var isUp = btn.classList.contains('jc-page-up');
-                var sibling = isUp ? row.previousElementSibling : row.nextElementSibling;
-                if (!sibling || !sibling.classList.contains('jc-pages-order-row')) return;
-                if (isUp) {
-                    parent.insertBefore(row, sibling);
-                } else {
-                    parent.insertBefore(sibling, row);
-                }
-                refreshPagesOrderArrows(parent);
-                jcMarkConfigDirty();
-            });
-        })();
-
-        // ── Declarative config field binder ────────────────────────────────────────────
-        // Simple checkbox/text/number/select fields carry data-config-key="<PascalCaseProp>"
-        // in configPage.html and are loaded/saved by one generic pass instead of a
-        // hand-written line per field. Type/fallback semantics:
-        //   checkbox            -> load !!v; save .checked
-        //   + data-config-default="true"
-        //                       -> load (v !== false)  (default-on settings)
-        //   text/select         -> load  el.value = v; save el.value
-        //   + data-config-fallback="F"
-        //                       -> load  el.value = v || F; save el.value || F
-        //   + data-config-int   -> save parseInt(el.value, 10)  (|| F when a fallback is set)
-        // Fields whose old save site clamped or special-cased the value keep those exact
-        // semantics via CONFIG_FIELD_OVERRIDES below. Anything more complex (multi-element
-        // enums, validated text, list builders, arr instances) stays hand-written in
-        // loadConfig/buildConfigFromForm.
-        const CONFIG_FIELD_OVERRIDES = {
-            // isNaN/min-max clamps preserved verbatim from the old per-field save sites.
-            AutoMovieRequestMinutesWatched: {
-                save: function (el) {
-                    const minutesValue = parseInt(el.value, 10);
-                    return isNaN(minutesValue) || minutesValue < 1 ? 20 : Math.min(minutesValue, 180);
-                }
-            },
-            WatchlistMemoryRetentionDays: {
-                save: function (el) {
-                    const retentionDays = parseInt(el.value);
-                    return isNaN(retentionDays) || retentionDays < 1 ? 365 : Math.min(retentionDays, 3650);
-                }
-            },
-            SeerrScanDebounceSeconds: {
-                save: function (el) {
-                    const seerrScanDebounce = parseInt(el.value);
-                    return isNaN(seerrScanDebounce) || seerrScanDebounce < 5 ? 60 : Math.min(seerrScanDebounce, 3600);
-                }
-            },
-            DownloadsPollIntervalSeconds: {
-                // Old load site distinguished null/undefined from 0; keep that.
-                load: function (el, v) {
-                    el.value = (v !== undefined && v !== null) ? v : 30;
-                },
-                save: function (el) {
-                    const pollInterval = parseInt(el.value, 10);
-                    return pollInterval >= 30 ? pollInterval : 30;
-                }
-            },
-            DownloadsHistoryWindowDays: {
-                load: function (el, v) {
-                    var value = parseInt(v, 10);
-                    el.value = isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
-                },
-                save: function (el) {
-                    var value = parseInt(el.value, 10);
-                    return isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
-                }
-            },
-            ClientRefreshPollSeconds: {
-                load: function (el, v) {
-                    el.value = (v !== undefined && v !== null) ? v : 30;
-                },
-                save: function (el) {
-                    const value = parseInt(el.value, 10);
-                    return isNaN(value) ? 30 : Math.min(3600, Math.max(5, value));
-                }
-            },
-            ClientRefreshIdleSeconds: {
-                load: function (el, v) {
-                    el.value = (v !== undefined && v !== null) ? v : 5;
-                },
-                save: function (el) {
-                    const value = parseInt(el.value, 10);
-                    return isNaN(value) ? 5 : Math.min(300, Math.max(0, value));
-                }
-            },
-            PauseScreenDelaySeconds: {
-                save: function (el) {
-                    const v = parseInt(el.value, 10);
-                    return isNaN(v) || v < 1 ? 5 : Math.min(v, 60);
-                }
-            },
-            SpoilerBlurIntensity: {
-                save: function (el) {
-                    const v = parseInt(el.value, 10);
-                    return isNaN(v) || v < 5 ? 40 : Math.min(v, 100);
-                }
-            },
-        };
-
-        function configBoundFields() {
-            return Array.from(document.querySelectorAll('[data-config-key]'));
-        }
-
-        /** load: config -> DOM for every [data-config-key] field. */
-        function applyConfigToBoundFields(config) {
-            configBoundFields().forEach(function (el) {
-                const key = el.dataset.configKey;
-                const override = CONFIG_FIELD_OVERRIDES[key];
-                const v = config[key];
-                if (override && override.load) {
-                    override.load(el, v);
-                } else if (el.type === 'checkbox') {
-                    el.checked = el.dataset.configDefault === 'true' ? v !== false : !!v;
-                } else if ('configFallback' in el.dataset) {
-                    el.value = v || el.dataset.configFallback;
-                } else {
-                    el.value = v;
-                }
-            });
-        }
-
-        /** save: DOM -> config for every [data-config-key] field. */
-        function readBoundFieldsIntoConfig(config) {
-            configBoundFields().forEach(function (el) {
-                const key = el.dataset.configKey;
-                const override = CONFIG_FIELD_OVERRIDES[key];
-                if (override && override.save) {
-                    config[key] = override.save(el);
-                } else if (el.type === 'checkbox') {
-                    config[key] = el.checked;
-                } else if ('configInt' in el.dataset) {
-                    const parsed = parseInt(el.value, 10);
-                    config[key] = 'configFallback' in el.dataset
-                        ? (parsed || parseInt(el.dataset.configFallback, 10))
-                        : parsed;
-                } else if ('configFallback' in el.dataset) {
-                    config[key] = el.value || el.dataset.configFallback;
-                } else {
-                    config[key] = el.value;
-                }
-            });
-        }
-
-        function loadConfig() {
-            Dashboard.showLoadingMsg();
+function wireDashboards() {
+    const retryBtn = document.querySelector('#jc-probe-retry-btn');
+    if (retryBtn && !retryBtn.dataset.jcWired) {
+        retryBtn.dataset.jcWired = 'true';
+        retryBtn.addEventListener('click', function () {
+            setProbeWarning('plugins', null);
             checkInstalledPlugins();
-            ApiClient.getPluginConfiguration(pluginId).then((config) => {
-                const savedShortcuts = (config.Shortcuts && config.Shortcuts.length > 0) ? config.Shortcuts : defaultShortcuts;
-                shortcutOverrides = savedShortcuts.filter(saved => {
-                    const def = defaultShortcuts.find(d => d.Name === saved.Name);
-                    return !def || saved.Key !== def.Key;
-                });
+        });
+    }
 
-                renderOverrides();
-                populateAddShortcutDropdown();
-
-                // Simple fields: one generic, type-aware pass over every
-                // [data-config-key] element (see applyConfigToBoundFields above).
-                // Complex editors and multi-element settings stay hand-written below.
-                applyConfigToBoundFields(config);
-
-                // Restore action checkboxes
-                const savedAction = config.MaintenanceModeAction || 'disable_accounts';
-                document.getElementById('mmAction_accounts').checked = savedAction === 'disable_accounts' || savedAction === 'both';
-                document.getElementById('mmAction_remote').checked   = savedAction === 'disable_remote'   || savedAction === 'both';
-                // Restore user selection radio + checkboxes
-                const savedUsers = config.MaintenanceModeAffectedUsers || 'all';
-                if (savedUsers === 'all') {
-                    document.querySelector('#mmUsers_all').checked = true;
-                    document.getElementById('jc-mm-user-list').style.display = 'none';
-                } else {
-                    document.querySelector('#mmUsers_select').checked = true;
-                    document.getElementById('jc-mm-user-list').style.display = '';
-                    // Preselected IDs will be applied after the user list loads
-                    document.getElementById('jc-mm-user-list').dataset.preselect = savedUsers;
-                }
-                loadMaintenanceUsers();
-
-                // One config value behind two synced inputs (Elsewhere + Seerr tabs).
-                document.querySelector('#TMDB_API_KEY').value = config.TMDB_API_KEY;
-                document.querySelector('#seerr_TMDB_API_KEY').value = config.TMDB_API_KEY;
-
-                // Set up bidirectional sync between TMDB API key fields
-                const tmdbKeyField = document.querySelector('#TMDB_API_KEY');
-                const seerrTmdbKeyField = document.querySelector('#seerr_TMDB_API_KEY');
-
-                tmdbKeyField.addEventListener('input', function() {
-                    seerrTmdbKeyField.value = this.value;
-                });
-
-                seerrTmdbKeyField.addEventListener('input', function() {
-                    tmdbKeyField.value = this.value;
-                });
-
-                // Restore stack order: rows are visually reordered to match
-                // current saved order values (ties broken by default order).
-                if (typeof renderQualityCatOrderAdmin === 'function') renderQualityCatOrderAdmin(config);
-                if (typeof renderPagesOrderAdmin === 'function') renderPagesOrderAdmin(config);
-
-                // Not bound: the save side is conditional on TagCacheServerMode.
-                document.querySelector('#enableTagsLocalStorageFallback').checked = config.EnableTagsLocalStorageFallback === true;
-
-                // Not bound: these fields are validated/normalized by hand on save.
-                document.querySelector('#seerrUrls').value = config.SeerrUrls;
-                document.querySelector('#seerrExternalUrl').value = config.SeerrExternalUrl || '';
-                document.querySelector('#SeerrApiKey').value = config.SeerrApiKey;
-                document.querySelector('#seerrUrlMappings').value = config.SeerrUrlMappings || '';
-
-                // One enum expanded into two trigger checkboxes.
-                const triggerType = config.AutoMovieRequestTriggerType || 'OnMinutesWatched';
-                document.querySelector('#autoMovieRequestTriggerOnStart').checked = (triggerType === 'OnStart' || triggerType === 'Both');
-                document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked = (triggerType === 'OnMinutesWatched' || triggerType === 'Both');
-                if ((config.AutoMovieRequestQualityMode || 'default') === 'custom') {
-                    document.querySelector('#autoMovieRequestCustomSettings').style.display = 'block';
-                    loadAutoMovieRadarrServers(config);
-                }
-
-                // Not bound: hidden input kept in sync by the blocked-users list builder.
-                document.querySelector('#seerrImportBlockedUsers').value = config.SeerrImportBlockedUsers || '';
-                loadBlockedUsersList(config.SeerrImportBlockedUsers || '');
-
-                // Load multi-instance Sonarr/Radarr
-                loadArrInstances(config);
-
-                // Tie icon display settings
-                if (config.MetadataIconsEnabled) {
-                    // Force icon display where applicable
-                    const showLbText = document.querySelector('#showLetterboxdLinkAsText');
-                    const showArrText = document.querySelector('#showArrLinksAsText');
-                    if (showLbText) showLbText.checked = false;
-                    if (showArrText) showArrText.checked = false;
-                }
-
-                document.getElementById('activeStreamsAllUsersContainer').style.display = config.ActiveStreamsEnabled ? '' : 'none';
-                document.querySelector('#activeStreamsEnabled').addEventListener('change', function() {
-                    document.getElementById('activeStreamsAllUsersContainer').style.display = this.checked ? '' : 'none';
-                });
-
-                // Set up event handler for watchlist prevention checkbox
-                function toggleWatchlistRetentionVisibility() {
-                    const preventionEnabled = document.querySelector('#preventWatchlistReAddition').checked;
-                    const retentionContainer = document.querySelector('#watchlistMemoryRetentionDays').closest('.inputContainer');
-                    if (retentionContainer) {
-                        retentionContainer.style.display = preventionEnabled ? 'block' : 'none';
-                    }
-                }
-
-                // Set initial visibility
-                toggleWatchlistRetentionVisibility();
-
-                // Add event listener
-                document.querySelector('#preventWatchlistReAddition').addEventListener('change', toggleWatchlistRetentionVisibility);
-
-                // Update TMDB-dependent settings after config is loaded
-                updateAllDependencies();
-
-                // Refresh the Requests Page requirements banner off freshly-
-                // rendered instance cards and loaded Seerr fields.
-                updateRequestsRequirementsBanner();
-
-                Dashboard.hideLoadingMsg();
-            });
-        }
-
-        async function buildConfigFromForm() {
-            const config = await ApiClient.getPluginConfiguration(pluginId);
-            const finalShortcuts = [...defaultShortcuts];
-            shortcutOverrides.forEach(override => {
-                const index = finalShortcuts.findIndex(s => s.Name === override.Name);
-                if (index !== -1) finalShortcuts[index] = override;
-            });
-            config.Shortcuts = finalShortcuts;
-
-            // Simple fields: one generic, type-aware pass over every
-            // [data-config-key] element (see readBoundFieldsIntoConfig above).
-            // Everything below preserves the hand-written semantics that do not fit
-            // the binder: enums spanning several inputs, validated/normalized text,
-            // conditional values and the complex editors.
-            readBoundFieldsIntoConfig(config);
-
-            const mmAccounts = document.getElementById('mmAction_accounts').checked;
-            const mmRemote   = document.getElementById('mmAction_remote').checked;
-            config.MaintenanceModeAction = (mmAccounts && mmRemote) ? 'both'
-                                         : mmRemote                 ? 'disable_remote'
-                                         :                            'disable_accounts';
-            const mmUsersMode = (document.querySelector('input[name="maintenanceModeUsers"]:checked') || {}).value || 'all';
-            if (mmUsersMode === 'all') {
-                config.MaintenanceModeAffectedUsers = 'all';
-            } else {
-                const checked = Array.from(document.querySelectorAll('.jc-mm-user-cb:checked')).map(cb => cb.value);
-                config.MaintenanceModeAffectedUsers = JSON.stringify(checked);
-            }
-
-            // Persist current visual stack order. Each admin row reads its current
-            // DOM position (1-based) into the corresponding *Order config key.
-            // Skipped if the load-time render failed — otherwise we'd clobber the
-            // user's saved order with default DOM positions.
-            if (_qualityCatRenderOK) {
-                const adminCatRows = document.querySelectorAll('#qualityCategoriesAdmin .jc-quality-cat-admin-row');
-                adminCatRows.forEach((row, idx) => {
-                    const orderKey = row.dataset.orderKey;
-                    if (orderKey) config[orderKey] = idx + 1;
-                });
-            }
-
-            // Persist page order from the reorder control (validated: only the known page
-            // ids, in current DOM order). Skipped if the load-time render failed.
-            if (_pagesOrderRenderOK) {
-                var pageOrderRows = document.querySelectorAll('#pagesOrderAdmin .jc-pages-order-row');
-                config.PagesOrder = Array.from(pageOrderRows).map(function (r) { return r.dataset.pageId; }).filter(Boolean).join(',');
-            }
-
-            config.EnableTagsLocalStorageFallback = config.TagCacheServerMode
-                ? document.querySelector('#enableTagsLocalStorageFallback').checked
-                : true;
-
-            // validate scheme on save. Lines that don't parse as
-            // http(s) are dropped with a warning so we never persist garbage
-            // like "seerr.local" (no scheme) — which downstream string-concats
-            // produce malformed URIs and a confusing UriFormatException buried
-            // in logs. Empty textarea remains valid (Seerr can be disabled).
-            (function () {
-                const raw = (document.querySelector('#seerrUrls').value || '').split('\n').map(u => u.trim()).filter(Boolean);
-                const valid = [];
-                const invalid = [];
-                for (const line of raw) {
-                    try {
-                        const u = new URL(line);
-                        if (u.protocol === 'http:' || u.protocol === 'https:') {
-                            valid.push(line);
-                        } else {
-                            invalid.push(line);
-                        }
-                    } catch (_) {
-                        invalid.push(line);
-                    }
-                }
-                if (invalid.length > 0) {
-                    console.warn('Jellyfin Canopy: dropping invalid Seerr URL(s) on save (must start with http:// or https://):', invalid);
-                    if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
-                        Dashboard.alert({
-                            title: 'Invalid Seerr URL(s)',
-                            message: 'These lines were dropped because they do not start with http:// or https://:\n\n' + invalid.join('\n')
-                        });
-                    }
-                }
-                config.SeerrUrls = valid.join('\n');
-            })();
-            // Optional Seerr External URL: kept only when a well-formed http(s) URL; blanked with a
-            // clear warning otherwise so it never reaches browser link building. Empty = the client
-            // falls back to the first internal URL above (unchanged behaviour).
-            (function () {
-                var raw = (document.querySelector('#seerrExternalUrl').value || '').trim();
-                if (raw && !jcIsHttpUrl(raw)) {
-                    console.warn('Jellyfin Canopy: dropping invalid Seerr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
-                    if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
-                        Dashboard.alert({
-                            title: 'Invalid Seerr External URL',
-                            message: 'The Seerr External URL was dropped: it must be an http:// or https:// URL without embedded credentials, query string or fragment.\n\n' + raw
-                        });
-                    }
-                    config.SeerrExternalUrl = '';
-                } else {
-                    config.SeerrExternalUrl = raw;
-                }
-            })();
-            config.SeerrApiKey = (document.querySelector('#SeerrApiKey').value || '').replace(/\s/g, '');
-            config.SeerrUrlMappings = (document.querySelector('#seerrUrlMappings').value || '').split('\n').map(u => u.trim()).filter(Boolean).join('\n');
-            // Maintainerr has no API key. Normalize only the two URL roles and the
-            // browser-link mappings; the server repeats this validation before
-            // persistence and applies its stricter outbound-network policy at use.
-            (function () {
-                var internalUrl = String(config.MaintainerrUrl || '').trim();
-                var externalUrl = String(config.MaintainerrExternalUrl || '').trim();
-                var normalizedInternal = jcNormalizeMaintainerrBaseUrl(internalUrl);
-                var normalizedExternal = externalUrl
-                    ? jcNormalizeMaintainerrBaseUrl(externalUrl)
-                    : '';
-                var invalidInternal = !!internalUrl && !normalizedInternal;
-                var invalidExternal = !!externalUrl && !normalizedExternal;
-                config.MaintainerrUrl = normalizedInternal;
-                config.MaintainerrExternalUrl = normalizedExternal;
-
-                // Validate and Save deliberately share this exact bounded parser.
-                // It drops malformed/duplicate/excess rows without echoing their
-                // URL contents into alerts or logs.
-                var mappingResult = jcValidateMaintainerrMappings(
-                    String(config.MaintainerrUrlMappings || '')
-                );
-                var invalidMappings = mappingResult.invalidCount;
-                config.MaintainerrUrlMappings = mappingResult.value;
-
-                if (invalidInternal || invalidExternal || invalidMappings) {
-                    var dropped = [];
-                    if (invalidInternal) dropped.push('the internal URL');
-                    if (invalidExternal) dropped.push('the browser URL');
-                    if (invalidMappings) dropped.push(invalidMappings + ' mapping validation issue' + (invalidMappings === 1 ? '' : 's'));
-                    Dashboard.alert({
-                        title: 'Invalid Maintainerr URL configuration',
-                        message: 'Canopy dropped ' + dropped.join(', ') + '. Maintainerr URLs are limited to 2048 characters and must be HTTP(S) bases without credentials, query, fragment, or traversal. Mappings are limited to 64 KiB and 32 nonempty rows.'
-                    });
-                }
-            })();
-            // Bazarr External URL rides the generic data-config-key binder, so validate it here after
-            // the bound fields are read: blank a malformed value with a clear warning.
-            (function () {
-                var raw = (config.BazarrExternalUrl || '').trim();
-                if (raw && !jcIsHttpUrl(raw)) {
-                    console.warn('Jellyfin Canopy: dropping invalid Bazarr External URL on save (must be an http(s) URL without credentials or query/fragment):', raw);
-                    if (typeof Dashboard !== 'undefined' && Dashboard.alert) {
-                        Dashboard.alert({
-                            title: 'Invalid Bazarr External URL',
-                            message: 'The Bazarr External URL was dropped: it must be an http:// or https:// URL without embedded credentials, query string or fragment.\n\n' + raw
-                        });
-                    }
-                    config.BazarrExternalUrl = '';
-                } else {
-                    config.BazarrExternalUrl = raw;
-                }
-            })();
-            // Two synced inputs, one config value; the Seerr-tab field wins (as before).
-            config.TMDB_API_KEY = document.querySelector('#seerr_TMDB_API_KEY').value;
-
-            const onStart = document.querySelector('#autoMovieRequestTriggerOnStart').checked;
-            const onMinutes = document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked;
-            if (onStart && onMinutes) {
-                config.AutoMovieRequestTriggerType = 'Both';
-            } else if (onStart) {
-                config.AutoMovieRequestTriggerType = 'OnStart';
-            } else if (onMinutes) {
-                config.AutoMovieRequestTriggerType = 'OnMinutesWatched';
-            } else {
-                config.AutoMovieRequestTriggerType = 'OnMinutesWatched'; // Default to minutes watched if nothing selected
-            }
-            var serverVal = parseInt(document.querySelector('#autoMovieRequestServer').value);
-            config.AutoMovieRequestCustomServerId = (!isNaN(serverVal) && serverVal >= 0) ? serverVal : -1;
-            var profileVal = parseInt(document.querySelector('#autoMovieRequestProfile').value);
-            config.AutoMovieRequestCustomProfileId = (!isNaN(profileVal) && profileVal > 0) ? profileVal : 0;
-            config.AutoMovieRequestCustomRootFolder = document.querySelector('#autoMovieRequestRootFolder').value || '';
-
-            syncBlockedUsersToHiddenInput();
-            config.SeerrImportBlockedUsers = document.querySelector('#seerrImportBlockedUsers').value || '';
-
-            // Save multi-instance Sonarr/Radarr
-            var arrIncompleteWarnings = saveArrInstances(config);
-            if (arrIncompleteWarnings.length > 0) {
-                // Surface each incomplete-card warning to the admin before the save completes.
-                arrIncompleteWarnings.forEach(function(msg) {
-                    Dashboard.alert({ title: '⚠ Incomplete *arr instance', message: msg });
-                });
-            }
-
-            // If metadata icons are enabled, ensure icons are shown for Letterboxd and *arr links
-            if (config.MetadataIconsEnabled) {
-                config.ShowLetterboxdLinkAsText = false;
-                config.ShowArrLinksAsText = false;
-            }
-
-
-            return config;
-        }
-
-        // Re-entrancy guard. `Dashboard.showLoadingMsg()` provides only a visual
-        // overlay, not an input block, so two rapid Enter presses or a second
-        // click on the save dock can still fire saveConfig in parallel — the
-        // second one's `buildConfigFromForm` reads a server state that the
-        // first one has already mutated, and Save#1's deferred owned-flag write
-        // (step 2) can land after Save#2 and silently revert the admin's
-        // between-save form changes. Treat saves as serial.
-        var _jeSaveInFlight = false;
-
-        async function saveConfig(e) {
+    const retestAllConnectionsBtn = document.querySelector('#retestAllConnectionsBtn');
+    if (retestAllConnectionsBtn && !retestAllConnectionsBtn.dataset.jcWired) {
+        retestAllConnectionsBtn.dataset.jcWired = 'true';
+        retestAllConnectionsBtn.addEventListener('click', function (e) {
             e.preventDefault();
-            if (_jeSaveInFlight) return false;
-            _jeSaveInFlight = true;
-            Dashboard.showLoadingMsg();
-            var saveBtns = document.querySelectorAll('.jc-save-dock-btn');
-            saveBtns.forEach(function(b) { b.disabled = true; });
+            runRetestAllConnections();
+        });
+    }
 
-            try {
-                const config = await buildConfigFromForm();
-                // Everything mutated up to this snapshot is in `config`.
-                const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
-                const result = await ApiClient.updatePluginConfiguration(pluginId, config);
+    const resetBtn = document.querySelector('#resetAllUserSettingsBtn');
+    if (resetBtn && !resetBtn.dataset.jcWired) {
+        resetBtn.dataset.jcWired = 'true';
+        resetBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            resetAllUserSettings();
+        });
+    }
 
-                // Apply maintenance mode: enable/disable users to match the toggle
-                try {
-                    if (config.MaintenanceModeEnabled) {
-                        const affectedIds = config.MaintenanceModeAffectedUsers === 'all'
-                            ? []
-                            : JSON.parse(config.MaintenanceModeAffectedUsers || '[]');
-                        await ApiClient.ajax({
-                            type: 'POST',
-                            url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Enable'),
-                            contentType: 'application/json',
-                            data: JSON.stringify({
-                                message: config.MaintenanceModeMessage || '',
-                                durationMinutes: 0,
-                                action: config.MaintenanceModeAction || 'disable_accounts',
-                                affectedUserIds: affectedIds
-                            })
-                        });
-                        // Broadcast a native Jellyfin message to all active sessions
-                        // (reaches non-web clients like TV apps too — works regardless of Active Streams setting)
-                        const mmMsg = (config.MaintenanceModeNotificationMessage || '').trim()
-                            || (config.MaintenanceModeMessage || '').trim()
-                            || 'Server maintenance is starting. Please finish up and try again later.';
-                        try {
-                            await ApiClient.ajax({
-                                type: 'POST',
-                                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Broadcast'),
-                                contentType: 'application/json',
-                                data: JSON.stringify({
-                                    header: 'Server Maintenance',
-                                    text: mmMsg,
-                                    timeoutMs: 30000
-                                })
-                            });
-                        } catch (bcErr) {
-                            console.warn('[JC] Maintenance broadcast failed (no active sessions?):', bcErr);
-                        }
-                    } else {
-                        await ApiClient.ajax({
-                            type: 'POST',
-                            url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Disable')
-                        });
-                    }
-                } catch (mmErr) {
-                    console.warn('[JC] Maintenance mode apply failed:', mmErr);
-                }
+    const clearTagsBtn = document.querySelector('#clearTagsCacheBtn');
+    if (clearTagsBtn && !clearTagsBtn.dataset.jcWired) {
+        clearTagsBtn.dataset.jcWired = 'true';
+        clearTagsBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            clearTagCaches();
+        });
+    }
 
-                Dashboard.processPluginConfigurationUpdateResult(result);
-                // Clean only if nothing was edited while the save was in flight.
-                jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
-            } catch (saveErr) {
-                Dashboard.hideLoadingMsg();
-                console.error('[JC] saveConfig failed:', saveErr);
-                try {
-                    Dashboard.alert({
-                        title: 'Save failed',
-                        message: 'Could not save Jellyfin Canopy settings. Check the browser console and server logs, then try again.'
-                    });
-                } catch (alertErr) { console.warn('[JC] Dashboard.alert threw:', alertErr); }
-            } finally {
-                _jeSaveInFlight = false;
-                saveBtns.forEach(function(b) { b.disabled = false; });
+    const quickClearBtn = document.querySelector('#clearTagCachesQuickBtn');
+    if (quickClearBtn && !quickClearBtn.dataset.jcWired) {
+        quickClearBtn.dataset.jcWired = 'true';
+        quickClearBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const canonical = document.querySelector('#clearTagsCacheBtn');
+            if (canonical) {
+                canonical.click();
             }
-            return false;
+        });
+    }
+
+    const serverModeCb = document.querySelector('#tagCacheServerMode');
+    if (serverModeCb && !serverModeCb.dataset.jcQuickVisWired) {
+        serverModeCb.dataset.jcQuickVisWired = 'true';
+        serverModeCb.addEventListener('change', updateClearTagCachesQuickBtnVisibility);
+    }
+    updateClearTagCachesQuickBtnVisibility();
+}
+
+function runRetestAllConnections() {
+    const btn = document.querySelector('#retestAllConnectionsBtn');
+    const now = Date.now();
+    const remainingMs = _jeRetestLastRun + RETEST_ALL_MIN_COOLDOWN_MS - now;
+    if (remainingMs > 0) {
+        // Guardrail against double-clicks, not a security boundary.
+        Dashboard.alert({
+            title: 'Please wait',
+            message: 'Re-test is rate-limited. Try again in ' + Math.ceil(remainingMs / 1000) + ' s.'
+        });
+        return;
+    }
+
+    cancelActiveMaintainerrTest(true);
+    clearConnectionTestCache();
+
+    _jeSuppressTestAlerts = true;
+    _jeRetestLastRun = now;
+    const titleEl = btn ? btn.querySelector('.jc-quick-action-title') : null;
+    const originalTitle = titleEl ? titleEl.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+    }
+    if (titleEl) {
+        titleEl.textContent = 'Retesting…';
+    }
+
+    let tested = 0;
+
+    // TMDB: one click is enough — the key is shared between both testTmdbBtn instances.
+    const tmdbBtn = document.querySelector('.testTmdbBtn');
+    if (tmdbBtn && !tmdbBtn.disabled) {
+        tmdbBtn.click();
+        tested++;
+    }
+
+    // Seerr: skipping the incomplete case avoids a noisy "missing info" alert.
+    const seerrTestBtn = document.querySelector('#testSeerrBtn');
+    if (readFieldChecked('#seerrEnabled')
+        && readFieldValue('#seerrUrls')
+        && readFieldValue('#SeerrApiKey')
+        && seerrTestBtn && !seerrTestBtn.disabled) {
+        seerrTestBtn.click();
+        tested++;
+    }
+
+    const testMaintainerrBtn = document.querySelector('#testMaintainerrBtn');
+    if (readFieldChecked('#maintainerrEnabled')
+        && jcNormalizeMaintainerrBaseUrl(readFieldValue('#maintainerrUrl'))
+        && testMaintainerrBtn && !testMaintainerrBtn.disabled) {
+        testMaintainerrBtn.click();
+        tested++;
+    }
+
+    document.querySelectorAll('.arr-instance-test').forEach(function (testBtn) {
+        if (testBtn.disabled) {
+            return;
         }
-
-        // Saves current config and applies it to all users
-        async function resetAllUserSettings() {
-            if (confirm("Are you sure?\n\nThis will save the current configuration and overwrite every per-user default for ALL users on this server.")) {
-                Dashboard.showLoadingMsg();
-                try {
-                    // First, save the current configuration
-                    const config = await buildConfigFromForm();
-                    await ApiClient.updatePluginConfiguration(pluginId, config);
-
-                    // Then reset all user settings to match the saved config
-                    await ApiClient.ajax({
-                        type: 'POST',
-                        url: ApiClient.getUrl('/JellyfinCanopy/reset-all-users-settings'),
-                        dataType: 'json'
-                    });
-
-                    Dashboard.hideLoadingMsg();
-                    let msg = 'Configuration saved and applied to all users successfully!\n\nSettings will take effect after users refresh their browsers.';
-                    Dashboard.alert({ title: 'Success', message: msg });
-                } catch (e) {
-                    Dashboard.hideLoadingMsg();
-                    console.error('Failed to save and apply settings:', e);
-                    Dashboard.alert({
-                        title: 'Error',
-                        message: 'Failed to save and apply settings to all users. Check server logs for details.'
-                    });
-                }
-            }
+        const card = testBtn.closest('.arr-instance-card');
+        if (!card) {
+            return;
         }
-
-        // ── Maintenance mode: user checklist ─────────────────────────────────────
-
-        function loadMaintenanceUsers() {
-            ApiClient.ajax({
-                type: 'GET',
-                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Users'),
-                dataType: 'json'
-            }).then(function(users) {
-                const inner = document.getElementById('jc-mm-users-inner');
-                if (!inner) return;
-                inner.innerHTML = '';
-
-                if (!users || users.length === 0) {
-                    const msg = document.createElement('div');
-                    msg.style.cssText = 'opacity:0.55;font-size:0.875em;';
-                    msg.textContent = 'No non-admin users found.';
-                    inner.appendChild(msg);
-                    return;
-                }
-
-                // Collect any pre-selected IDs stored on the container by loadConfig
-                const listEl = document.getElementById('jc-mm-user-list');
-                let preselect = [];
-                try { preselect = JSON.parse(listEl.dataset.preselect || '[]'); } catch (e) {}
-                const preselectAll = preselect.length === 0;
-
-                // 3-column grid
-                const grid = document.createElement('div');
-                grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:0.2em 0.75em;';
-
-                users.forEach(function(u) {
-                    // Handle both camelCase and PascalCase from the API
-                    const uid  = u.id  || u.Id  || '';
-                    const uname = u.username || u.Username || uid;
-
-                    const checked = preselectAll || preselect.indexOf(uid) !== -1;
-
-                    const label = document.createElement('label');
-                    label.style.cssText = 'display:flex;align-items:center;gap:0.45em;padding:0.3em 0.2em;cursor:pointer;border-radius:4px;min-width:0;';
-
-                    const cb = document.createElement('input');
-                    cb.type = 'checkbox';
-                    cb.className = 'jc-mm-user-cb';
-                    cb.value = uid;
-                    cb.checked = checked;
-                    cb.style.flexShrink = '0';
-
-                    const avatar = document.createElement('span');
-                    avatar.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;' +
-                        'width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,0.15);' +
-                        'font-size:0.7em;font-weight:700;flex-shrink:0;overflow:hidden;';
-                    // Try to load the user's actual Jellyfin profile picture
-                    const img = document.createElement('img');
-                    img.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;display:block;';
-                    img.src = ApiClient.getUrl('/Users/' + uid + '/Images/Primary', { width: 26 });
-                    img.alt = '';
-                    const fallbackLetter = document.createTextNode((uname || '?').charAt(0).toUpperCase());
-                    img.onerror = function() {
-                        this.style.display = 'none';
-                        avatar.appendChild(fallbackLetter);
-                    };
-                    avatar.appendChild(img);
-
-                    const name = document.createElement('span');
-                    name.style.cssText = 'font-size:0.875em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-                    name.textContent = uname;
-
-                    label.appendChild(cb);
-                    label.appendChild(avatar);
-                    label.appendChild(name);
-                    grid.appendChild(label);
-                });
-
-                inner.appendChild(grid);
-            }).catch(function() {
-                const inner = document.getElementById('jc-mm-users-inner');
-                if (!inner) return;
-                inner.innerHTML = '';
-                const msg = document.createElement('div');
-                msg.style.cssText = 'opacity:0.55;font-size:0.875em;';
-                msg.textContent = 'Failed to load users.';
-                inner.appendChild(msg);
-            });
+        if (readArrCardField(card, '.arr-instance-url') && readArrCardField(card, '.arr-instance-apikey')) {
+            testBtn.click();
+            tested++;
         }
+    });
 
-        function setupMaintenanceModeControls() {
-            // Show/hide user checklist based on radio selection
-            document.querySelectorAll('input[name="maintenanceModeUsers"]').forEach(function(radio) {
-                radio.addEventListener('change', function() {
-                    const listEl = document.getElementById('jc-mm-user-list');
-                    if (this.value === 'select') {
-                        listEl.style.display = '';
-                        loadMaintenanceUsers();
-                    } else {
-                        listEl.style.display = 'none';
-                    }
-                });
-            });
+    // Always re-render so the user sees feedback (rows flipped to pending).
+    renderServiceStatusDashboard();
 
-            // Select All / Deselect All buttons
-            document.getElementById('jc-mm-select-all').addEventListener('click', function() {
-                document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = true; });
-            });
-            document.getElementById('jc-mm-deselect-all').addEventListener('click', function() {
-                document.querySelectorAll('.jc-mm-user-cb').forEach(function(cb) { cb.checked = false; });
-            });
+    if (tested === 0) {
+        _jeSuppressTestAlerts = false;
+        if (btn) {
+            btn.disabled = false;
         }
-
-        // Setup branding file uploads and previews
-        function setupBrandingUploads() {
-            const uploadConfigs = [
-                { inputId: 'iconTransparentInput', dropZoneId: 'iconTransparentDropZone', statusId: 'iconTransparentStatus', fileName: 'icon-transparent.png', previewId: 'iconTransparentPreview', placeholderId: 'iconTransparentPlaceholder', deleteId: 'iconTransparentDelete', dimensionsId: 'iconTransparentDimensions' },
-                { inputId: 'faviconInput', dropZoneId: 'faviconDropZone', statusId: 'faviconStatus', fileName: 'favicon.ico', previewId: 'faviconPreview', placeholderId: 'faviconPlaceholder', deleteId: 'faviconDelete', dimensionsId: 'faviconDimensions' },
-                { inputId: 'bannerLightInput', dropZoneId: 'bannerLightDropZone', statusId: 'bannerLightStatus', fileName: 'banner-light.png', previewId: 'bannerLightPreview', placeholderId: 'bannerLightPlaceholder', deleteId: 'bannerLightDelete', dimensionsId: 'bannerLightDimensions' },
-                { inputId: 'bannerDarkInput', dropZoneId: 'bannerDarkDropZone', statusId: 'bannerDarkStatus', fileName: 'banner-dark.png', previewId: 'bannerDarkPreview', placeholderId: 'bannerDarkPlaceholder', deleteId: 'bannerDarkDelete', dimensionsId: 'bannerDarkDimensions' },
-                { inputId: 'touchiconInput', dropZoneId: 'touchiconDropZone', statusId: 'touchiconStatus', fileName: 'apple-touch-icon.png', previewId: 'touchiconPreview', placeholderId: 'touchiconPlaceholder', deleteId: 'touchiconDelete', dimensionsId: 'touchiconDimensions' }
-            ];
-
-            uploadConfigs.forEach(config => {
-                const input = document.getElementById(config.inputId);
-                const dropZone = document.getElementById(config.dropZoneId);
-                const statusDiv = document.getElementById(config.statusId);
-                const deleteButton = document.getElementById(config.deleteId);
-
-                if (!input || !dropZone || !statusDiv) return;
-
-                // Handle file selection
-                input.addEventListener('change', (e) => {
-                    if (e.target.files.length > 0) {
-                        uploadBrandingImage(e.target.files[0], config, statusDiv);
-                    }
-                });
-
-                // Drag and drop
-                dropZone.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    dropZone.style.borderColor = 'var(--primary-accent-color, #00a4dc)';
-                    dropZone.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent)';
-                });
-
-                dropZone.addEventListener('dragleave', (e) => {
-                    e.preventDefault();
-                    dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
-                    dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
-                });
-
-                dropZone.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    dropZone.style.borderColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 50%, transparent)';
-                    dropZone.style.backgroundColor = 'rgba(255,255,255,0.05)';
-                    if (e.dataTransfer.files.length > 0) {
-                        uploadBrandingImage(e.dataTransfer.files[0], config, statusDiv);
-                    }
-                });
-
-                if (deleteButton) {
-                    deleteButton.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        deleteBrandingImage(config, statusDiv);
-                    });
-                }
-
-                // Load existing preview if present
-                refreshBrandingPreview(config);
-            });
+        if (titleEl) {
+            titleEl.textContent = originalTitle;
         }
+        _jeRetestLastRun = 0;
+        Dashboard.alert({
+            title: 'Nothing to re-test',
+            message: 'Enable and configure at least one service (TMDB, Seerr, Maintainerr, Sonarr, or Radarr) before running a re-test.'
+        });
+        return;
+    }
 
-        async function uploadBrandingImage(file, config, statusDiv) {
-            // Validate that it's an image file
-            if (!file.type || !file.type.startsWith('image/')) {
-                statusDiv.textContent = '✗ Only image files allowed';
-                statusDiv.style.color = '#ff6b6b';
-                return;
-            }
+    const startedAt = Date.now();
+    let released = false;
 
-            const maxFileSize = 10 * 1024 * 1024; // 10MB
-            if (file.size > maxFileSize) {
-                statusDiv.textContent = `✗ File too large (max ${maxFileSize / (1024 * 1024)}MB)`;
-                statusDiv.style.color = '#ff6b6b';
-                return;
-            }
-
-            // Show image preview and dimensions
-            const previewImg = document.getElementById(config.previewId);
-            const dimensionsDiv = document.getElementById(config.dimensionsId);
-            const placeholder = document.getElementById(config.placeholderId);
-
-            if (previewImg) {
-                const objectUrl = URL.createObjectURL(file);
-                previewImg.src = objectUrl;
-                previewImg.style.display = 'block';
-                if (placeholder) placeholder.style.display = 'none';
-
-                // Get image dimensions
-                previewImg.onload = function() {
-                    const img = new Image();
-                    img.onload = function() {
-                        if (dimensionsDiv) {
-                            dimensionsDiv.textContent = `${img.width} × ${img.height}px`;
-                            dimensionsDiv.style.display = 'block';
-                        }
-                        URL.revokeObjectURL(objectUrl);
-                    };
-                    img.src = objectUrl;
-                };
-            }
-
-            statusDiv.textContent = 'Uploading...';
-            statusDiv.style.color = '#ffa500';
-
-            try {
-                const formData = new FormData();
-                const renamedFile = new File([file], config.fileName, { type: file.type });
-                formData.append('file', renamedFile);
-                formData.append('fileName', config.fileName);
-
-                const token = ApiClient.accessToken ? ApiClient.accessToken() : '';
-                const response = await fetch(ApiClient.getUrl('/JellyfinCanopy/UploadBrandingImage'), {
-                    method: 'POST',
-                    body: formData,
-                    headers: {
-                        // Jellyfin 12 authenticates from the Authorization header; the
-                        // legacy X-MediaBrowser-Token is kept for 10.11 back-compat.
-                        'Authorization': 'MediaBrowser Token="' + token + '"',
-                        'X-MediaBrowser-Token': token
-                    }
-                });
-
-                if (response.ok) {
-                    statusDiv.textContent = '✓ Uploaded';
-                    statusDiv.style.color = '#51cf66';
-                    await refreshBrandingPreview(config);
-                    setTimeout(() => { statusDiv.textContent = ''; }, 3000);
-                } else {
-                    const error = await response.text();
-                    statusDiv.textContent = `✗ ${error || 'Upload failed'}`;
-                    statusDiv.style.color = '#ff6b6b';
-                }
-            } catch (error) {
-                console.error('Upload exception:', error);
-                statusDiv.textContent = `✗ ${error.message || 'Upload error'}`;
-                statusDiv.style.color = '#ff6b6b';
-            }
+    function release() {
+        if (released) {
+            return;
         }
-
-        async function refreshBrandingPreview(config) {
-            const previewImg = document.getElementById(config.previewId);
-            const placeholder = document.getElementById(config.placeholderId);
-            const deleteButton = document.getElementById(config.deleteId);
-            const dimensionsDiv = document.getElementById(config.dimensionsId);
-            if (!previewImg) return;
-
-            const token = ApiClient.accessToken ? ApiClient.accessToken() : '';
-            try {
-                const response = await fetch(ApiClient.getUrl('/JellyfinCanopy/BrandingImage', { fileName: config.fileName, t: Date.now() }), {
-                    // Jellyfin 12 authenticates from the Authorization header; the
-                    // legacy X-MediaBrowser-Token is kept for 10.11 back-compat.
-                    headers: { 'Authorization': 'MediaBrowser Token="' + token + '"', 'X-MediaBrowser-Token': token }
-                });
-
-                if (!response.ok) {
-                    previewImg.style.display = 'none';
-                    if (placeholder) placeholder.style.display = 'block';
-                    if (deleteButton) deleteButton.style.display = 'none';
-                    if (dimensionsDiv) dimensionsDiv.style.display = 'none';
-                    return;
-                }
-
-                const blob = await response.blob();
-                const objectUrl = URL.createObjectURL(blob);
-                previewImg.src = objectUrl;
-                previewImg.style.display = 'block';
-                if (placeholder) placeholder.style.display = 'none';
-                if (deleteButton) deleteButton.style.display = 'inline-block';
-
-                // Show dimensions for existing images
-                if (dimensionsDiv) {
-                    previewImg.onload = function() {
-                        dimensionsDiv.textContent = previewImg.naturalWidth + ' × ' + previewImg.naturalHeight + 'px';
-                        dimensionsDiv.style.display = 'block';
-                    };
-                }
-            } catch (err) {
-                previewImg.style.display = 'none';
-                if (placeholder) placeholder.style.display = 'block';
-                if (deleteButton) deleteButton.style.display = 'none';
-                if (dimensionsDiv) dimensionsDiv.style.display = 'none';
-            }
+        released = true;
+        if (_jeRetestPollTimer) {
+            clearInterval(_jeRetestPollTimer);
+            _jeRetestPollTimer = null;
         }
-
-        async function deleteBrandingImage(config, statusDiv) {
-            statusDiv.textContent = 'Deleting...';
-            statusDiv.style.color = '#ffa500';
-
-            const formData = new FormData();
-            formData.append('fileName', config.fileName);
-            const token = ApiClient.accessToken ? ApiClient.accessToken() : '';
-
-            try {
-                const response = await fetch(ApiClient.getUrl('/JellyfinCanopy/DeleteBrandingImage'), {
-                    method: 'POST',
-                    body: formData,
-                    // Jellyfin 12 authenticates from the Authorization header; the
-                    // legacy X-MediaBrowser-Token is kept for 10.11 back-compat.
-                    headers: { 'Authorization': 'MediaBrowser Token="' + token + '"', 'X-MediaBrowser-Token': token }
-                });
-
-                if (response.ok) {
-                    statusDiv.textContent = '✓ Deleted';
-                    statusDiv.style.color = '#51cf66';
-
-                    // Hide dimensions when image is deleted
-                    const dimensionsDiv = document.getElementById(config.dimensionsId);
-                    if (dimensionsDiv) dimensionsDiv.style.display = 'none';
-
-                    await refreshBrandingPreview(config);
-                    setTimeout(() => { statusDiv.textContent = ''; }, 2000);
-                } else {
-                    const error = await response.text();
-                    statusDiv.textContent = `✗ ${error || 'Delete failed'}`;
-                    statusDiv.style.color = '#ff6b6b';
-                }
-            } catch (err) {
-                statusDiv.textContent = `✗ ${err.message || 'Delete error'}`;
-                statusDiv.style.color = '#ff6b6b';
-            }
+        if (_jeRetestHardStopTimer) {
+            clearTimeout(_jeRetestHardStopTimer);
+            _jeRetestHardStopTimer = null;
         }
-
-        setupBrandingUploads();
-        setupMaintenanceModeControls();
-
-        // Populate language options dynamically
-        (async () => {
-            const defaultLanguageSelect = document.getElementById('DefaultLanguage');
-            if (!defaultLanguageSelect) return;
-
-            const CUSTOM_DISPLAY_NAMES = {
-                'pr': 'Pirate',
-                'en-GB': 'English (United Kingdom)',
-                'en-US': 'English (United States)',
-                'zh-CN': 'Chinese (Simplified)',
-                'zh-HK': 'Chinese (Hong Kong)',
-                'pt-BR': 'Portuguese (Brazil)'
-            };
-
-            try {
-                const [localeCodes, cultures] = await Promise.all([
-                    ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/JellyfinCanopy/locales'), dataType: 'json' }),
-                    ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('/Localization/Cultures'), dataType: 'json' })
-                ]);
-
-                // The server's /locales endpoint is authoritative: locale files ship
-                // embedded in the plugin DLL, so no external listing is consulted.
-
-                const cultureMap = {};
-                cultures.forEach(c => {
-                    cultureMap[c.TwoLetterISOLanguageName.toLowerCase()] = c;
-                });
-
-                // The endpoint exposes the complete canonical inventory. Generic
-                // English is the fallback catalog, while the two regional English
-                // variants remain the selectable UI choices.
-                const selectableLocaleCodes = localeCodes.filter(code => code !== 'en');
-                const localeSet = new Set(selectableLocaleCodes.map(c => c.toLowerCase()));
-                const options = selectableLocaleCodes.map(code => {
-                    let displayName = CUSTOM_DISPLAY_NAMES[code]
-                        || cultureMap[code.toLowerCase()]?.DisplayName;
-                    if (!displayName && code.includes('-')) {
-                        const baseName = cultureMap[code.split('-')[0].toLowerCase()]?.DisplayName;
-                        displayName = baseName && localeSet.has(code.split('-')[0].toLowerCase())
-                            ? `${baseName} (${code.split('-')[1]})`
-                            : baseName;
-                    }
-                    return { code, displayName: displayName || code };
-                });
-
-                options.sort((a, b) => a.displayName.localeCompare(b.displayName));
-                options.forEach(({ code, displayName }) => {
-                    const option = document.createElement('option');
-                    option.value = code;
-                    option.textContent = displayName;
-                    defaultLanguageSelect.appendChild(option);
-                });
-            } catch (err) {
-                console.warn('Jellyfin Canopy: Failed to load language options:', err);
-            }
-        })();
-
-        page.addEventListener('pageshow', loadConfig);
-        form.addEventListener('submit', saveConfig);
-        resetAllUserSettingsBtn.addEventListener('click', resetAllUserSettings);
-        const forceClientRefreshBtn = document.getElementById('forceClientRefreshBtn');
-        if (forceClientRefreshBtn) {
-            forceClientRefreshBtn.addEventListener('click', async function () {
-                if (!confirm('Refresh all open Canopy clients?\n\nClients will reload at their next safe point. Active or paused playback is never interrupted.')) {
-                    return;
-                }
-
-                const status = document.getElementById('forceClientRefreshStatus');
-                forceClientRefreshBtn.disabled = true;
-                if (status) status.textContent = 'Sending refresh signal…';
-                try {
-                    await ApiClient.ajax({
-                        type: 'POST',
-                        url: ApiClient.getUrl('/JellyfinCanopy/client-refresh'),
-                        dataType: 'json'
-                    });
-                    if (status) {
-                        status.textContent = 'Refresh signal sent. Visible clients will react within their configured check interval; background clients will react when reopened.';
-                    }
-                } catch (error) {
-                    console.error('[JC] force client refresh failed:', error);
-                    if (status) status.textContent = 'Could not send the refresh signal. Check the server logs and try again.';
-                } finally {
-                    forceClientRefreshBtn.disabled = false;
-                }
-            });
+        _jeSuppressTestAlerts = false;
+        if (btn) {
+            btn.disabled = false;
         }
-        initAutoMovieQualityMode();
-
-        // Live-update the Requests Page requirements banner AND the dependency
-        // gates as the admin types into Seerr fields or adds/edits/removes/
-        // toggles *arr instances. Without this, the *arr UI Links / Tags Sync
-        // gate banners would stay up until the next form save + reload even
-        // though hasAnyArrService() is already true.
-        (function wireRequestsBannerReactive() {
-            var formEl = document.getElementById('JellyfinCanopyForm');
-            if (!formEl) {
-                console.error('[JC] #JellyfinCanopyForm missing — reactive dep updates disabled');
-                return;
-            }
-            function relevant(target) {
-                if (!target) return false;
-                if (target.id === 'seerrUrls' || target.id === 'SeerrApiKey') return true;
-                if (!target.classList) return false;
-                return target.classList.contains('arr-instance-url')
-                    || target.classList.contains('arr-instance-apikey')
-                    || target.classList.contains('arr-instance-enabled');
-            }
-            function refresh() {
-                try {
-                    updateRequestsRequirementsBanner();
-                    debouncedUpdateDeps();
-                } catch (err) {
-                    // Observer + listener callbacks must never throw — a throw
-                    // here would leave gate banners frozen in their last state
-                    // and keep firing on every subsequent mutation.
-                    console.error('[JC] dep refresh failed', err);
-                }
-            }
-            // `input` covers all relevant cases: per-keystroke for text/api-key
-            // fields, and bubbled-from-checkbox for `.arr-instance-enabled`
-            // clicks/keyboard toggles. We deliberately skip a parallel `change`
-            // listener — native checkboxes fire BOTH events per toggle, which
-            // would double-fire refresh() (debouncedUpdateDeps collapses it,
-            // but the synchronous updateRequestsRequirementsBanner pass would
-            // run twice).
-            formEl.addEventListener('input', function(e) {
-                if (relevant(e.target)) refresh();
-            });
-            // Instance add/remove happens via button clicks that mutate
-            // #sonarrInstancesList / #radarrInstancesList. Observe both so the
-            // banner updates immediately on remove (no input event fires).
-            ['sonarrInstancesList', 'radarrInstancesList'].forEach(function(id) {
-                var root = document.getElementById(id);
-                if (!root) return;
-                new MutationObserver(refresh).observe(root, { childList: true, subtree: true });
-            });
-        })();
-
-        // Apply the blurred background to .jc-sticky-header only when the
-        // surrounding scroll container has actually scrolled — at scrollTop=0
-        // the header stays transparent so it doesn't cover the Jellyfin top
-        // bar / user avatar. We don't know ahead of time which element
-        // actually scrolls (Jellyfin's layout has several candidates: the
-        // page view wrapper, body, and window — and Jellyfin's `.scrollY`
-        // utility class decorates some non-scrolling nodes), so we attach
-        // scroll listeners to every reasonable candidate (matching ancestor
-        // + window) and read whichever reports a non-zero scroll position.
-        // This IIFE runs once at script parse; the listeners persist across
-        // SPA navigation since Jellyfin keeps the config page DOM alive.
-        (function wireStickyHeaderScroll() {
-            var header = document.querySelector('.jc-sticky-header');
-            if (!header) return;
-            // Collect all overflow-y:auto|scroll ancestors as scroll-candidate
-            // nodes. We don't trust scrollHeight>clientHeight at bind time
-            // (async content hasn't landed yet); we don't pick just the
-            // first match (Jellyfin's .scrollY utility flags decorative
-            // containers that don't actually scroll). Listening on all
-            // matches plus window means whichever actually scrolls drives
-            // the class toggle.
-            function findScrollCandidates(el) {
-                var nodes = [];
-                var node = el && el.parentNode;
-                while (node && node !== document.body && node.nodeType === 1) {
-                    var oy = getComputedStyle(node).overflowY;
-                    if (oy === 'auto' || oy === 'scroll') nodes.push(node);
-                    node = node.parentNode;
-                }
-                return nodes;
-            }
-            var candidates = findScrollCandidates(header);
-            var ticking = false;
-            function currentScrollTop() {
-                var winTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
-                var contTop = 0;
-                for (var i = 0; i < candidates.length; i++) {
-                    var n = candidates[i];
-                    // Skip detached nodes: their scrollTop freezes at the last
-                    // value, which would incorrectly pin `.jc-is-scrolled` on
-                    // after the live scroller returns to top.
-                    if (!n.isConnected) continue;
-                    var t = n.scrollTop || 0;
-                    if (t > contTop) contTop = t;
-                }
-                return winTop > contTop ? winTop : contTop;
-            }
-            function read() {
-                try {
-                    header.classList.toggle('jc-is-scrolled', currentScrollTop() > 4);
-                } catch (e) {
-                    console.warn('[JC] sticky-header read failed:', e);
-                } finally {
-                    // Guarantees the rAF pipeline doesn't wedge on `ticking` if read() throws.
-                    ticking = false;
-                }
-            }
-            function onScroll() {
-                if (ticking) return;
-                ticking = true;
-                requestAnimationFrame(read);
-            }
-            // Always listen on window (document-scrolling layouts) and on
-            // each overflow-declared ancestor (mid-tree scrollers).
-            window.addEventListener('scroll', onScroll, { passive: true });
-            if (candidates.length === 0) {
-                console.warn('[JC] sticky-header: no overflow:auto|scroll ancestors found; relying on window scroll only.');
-            }
-            candidates.forEach(function(n) {
-                n.addEventListener('scroll', onScroll, { passive: true });
-            });
-            read();
-        })();
-
-        // ================================
-        // SETTING DEPENDENCY SYSTEM
-        // ================================
-
-        /**
-         * Checks whether a TMDB API key is configured in either input field.
-         * @returns {boolean} True if a non-empty TMDB key exists
-         */
-        function hasTmdbKey() {
-            return document.querySelector('#TMDB_API_KEY').value.trim().length > 0
-                || document.querySelector('#seerr_TMDB_API_KEY').value.trim().length > 0;
+        if (titleEl) {
+            titleEl.textContent = originalTitle;
         }
+        renderServiceStatusDashboard();
+    }
 
-        /**
-         * Returns true iff at least one configured Seerr URL parses as an
-         * http(s) URL. A non-empty textarea full of garbage like "seerr.local"
-         * (no scheme) used to evaluate truthy here, so the dependency banner
-         * would hide and Seerr feature toggles would unlock — features that
-         * could never actually work.          */
-        function hasAtLeastOneValidSeerrUrl(value) {
-            if (!value) return false;
-            const lines = String(value).split('\n').map(s => s.trim()).filter(Boolean);
-            for (const line of lines) {
-                try {
-                    const u = new URL(line);
-                    if (u.protocol === 'http:' || u.protocol === 'https:') {
-                        return true;
-                    }
-                } catch (_) {
-                    // not a valid URL — try next line
-                }
-            }
-            return false;
+    // The per-service test handlers aren't promises, so poll the '.status-check'
+    // indicator class every test adds on start and removes on resolve. The
+    // cooldown floor also covers the first-tick race before indicators swap to 'sync'.
+    _jeRetestPollTimer = setInterval(function () {
+        const inFlight = document.querySelectorAll('.status-check').length;
+        const elapsed = Date.now() - startedAt;
+        if (inFlight === 0 && elapsed >= RETEST_ALL_MIN_COOLDOWN_MS) {
+            release();
+        } else if (elapsed >= RETEST_ALL_MAX_WAIT_MS) {
+            console.warn('[JC] retest-all: giving up on ' + inFlight + ' in-flight test(s) after ' + elapsed + 'ms');
+            release();
         }
+    }, 300);
+    // Extra hard stop in case setInterval is throttled (backgrounded tab).
+    _jeRetestHardStopTimer = setTimeout(release, RETEST_ALL_MAX_WAIT_MS + 500);
+}
 
-        /**
-         * Checks whether Seerr is enabled with both a URL and API key configured.
-         * @returns {boolean} True if Seerr is fully configured
-         */
-        function hasSeerrConfigured() {
-            return document.querySelector('#seerrEnabled').checked
-                && hasAtLeastOneValidSeerrUrl(document.querySelector('#seerrUrls').value)
-                && document.querySelector('#SeerrApiKey').value.trim().length > 0;
-        }
+        /* SECTION: connections-arr — owns: connection-test cache + persistence (beginConnectionTest,
+         * setConnectionTestResult, getConnectionTestResult, getPersistedTestResult, invalidatePersistedTest,
+         * clearConnectionTestCache, checklistRowState, formatLastTested, jcFingerprintConnectionValue,
+         * _jeNormalizeArrUrl, CONNECTION_TEST_CACHE_TTL_MS, _jeConnectionTestCache, _jeCacheGeneration,
+         * _testToken, _jeSuppressTestAlerts, jcTestAlert, _wireInvalidate); per-service testers
+         * (testSeerrConnection, testTmdbConnection, testMaintainerrConnection + jcSetMaintainerrTestStatus /
+         * cancelActiveMaintainerrTest / jcIsCurrentMaintainerrTest / jcParseMaintainerrTestStatus /
+         * jcNormalizeMaintainerrBaseUrl / jcIsSafeMaintainerrPathSegment, testInstanceConnection,
+         * connectionErrorMessage); mapping validation (validateMappingSet, jcRunMappingValidation,
+         * _jeValidateInstanceMappings, validateMaintainerrMappingSet, jcValidateMaintainerrMappings,
+         * renderMappingValidationResult); Seerr scan trigger (triggerSeerrScanNow, cancelActiveSeerrScan,
+         * jcParseSeerrIdentityDomains, jcNormalizeSeerrIdentityDomain, jcDispatchSeerrScanDomains,
+         * jcSummarizeSeerrScanDispatch); arr instance cards (normalizeArrInstanceId, createArrInstanceId,
+         * createInstanceCard, tryParseInstanceList, insertCorruptBanner, _arrParseOK, loadArrInstances,
+         * renderArrInstances, collectInstancesFromDom, jcIsHttpUrl, buildArrInstanceWarnings +
+         * buildArrIncompleteWarning / buildArrRenamedWarning / buildArrDroppedExternalWarning).
+         * wires: wireConnections, wireArrInstances.
+         * depends: page, escapeHtml, jcMarkConfigDirty, updateAllDependencies, renderChecklist (dashboards),
+         * renderServiceStatusDashboard (dashboards), Dashboard, ApiClient.
+         * Does NOT define saveArrInstances — core owns it; it consumes collectInstancesFromDom and
+         * buildArrInstanceWarnings from here. Mutable module state uses `let` (initializers are
+         * side-effect free); _jeSuppressTestAlerts is assigned by the Re-test-all batch (dashboards). */
 
-        function hasMaintainerrConfigured() {
-            var enabled = document.querySelector('#maintainerrEnabled');
-            var url = document.querySelector('#maintainerrUrl');
-            return Boolean(
-                enabled && enabled.checked && url && jcNormalizeMaintainerrBaseUrl(url.value)
-            );
-        }
+        // ---------------------------------------------------------------------------
+        // A. Connection-test cache (shared by every tester on this page)
+        // ---------------------------------------------------------------------------
 
-        /**
-         * Checks whether at least one ENABLED arr service (Sonarr or Radarr) has a URL and API key.
-         * Disabled instances are skipped — they're stored config but the fan-out callers
-         * (controller endpoints, scheduled tag sync) skip them, so gating dependent
-         * features behind a disabled-only set would be misleading.
-         * @returns {boolean} True if any enabled arr service is fully configured
-         */
-        function hasAnyArrService() {
-            var cards = document.querySelectorAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
-            for (var i = 0; i < cards.length; i++) {
-                var url = cards[i].querySelector('.arr-instance-url');
-                var key = cards[i].querySelector('.arr-instance-apikey');
-                var enabled = cards[i].querySelector('.arr-instance-enabled');
-                // Treat missing checkbox as enabled (defensive — every card should have one)
-                if (enabled && !enabled.checked) continue;
-                if (url && url.value.trim() && key && key.value.trim()) return true;
-            }
-            return false;
-        }
+        const CONNECTION_TEST_CACHE_TTL_MS = 5 * 60 * 1000;
+        const _jeConnectionTestCache = new Map();
+        let _jeCacheGeneration = 0;
+        let _testToken = 0;
+        let _jeSuppressTestAlerts = false;
 
-        // Setup fieldsets that hold the connection inputs are tagged with
-        // `data-dep-setup` directly in the HTML — `updateSectionDep` walks
-        // every fieldset and gates only the ones WITHOUT that marker, so
-        // admins can always edit Sonarr/Radarr/Bazarr/Seerr/Maintainerr setup boxes
-        // regardless of what else is configured.
-        var SECTION_DEPS = [
-            {
-                tabSelector: '#seerr',
-                checkFn: hasSeerrConfigured,
-                bannerIcon: 'link_off',
-                bannerTitle: 'Enable "Seerr integration" to configure',
-                bannerHint: 'Provide a Seerr URL and API key in the Setup section above, then enable the integration.',
-                bannerId: 'dep-banner-seerr'
-            },
-            {
-                tabSelector: '#maintainerr',
-                checkFn: hasMaintainerrConfigured,
-                bannerIcon: 'link_off',
-                bannerTitle: 'Enable Maintainerr to configure',
-                bannerHint: 'Provide the server-only Maintainerr URL above, then enable the integration.',
-                bannerId: 'dep-banner-maintainerr'
-            },
-            {
-                tabSelector: '#arr',
-                checkFn: hasAnyArrService,
-                bannerIcon: 'link_off',
-                bannerTitle: 'Enable a *arr service to configure',
-                bannerHint: 'Add a URL and API key for Sonarr or Radarr above to enable these features.',
-                bannerId: 'dep-banner-arr'
-            }
-        ];
-
-        var INDIVIDUAL_DEPS = [
-            { id: 'elsewhereEnabled',         checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
-            { id: 'showReviews',              checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
-            { id: 'showElsewhereOnSeerr', checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
-            { id: 'autoMovieRequestEnabled',   checkFn: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
-            { id: 'autoSkipIntro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
-            { id: 'autoSkipOutro',                 checkFn: function() { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' }
-        ];
-
-        /**
-         * Adds a dependency tag to an element's comma-separated data-dep-disabled attribute.
-         * @param {HTMLElement} el - The element to tag
-         * @param {string} tag - The dependency tag to add
-         */
-        function addDepTag(el, tag) {
-            var existing = (el.getAttribute('data-dep-disabled') || '').split(',').filter(Boolean);
-            if (existing.indexOf(tag) === -1) existing.push(tag);
-            el.setAttribute('data-dep-disabled', existing.join(','));
-        }
-
-        /**
-         * Removes a dependency tag from an element; returns true if all tags are cleared.
-         * @param {HTMLElement} el - The element to update
-         * @param {string} tag - The dependency tag to remove
-         * @returns {boolean} True if no dependency tags remain on the element
-         */
-        function removeDepTag(el, tag) {
-            var existing = (el.getAttribute('data-dep-disabled') || '').split(',').filter(Boolean);
-            var filtered = existing.filter(function(t) { return t !== tag; });
-            if (filtered.length) {
-                el.setAttribute('data-dep-disabled', filtered.join(','));
-                return false;
-            }
-            el.removeAttribute('data-dep-disabled');
-            return true;
-        }
-
-        /**
-         * Creates an orange warning banner DOM element for a missing section dependency.
-         * @param {Object} dep - Dependency rule with bannerIcon, bannerTitle, and bannerHint
-         * @returns {HTMLElement} The constructed banner element
-         */
-        function createDepBanner(dep) {
-            var banner = document.createElement('div');
-            banner.id = dep.bannerId;
-            banner.className = 'jc-dep-banner';
-            var icon = document.createElement('i');
-            icon.className = 'material-icons jc-dep-banner-icon';
-            icon.textContent = dep.bannerIcon;
-            var textDiv = document.createElement('div');
-            textDiv.className = 'jc-dep-banner-text';
-            var strong = document.createElement('strong');
-            strong.textContent = dep.bannerTitle;
-            var br = document.createElement('br');
-            var span = document.createElement('span');
-            span.className = 'jc-dep-banner-hint';
-            span.textContent = dep.bannerHint;
-            textDiv.appendChild(strong);
-            textDiv.appendChild(br);
-            textDiv.appendChild(span);
-            banner.appendChild(icon);
-            banner.appendChild(textDiv);
-            return banner;
-        }
-
-        /**
-         * Evaluates one section-level dependency rule, showing/hiding banners and disabling inputs.
-         * @param {Object} dep - Section dependency rule with checkFn, tabSelector, and banner config
-         */
-        function updateSectionDep(dep) {
-            var isMet = dep.checkFn();
-            var tab = document.querySelector(dep.tabSelector);
-            if (!tab) return;
-            var fieldsets = tab.querySelectorAll(':scope > fieldset');
-            var targets = [];
-            for (var i = 0; i < fieldsets.length; i++) {
-                // Setup fieldsets (Sonarr/Radarr/Bazarr config, Seerr connection setup)
-                // are always editable so admins can add a connection without first
-                // having one — they carry `data-dep-setup` directly in the HTML.
-                if (fieldsets[i].hasAttribute('data-dep-setup')) continue;
-                targets.push(fieldsets[i]);
-            }
-
-            targets.forEach(function(fieldset) {
-                var bannerId = dep.bannerId + '-' + Array.prototype.indexOf.call(fieldsets, fieldset);
-                var banner = document.getElementById(bannerId);
-                if (!isMet) {
-                    if (!banner) {
-                        var b = createDepBanner(dep);
-                        b.id = bannerId;
-                        var legend = fieldset.querySelector('legend');
-                        if (legend) { legend.after(b); } else { fieldset.prepend(b); }
-                        banner = b;
-                    }
-                    banner.classList.remove('jc-hidden');
-                    banner.classList.add('jc-dep-banner'); // ensure class present if banner was pre-existing
-                    fieldset.querySelectorAll('input, select, textarea, button').forEach(function(el) {
-                        if (banner.contains(el)) return;
-                        el.disabled = true;
-                        addDepTag(el, dep.bannerId);
-                    });
-                    fieldset.querySelectorAll('label, .inputLabel, .selectLabel').forEach(function(el) {
-                        el.style.opacity = '0.5';
-                        el.style.cursor = 'not-allowed';
-                        addDepTag(el, dep.bannerId);
-                    });
-                    fieldset.querySelectorAll('.fieldDescription').forEach(function(el) {
-                        el.style.opacity = '0.5';
-                        addDepTag(el, dep.bannerId);
-                    });
-                } else {
-                    if (banner) banner.classList.add('jc-hidden');
-                    fieldset.querySelectorAll('[data-dep-disabled]').forEach(function(el) {
-                        var allClear = removeDepTag(el, dep.bannerId);
-                        if (allClear) {
-                            if (typeof el.disabled !== 'undefined' && el.tagName !== 'LABEL' && el.tagName !== 'DIV') {
-                                el.disabled = false;
-                            }
-                            el.style.opacity = '';
-                            el.style.cursor = '';
-                        }
-                    });
-                }
-            });
-        }
-
-        /**
-         * Evaluates one individual setting dependency, disabling checkbox and showing hint when unmet.
-         * @param {Object} dep - Individual dependency rule with id, checkFn, hint, and icon
-         */
-        function updateIndividualDep(dep) {
-            var checkbox = document.getElementById(dep.id);
-            if (!checkbox) return;
-            var label = checkbox.closest('label');
-            if (!label) return;
-            var isMet = dep.checkFn();
-            var tag = 'ind-' + dep.id;
-
-            if (!isMet) {
-                checkbox.disabled = true;
-                addDepTag(checkbox, tag);
-                label.style.opacity = '0.5';
-                label.style.cursor = 'not-allowed';
-                label.title = dep.hint;
-                addDepTag(label, tag);
-                var span = label.querySelector('span');
-                if (span && !label.querySelector('.dep-required-icon')) {
-                    var icon = document.createElement('i');
-                    icon.className = 'material-icons dep-required-icon';
-                    icon.textContent = dep.icon || 'key';
-                    icon.style.cssText = 'font-size: 16px; vertical-align: middle; margin-left: 8px; color: #ff9800;';
-                    icon.title = dep.hint;
-                    span.appendChild(icon);
-                }
-                if (span && !label.querySelector('.dep-hint-text')) {
-                    var hintEl = document.createElement('span');
-                    hintEl.className = 'dep-hint-text';
-                    hintEl.textContent = dep.hint;
-                    span.appendChild(hintEl);
-                }
-            } else {
-                var allClear = removeDepTag(checkbox, tag);
-                if (allClear) checkbox.disabled = false;
-                var labelClear = removeDepTag(label, tag);
-                if (labelClear) {
-                    label.style.opacity = '';
-                    label.style.cursor = '';
-                    label.title = '';
-                }
-                var reqIcon = label.querySelector('.dep-required-icon');
-                if (reqIcon) reqIcon.remove();
-                var hintText = label.querySelector('.dep-hint-text');
-                if (hintText) hintText.remove();
-            }
-        }
-
-        var PARENT_DEPS = [
-            // Only the custom-branding fields belong to "Enable Elsewhere" alone —
-            // they're consumed solely inside the Elsewhere panel, so they stay
-            // children here. Everything else that once hung off this parent is
-            // shared with features that render independently of the Elsewhere
-            // toggle, so gating it here greyed out live controls (the same trap the
-            // "Show TMDB Reviews" fix addressed):
-            //   • TMDB Reviews / reviewsExpandedByDefault render off
-            //     (ShowReviews && TmdbEnabled) — gated on a TMDB key via the
-            //     showReviews INDIVIDUAL/PARENT deps, not on Elsewhere.
-            //   • Default Region is read by the TMDB Release Dates chip
-            //     (ShowReleaseDates && TmdbEnabled), and Default Region / Default
-            //     Providers / Ignore Providers are all read by the Seerr poster
-            //     streaming icons (ShowElsewhereOnSeerr && TmdbEnabled).
-            // Those provider inputs therefore stay editable with Elsewhere off.
-            { parent: 'elsewhereEnabled', label: 'Enable Elsewhere', children: ['ElsewhereCustomBrandingText', 'ElsewhereCustomBrandingImageUrl'] },
-            { parent: 'showReviews', label: 'Show Reviews', children: ['reviewsExpandedByDefault'] },
-            { parent: 'showUserReviews', label: 'Enable User Reviews', children: ['hideReviewsFromHiddenUsers', 'hideReviewsFromDisabledUsers', 'showUserRatingDash', 'showUserRatingOnPosters'] },
-            { parent: 'randomButtonEnabled', label: 'Enable Random Button', children: ['randomUnwatchedOnly', 'randomIncludeMovies', 'randomIncludeShows'] },
-            { parent: 'showWatchProgress', label: 'Show watch progress', children: ['watchProgressDefaultMode', 'watchProgressTimeFormat'] },
-            { parent: 'qualityTagsEnabled', label: 'Enable Quality Tags', children: ['qualityTagsPosition', 'showResolutionTag', 'showSourceTag', 'showDynamicRangeTag', 'showSpecialFormatTag', 'showVideoCodecTag', 'showAudioInfoTag'], noHint: true },
-            { parent: 'genreTagsEnabled', label: 'Enable Genre Tags', children: ['genreTagsPosition'], noHint: true },
-            { parent: 'languageTagsEnabled', label: 'Enable Language Tags', children: ['languageTagsPosition'], noHint: true },
-            { parent: 'ratingTagsEnabled', label: 'Enable Rating Tags', children: ['ratingTagsPosition'], noHint: true },
-            { parent: 'useIcons', label: 'Use Icons', children: ['iconStyle'] },
-            { parent: 'letterboxdEnabled', label: 'Enable Letterboxd', children: ['showLetterboxdLinkAsText'] },
-            { parent: 'enableCustomSplashScreen', label: 'Enable Custom Splash Screen', children: ['splashScreenImageUrl'] },
-            { parent: 'seerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
-            { parent: 'seerrShowReportButton', label: 'Show Report Issue button', children: ['seerrShowIssueIndicator'] },
-            {
-                parent: 'downloadsPageEnabled',
-                label: 'Enable Requests Page',
-                children: [
-                    'showDownloadsInRequests',
-                    'downloadsPageShowIssues',
-                    'downloadsPagePollingEnabled',
-                    'downloadsAllowActiveForRegularUsers',
-                    'downloadsAllowProcessingForRegularUsers',
-                    'downloadsAllowWarningsForRegularUsers',
-                    'downloadsAllowHistoryForRegularUsers',
-                    'downloadsAllowProvenanceForRegularUsers',
-                    'downloadsDetailedLifecycleForRegularUsers',
-                    'downloadsHistoryWindowDays',
-                    'requestsAllowSeerrStatusAndHistoryForRegularUsers'
-                ]
-            },
-            {
-                parent: 'showDownloadsInRequests',
-                label: 'Show Downloads in Requests Page',
-                children: [
-                    'downloadsFilterByUserRequests',
-                    'downloadsAllowActiveForRegularUsers',
-                    'downloadsAllowProcessingForRegularUsers',
-                    'downloadsAllowWarningsForRegularUsers',
-                    'downloadsAllowHistoryForRegularUsers',
-                    'downloadsAllowProvenanceForRegularUsers',
-                    'downloadsDetailedLifecycleForRegularUsers',
-                    'downloadsHistoryWindowDays'
-                ]
-            },
-            { parent: 'downloadsPagePollingEnabled', label: 'Enable Auto-Refresh', children: ['downloadsPollIntervalSeconds'] },
-            { parent: 'arrLinksEnabled', label: 'Enable *arr Links', children: ['showArrLinksAsText', 'arrLinksShowStatusSingle'] },
-            { parent: 'arrTagsSyncEnabled', label: 'Enable *arr Tags Sync', children: ['arrTagsPrefix', 'arrTagsClearOldTags', 'arrTagsShowAsLinks', 'arrTagsSyncFilter'] },
-            { parent: 'arrTagsShowAsLinks', label: 'Show synced tags as links', children: ['arrTagsLinksFilter', 'arrTagsLinksHideFilter'] },
-            { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested'] },
-            { parent: 'autoMovieRequestEnabled', label: 'Enable Automatic Movie Requests', children: ['autoMovieRequestTriggerOnStart', 'autoMovieRequestTriggerOnMinutesWatched', 'autoMovieRequestMinutesWatched', 'autoMovieRequestCheckReleaseDate', 'autoMovieRequestQualityMode', 'autoMovieRequestFallbackOn4k'] },
-            { parent: 'autoSeasonRequestEnabled', label: 'Enable Automatic Season Requests', children: ['autoSeasonRequestRequireAllWatched', 'autoSeasonRequestThresholdValue'] },
-            { parent: 'preventWatchlistReAddition', label: 'Prevent re-adding removed items', children: ['watchlistMemoryRetentionDays'] },
-            { parent: 'triggerSeerrScanOnItemAdded', label: 'Trigger Seerr scan on item added', children: ['seerrScanDebounceSeconds'] },
-            { parent: 'bookmarksEnabled', label: 'Enable Bookmarks', children: [] },
-            { parent: 'hiddenContentEnabled', label: 'Enable Hidden Content', children: [] }
-        ];
-
-        /**
-         * Evaluates one parent-child dependency, disabling children when the parent is unchecked.
-         * @param {Object} dep - Parent dependency rule with parent id, label, and children ids
-         */
-        function updateParentDep(dep) {
-            var parent = document.getElementById(dep.parent);
-            if (!parent) return;
-            var isEnabled = parent.checked;
-            var tag = 'parent-' + dep.parent;
-            var hintClass = 'parent-hint-' + dep.parent;
-
-            dep.children.forEach(function(childId) {
-                var child = document.getElementById(childId);
-                if (!child) return;
-                var container = child.closest('.checkboxContainer, .inputContainer, .selectContainer')
-                             || child.closest('label');
-
-                if (!isEnabled) {
-                    child.disabled = true;
-                    addDepTag(child, tag);
-                    if (container) {
-                        container.style.opacity = '0.5';
-                        container.style.cursor = 'not-allowed';
-                        addDepTag(container, tag);
-                        // Add hint unless the dependency opted out (e.g. tag-position
-                        // dropdowns, where the disabled styling next to the parent
-                        // checkbox already makes the relationship obvious).
-                        if (!dep.noHint && !container.querySelector('.' + hintClass)) {
-                            var hint = document.createElement('div');
-                            hint.className = 'dep-hint-text ' + hintClass;
-                            hint.textContent = 'Enable "' + dep.label + '" to configure';
-                            container.appendChild(hint);
-                        }
-                    }
-                } else {
-                    var allClear = removeDepTag(child, tag);
-                    if (allClear) child.disabled = false;
-                    if (container) {
-                        var cc = removeDepTag(container, tag);
-                        if (cc) { container.style.opacity = ''; container.style.cursor = ''; }
-                        // Remove hint
-                        var hint = container.querySelector('.' + hintClass);
-                        if (hint) hint.remove();
-                    }
-                }
-            });
-        }
-
-        // ==============================================================
-        // Connection-test cache + Integration Health checklist (phase 4).
-        // The checklist on Overview is a live health view of every
-        // integration the admin has turned on. It renders rows purely
-        // from (live config) + (cached test results), so it doesn't
-        // hammer external services on every render. TTL keeps results
-        // fresh without forcing probes on every click. The "Re-test all"
-        // Quick Action clears the cache and re-invokes every test.
-        // ==============================================================
-        var CONNECTION_TEST_CACHE_TTL_MS = 5 * 60 * 1000;
-        var _jeConnectionTestCache = new Map();
-
-        // Generation counter for the cache. Every clear bumps it; any
-        // write that was captured (via beginConnectionTest) at a prior
-        // generation is dropped. Closes the race where a user clicks a
-        // per-service Test button, then clicks Re-test-all, then the
-        // original click's async result resolves and writes a stale
-        // ok/error over the fresh result. See design review H2.
-        var _jeCacheGeneration = 0;
-
-        /**
-         * Capture the current cache generation. Tests call this at START
-         * and pass the returned token to setConnectionTestResult. A token
-         * older than the current generation means the cache was cleared
-         * mid-test and this write is stale — it gets dropped.
-         */
         function beginConnectionTest() {
             return _jeCacheGeneration;
         }
 
-        /**
-         * Produce a stable comparison-only binding without persisting an internal
-         * service URL. Two independent 32-bit mixes plus the input length make an
-         * accidental cross-configuration cache match negligible; this is an
-         * identity fence, not a security or authentication primitive.
-         */
-        function jcFingerprintConnectionValue(value) {
-            var text = String(value || '');
-            var hashA = 0x811c9dc5;
-            var hashB = 0x9e3779b9;
-            for (var i = 0; i < text.length; i++) {
-                var code = text.charCodeAt(i);
-                hashA = Math.imul(hashA ^ code, 0x01000193);
-                hashB = Math.imul(hashB ^ code, 0x5f356495);
-            }
-            return 'v1:' + text.length.toString(36) + ':'
-                + ('00000000' + (hashA >>> 0).toString(16)).slice(-8)
-                + ('00000000' + (hashB >>> 0).toString(16)).slice(-8);
-        }
-
-        // When true, per-service tests skip their own Dashboard.alert
-        // success/failure dialog. The Re-test-all Quick Action sets this
-        // for the duration of a batch and shows a single aggregate dialog
-        // at the end, instead of stacking 8+ modal prompts the admin has
-        // to dismiss one by one.
-        var _jeSuppressTestAlerts = false;
-
-        /**
-         * Dashboard.alert that respects the batch-mode suppression flag.
-         * Use inside any per-service test function where a Dashboard.alert
-         * is part of the individual-test UX but would spam the admin when
-         * the test fires as part of a batch re-test.
-         */
         function jcTestAlert(opts) {
-            if (_jeSuppressTestAlerts) return;
-            try { Dashboard.alert(opts); } catch (e) {
+            if (_jeSuppressTestAlerts) {
+                return;
+            }
+            try {
+                Dashboard.alert(opts);
+            } catch (e) {
                 console.warn('[JC] Dashboard.alert threw:', e);
             }
         }
 
-        /**
-         * Write a test result into the cache and refresh the checklist.
-         * Safe to call multiple times; last write wins within the same
-         * generation. Cache-refresh is guarded against exceptions so a
-         * bug in renderChecklist can't cascade and break the actual
-         * test flow.
-         * @param {string} key  e.g. 'tmdb', 'seerr', 'sonarr:<normalizedUrl>'
-         * @param {'ok'|'error'} status
-         * @param {string} detail short human message shown in the row
-         * @param {number} [token] optional generation token from
-         *   beginConnectionTest; stale tokens are silently dropped.
-         */
         function setConnectionTestResult(key, status, detail, token, binding) {
+            // A token minted before a cache clear must not overwrite a fresher result.
             if (token !== undefined && token !== _jeCacheGeneration) {
-                // Stale write from a test that was issued before the last
-                // cache clear. Drop it so a fresher (in-flight) test's
-                // result isn't overwritten by a stale ok/error.
                 return;
             }
-            var now = Date.now();
+            const at = Date.now();
             _jeConnectionTestCache.set(key, {
                 status: status,
                 detail: detail || '',
                 binding: binding || '',
-                at: now
+                at: at
             });
-            // Also persist to localStorage so the checklist can show "Last
-            // tested <date>" after a page reload, instead of falling back
-            // to "Configured — not yet verified" as if nothing was ever
-            // checked. Wrapped in try/catch because localStorage is
-            // best-effort (private mode, quota, disabled storage, etc.).
             try {
                 localStorage.setItem('jc_conn_test_' + key, JSON.stringify({
                     status: status,
                     detail: detail || '',
                     binding: binding || undefined,
-                    at: now
+                    at: at
                 }));
-            } catch (e) { /* persistence is best-effort */ }
-            try { renderChecklist(); } catch (e) {
+            } catch (e) {
+                // Best-effort persistence only.
+            }
+            try {
+                renderChecklist();
+            } catch (e) {
                 console.warn('[JC] renderChecklist threw after setConnectionTestResult:', e);
             }
         }
 
-        /**
-         * Read a previously-persisted test result for a connection key.
-         * Returns null if no record, malformed JSON, or storage unavailable.
-         * Unlike the in-memory cache there is NO TTL — the persisted entry
-         * is meant to outlive page reloads so the admin always sees the
-         * date of the most recent verification, however long ago it was.
-         */
-        function getPersistedTestResult(key, binding) {
-            var storageKey = 'jc_conn_test_' + key;
-            try {
-                var raw = localStorage.getItem(storageKey);
-                if (!raw) return null;
-                var rec = JSON.parse(raw);
-                if (!rec || typeof rec.at !== 'number' || typeof rec.status !== 'string') {
-                    // Self-heal: drop the bad entry so subsequent renders don't keep
-                    // re-parsing it and so the row falls cleanly back to "not tested".
-                    try { localStorage.removeItem(storageKey); } catch (e) {}
-                    return null;
-                }
-                if (binding !== undefined && rec.binding !== binding) {
-                    try { localStorage.removeItem(storageKey); } catch (e) {}
-                    return null;
-                }
-                return rec;
-            } catch (e) {
-                // Parse error → treat as corrupt and remove.
-                try { localStorage.removeItem(storageKey); } catch (rmErr) {}
+        function getConnectionTestResult(key, binding) {
+            const entry = _jeConnectionTestCache.get(key);
+            if (!entry) {
                 return null;
             }
-        }
-
-        /**
-         * Format a timestamp for the checklist's "Last tested" line:
-         *   - same day  → "Last tested 3:45 PM"
-         *   - other day → "Last tested Apr 20, 2026"
-         */
-        function formatLastTested(ts) {
-            var d = new Date(ts);
-            var now = new Date();
-            if (d.toDateString() === now.toDateString()) {
-                return 'Last tested ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-            }
-            return 'Last tested ' + d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-        }
-
-        /**
-         * Build a checklist row from cached / persisted test data.
-         *  - Fresh in-memory hit  → row reflects the live status + detail
-         *  - Persisted-only hit   → row keeps the last known state but
-         *    swaps the detail line for "Last tested <date>"
-         *  - No data              → row stays 'pending' with the supplied
-         *    fallback text
-         */
-        function checklistRowState(cacheKey, fallbackDetail, binding) {
-            var live = getConnectionTestResult(cacheKey, binding);
-            if (live) return { state: live.status, detail: live.detail };
-            var persisted = getPersistedTestResult(cacheKey, binding);
-            if (persisted) return { state: persisted.status, detail: formatLastTested(persisted.at) };
-            return { state: 'pending', detail: fallbackDetail };
-        }
-
-        /**
-         * Read a test result from the cache. Returns null on miss OR on
-         * expiry — callers render the row as "pending" in that case.
-         */
-        function getConnectionTestResult(key, binding) {
-            var entry = _jeConnectionTestCache.get(key);
-            if (!entry) return null;
-            if (binding !== undefined && entry.binding !== binding) {
+            if (binding && entry.binding !== binding) {
                 _jeConnectionTestCache.delete(key);
                 return null;
             }
@@ -4117,2520 +1955,4930 @@
             return entry;
         }
 
-        /**
-         * Drop every cached result. Used by the Re-test-all Quick Action
-         * so rows immediately show "pending" while tests fire.
-         */
+        function getPersistedTestResult(key, binding) {
+            // Deliberately no TTL: persisted entries outlive reloads to show "Last tested <date>".
+            const storageKey = 'jc_conn_test_' + key;
+            try {
+                const raw = localStorage.getItem(storageKey);
+                if (!raw) {
+                    return null;
+                }
+                const rec = JSON.parse(raw);
+                if (!rec || typeof rec.at !== 'number' || typeof rec.status !== 'string') {
+                    localStorage.removeItem(storageKey);
+                    return null;
+                }
+                if (binding && rec.binding !== binding) {
+                    localStorage.removeItem(storageKey);
+                    return null;
+                }
+                return rec;
+            } catch (e) {
+                try {
+                    localStorage.removeItem(storageKey);
+                } catch (removeError) {
+                    // Storage unavailable; nothing to heal.
+                }
+                return null;
+            }
+        }
+
+        function formatLastTested(ts) {
+            const date = new Date(ts);
+            const now = new Date();
+            const sameDay = date.getFullYear() === now.getFullYear()
+                && date.getMonth() === now.getMonth()
+                && date.getDate() === now.getDate();
+            if (sameDay) {
+                return 'Last tested ' + date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            }
+            return 'Last tested ' + date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+
+        function checklistRowState(cacheKey, fallbackDetail, binding) {
+            const fresh = getConnectionTestResult(cacheKey, binding);
+            if (fresh) {
+                return { state: fresh.status, detail: fresh.detail };
+            }
+            const persisted = getPersistedTestResult(cacheKey, binding);
+            if (persisted) {
+                return { state: persisted.status, detail: formatLastTested(persisted.at) };
+            }
+            return { state: 'pending', detail: fallbackDetail };
+        }
+
         function clearConnectionTestCache() {
             _jeConnectionTestCache.clear();
             _jeCacheGeneration++;
-            // Also drop persisted entries; otherwise checklistRowState falls back
-            // to the "Last tested <date>" line and rows stay green/red instead of
-            // showing pending while the new tests fire.
             try {
-                var doomed = [];
-                for (var i = 0; i < localStorage.length; i++) {
-                    var k = localStorage.key(i);
-                    if (k && k.indexOf('jc_conn_test_') === 0) doomed.push(k);
+                const staleKeys = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && k.indexOf('jc_conn_test_') === 0) {
+                        staleKeys.push(k);
+                    }
                 }
-                doomed.forEach(function(k) { localStorage.removeItem(k); });
-            } catch (e) { /* private mode / quota — best-effort */ }
-            try { renderChecklist(); } catch (e) {
-                console.warn('[JC] renderChecklist threw after clearConnectionTestCache:', e);
+                staleKeys.forEach(function (k) {
+                    localStorage.removeItem(k);
+                });
+            } catch (e) {
+                // Storage unavailable; in-memory cache is already cleared.
+            }
+            try {
+                renderChecklist();
+            } catch (e) {
+                console.warn('[JC] renderChecklist threw:', e);
             }
         }
 
-        /**
-         * Drop the persisted "Last tested <date>" entry for a given service when
-         * the inputs that produced that test result change (new TMDB key, new Seerr
-         * URL, etc.) — otherwise the checklist would keep claiming the old key
-         * worked. Wired up in the load/change handlers for the relevant inputs.
-         */
         function invalidatePersistedTest(key) {
-            try { localStorage.removeItem('jc_conn_test_' + key); } catch (e) {}
-            // Clear in-memory copy too so the row immediately drops to pending.
+            try {
+                localStorage.removeItem('jc_conn_test_' + key);
+            } catch (e) {
+                // Storage unavailable.
+            }
             _jeConnectionTestCache.delete(key);
-            try { renderChecklist(); } catch (e) {}
+            try {
+                renderChecklist();
+            } catch (e) {
+                console.warn('[JC] renderChecklist threw:', e);
+            }
         }
 
-        /**
-         * Normalize an arr-instance URL into a cache key fragment.
-         * Trim, lowercase, strip trailing slashes so minor differences
-         * don't fork the cache.
-         */
-        function _jeNormalizeArrUrl(url) {
-            return (url || '').trim().toLowerCase().replace(/\/+$/, '');
-        }
-
-        /**
-         * Build the Integration Health checklist inside #jc-checklist.
-         *
-         * Row rules:
-         *   - Only render a row when the integration is enabled.
-         *   - Row state: 'ok' (green), 'amber' (warn), 'error' (red),
-         *     'pending' (grey — enabled + complete config but no cached
-         *     test result within TTL).
-         *   - Zero rows is a valid outcome — render the empty hint.
-         *   - Clicking a row jumps to the target tab.
-         *
-         * No HTML is injected from runtime data — every row is built with
-         * createElement + textContent so untrusted instance names / URLs
-         * can never inject markup into the checklist.
-         */
-        function renderChecklist() {
-            // Thin delegator: the Integration Health checklist was merged into
-            // Service Status, but multiple callers still reference this name —
-            // keep the symbol to avoid breaking them. The original per-row
-            // construction (#jc-checklist + .jc-checklist-* classes) was
-            // removed along with its DOM host and CSS.
-            renderServiceStatusDashboard();
-        }
-
-        /**
-         * Overview → Optional Dependencies
-         * Renders a card per optional plugin with its detected state.
-         * Sources the booleans populated by checkInstalledPlugins() —
-         * `null` means the /Plugins probe hasn't completed (or failed),
-         * rendered as "Checking…" rather than asserting missing.
-         */
-        var OPTIONAL_PLUGINS = [
-            { key: 'fileTransformation', name: 'File Transformation', icon: 'transform',       url: 'https://github.com/IAmParadox27/jellyfin-plugin-file-transformation', purpose: 'Required by Custom Tabs, Plugin Pages, and other plugins that modify the web client.', getFlag: function(){ return hasFileTransformation; } },
-            { key: 'introSkipper',       name: 'Intro Skipper',       icon: 'skip_next',       url: 'https://github.com/intro-skipper/intro-skipper',                      purpose: 'Source of timestamps for Auto-skip Intro / Auto-skip Outro.',                        getFlag: function(){ return hasIntroSkipper; } },
-            { key: 'inPlayerEpisodePreview', name: 'In-Player Episode Preview', icon: 'movie_filter', url: 'https://github.com/Namo2/InPlayerEpisodePreview',            purpose: 'Enables the in-player Episode Preview keyboard shortcut.',                           getFlag: function(){ return hasInPlayerEpisodePreview; } },
-            { key: 'kefinTweaks',        name: 'KefinTweaks',         icon: 'bookmark_border', url: 'https://github.com/ranaldsgift/KefinTweaks',                          purpose: 'Renders the Watchlist UI in Jellyfin. Required to view watchlisted items from the Seerr Watchlist features. Installs as a web-mod (not a normal plugin), detected via its injected scripts.', getFlag: function(){ return hasKefinTweaks; } }
-        ];
-        function renderOptionalPluginsDashboard() {
-            var root = document.getElementById('jc-optional-plugins');
-            if (!root) return;
-            root.textContent = '';
-            OPTIONAL_PLUGINS.forEach(function(dep) {
-                var flag = dep.getFlag();
-                var state, statusText;
-                if (flag === true)       { state = 'installed'; statusText = 'Installed'; }
-                else if (flag === false) { state = 'missing';   statusText = 'Not installed'; }
-                else                     { state = 'unknown';   statusText = 'Checking…'; }
-
-                // When the plugin is installed-but-disabled (status ≠ Active),
-                // flip to an amber "disabled" state so the admin knows to
-                // re-enable it rather than wonder why features don't work.
-                if (flag === false && _jeDisabledPlugins[dep.key]) {
-                    state = 'warn';
-                    statusText = 'Installed but disabled in Dashboard > Plugins';
-                }
-
-                var card = document.createElement('div');
-                card.className = 'jc-optional-plugin-card jc-state-' + state;
-                var icon = document.createElement('i');
-                icon.className = 'material-icons jc-optional-plugin-icon';
-                icon.setAttribute('aria-hidden', 'true');
-                icon.textContent = state === 'installed' ? 'check_circle'
-                                 : state === 'warn'      ? 'warning'
-                                 : state === 'unknown'   ? 'help_outline'
-                                 : 'radio_button_unchecked';
-                card.appendChild(icon);
-                var body = document.createElement('div');
-                body.className = 'jc-optional-plugin-body';
-                var name = document.createElement('div');
-                name.className = 'jc-optional-plugin-name';
-                name.textContent = dep.name;
-                body.appendChild(name);
-                var status = document.createElement('div');
-                status.className = 'jc-optional-plugin-status';
-                status.textContent = statusText;
-                body.appendChild(status);
-                var purpose = document.createElement('div');
-                purpose.className = 'jc-optional-plugin-purpose';
-                purpose.textContent = dep.purpose;
-                body.appendChild(purpose);
-                card.appendChild(body);
-
-                // External link icon in the top-right — opens the plugin's
-                // home repo in a new tab. noopener/noreferrer both for security
-                // and so the opened page can't manipulate this window.
-                if (dep.url) {
-                    var link = document.createElement('a');
-                    link.className = 'jc-optional-plugin-link';
-                    link.href = dep.url;
-                    link.target = '_blank';
-                    link.rel = 'noopener noreferrer';
-                    link.title = 'Open ' + dep.name + ' on GitHub';
-                    link.setAttribute('aria-label', 'Open ' + dep.name + ' on GitHub');
-                    var linkIcon = document.createElement('i');
-                    linkIcon.className = 'material-icons';
-                    linkIcon.setAttribute('aria-hidden', 'true');
-                    linkIcon.textContent = 'open_in_new';
-                    link.appendChild(linkIcon);
-                    card.appendChild(link);
-                }
-
-                root.appendChild(card);
-            });
-        }
-
-        /**
-         * Overview → Features
-         * Renders a row per JC feature with one of three states:
-         *   - on   (green)   : enabled and all required deps/config present
-         *   - warn (amber)   : enabled but missing a dep or required config
-         *   - off  (faded)   : disabled
-         * Clicking a row jumps to the tab where the feature lives.
-         *
-         * Rules reference form inputs (live DOM) rather than a snapshot so this
-         * updates correctly after every dependency re-evaluation.
-         */
-        function renderFeaturesDashboard() {
-            var root = document.getElementById('jc-features-dashboard');
-            if (!root) return;
-
-            function bool(id) {
-                var el = document.getElementById(id);
-                return !!(el && el.checked);
-            }
-            function val(id) {
-                var el = document.getElementById(id);
-                return el ? (el.value || '').trim() : '';
-            }
-            function anyArrConfigured() {
-                var cards = document.querySelectorAll('#sonarrInstancesList .arr-instance-card, #radarrInstancesList .arr-instance-card');
-                for (var i = 0; i < cards.length; i++) {
-                    var url = cards[i].querySelector('.arr-instance-url');
-                    var key = cards[i].querySelector('.arr-instance-apikey');
-                    if (url && key && url.value.trim() && key.value.trim()) return true;
-                }
-                return false;
-            }
-            function seerrConfigured() {
-                return !!val('seerrUrls') && !!val('SeerrApiKey');
-            }
-
-            var features = [];
-            function feat(name, enabled, tab, detail, warn) {
-                if (!enabled) { features.push({ name: name, state: 'off', tab: tab, detail: 'Disabled' }); return; }
-                features.push({ name: name, state: warn ? 'warn' : 'on', tab: tab, detail: detail });
-            }
-
-            // Display
-            feat('Remove from Continue Watching', bool('removeContinueWatchingEnabled'), 'display', 'Enabled');
-            feat('Hide Favorites Tab', bool('hideFavoritesTab'), 'display', 'Enabled');
-            var tagCount = ['qualityTagsEnabled','genreTagsEnabled','languageTagsEnabled','ratingTagsEnabled','peopleTagsEnabled'].filter(bool).length;
-            feat('Media Tags', tagCount > 0, 'display', tagCount + ' tag type(s) enabled');
-            feat('Random Button', bool('randomButtonEnabled'), 'display', 'Enabled');
-
-            // Playback
-            feat('Custom Pause Screen', bool('pauseScreenEnabled'), 'playback', 'Enabled');
-            feat('Long press for 2x speed', bool('longPress2xEnabled'), 'playback', 'Enabled (touch devices)');
-            var autoSkip = bool('autoSkipIntro') || bool('autoSkipOutro');
-            var autoSkipWarn = autoSkip && hasIntroSkipper !== true;
-            feat('Auto-skip Intro/Outro', autoSkip, 'playback',
-                autoSkipWarn ? 'Enabled but Intro Skipper plugin is missing' : 'Enabled',
-                autoSkipWarn);
-            var tabSwitch = bool('autoPauseEnabled') || bool('autoResumeEnabled') || bool('autoPipEnabled');
-            feat('Tab-switch actions', tabSwitch, 'playback', 'Auto-pause / resume / PiP');
-
-            // Pages
-            feat('Bookmarks', bool('bookmarksEnabled'), 'pages', 'Enabled');
-            feat('Hidden Content', bool('hiddenContentEnabled'), 'pages', 'Enabled');
-            var reqWarn = bool('downloadsPageEnabled') && !seerrConfigured() && !anyArrConfigured();
-            feat('Requests Page', bool('downloadsPageEnabled'), 'pages',
-                reqWarn ? 'Enabled but neither Seerr nor *arr is configured' : 'Enabled',
-                reqWarn);
-            var calWarn = bool('calendarPageEnabled') && !anyArrConfigured();
-            feat('Calendar Page', bool('calendarPageEnabled'), 'pages',
-                calWarn ? 'Enabled but no *arr instance is configured' : 'Enabled',
-                calWarn);
-
-            // Custom splash screen / branding. Both the splash screen and the
-            // branding image uploads (icons/favicon/logos) are handled by Jellyfin
-            // Enhanced itself at request time, so no extra plugin is required.
-            var splashOn = bool('enableCustomSplashScreen');
-            feat('Custom splash / branding', splashOn, 'extras', 'Enabled', false);
-
-            // Extras
-            var elsewhereWarn = bool('elsewhereEnabled') && !val('TMDB_API_KEY');
-            feat('Elsewhere (streaming providers)', bool('elsewhereEnabled'), 'elsewhere',
-                elsewhereWarn ? 'Enabled but TMDB API key is missing' : 'Enabled',
-                elsewhereWarn);
-
-            // Seerr
-            var seerrWarn = bool('seerrEnabled') && !seerrConfigured();
-            feat('Seerr integration', bool('seerrEnabled'), 'seerr',
-                seerrWarn ? 'Enabled but Seerr URL or API key missing' : 'Enabled',
-                seerrWarn);
-
-            // Watchlist (Seerr tab). Sync and "add requested → watchlist" both
-            // need KefinTweaks to actually render the watchlist UI in Jellyfin;
-            // the feature writes the data either way, but the user can't see
-            // it without KefinTweaks.
-            var watchlistAny = bool('addRequestedMediaToWatchlist') || bool('syncSeerrWatchlist');
-            var watchlistWarn = watchlistAny && hasKefinTweaks !== true;
-            feat('Watchlist sync', watchlistAny, 'seerr',
-                watchlistWarn ? 'Enabled but KefinTweaks plugin not installed (watchlist UI won\'t render)' : 'Enabled',
-                watchlistWarn);
-
-            // *arr
-            var arrLinksWarn = bool('arrLinksEnabled') && !anyArrConfigured();
-            feat('*arr detail-page links', bool('arrLinksEnabled'), 'arr',
-                arrLinksWarn ? 'Enabled but no *arr instance is configured' : 'Enabled',
-                arrLinksWarn);
-            var tagsSyncWarn = bool('arrTagsSyncEnabled') && !anyArrConfigured();
-            feat('*arr tags sync', bool('arrTagsSyncEnabled'), 'arr',
-                tagsSyncWarn ? 'Enabled but no *arr instance is configured' : 'Enabled',
-                tagsSyncWarn);
-
-            // Stable ordering: warnings first, then on, then off
-            features.sort(function(a, b) {
-                var ord = { warn: 0, on: 1, off: 2 };
-                return ord[a.state] - ord[b.state];
-            });
-
-            root.textContent = '';
-            if (features.length === 0) {
-                var empty = document.createElement('div');
-                empty.className = 'jc-checklist-empty';
-                empty.textContent = 'No features configured yet.';
-                root.appendChild(empty);
+        function _wireInvalidate(sel, key) {
+            const el = document.querySelector(sel);
+            if (!el) {
                 return;
             }
-            features.forEach(function(f) {
-                var row = document.createElement('button');
-                row.type = 'button';
-                row.className = 'jc-feature-row jc-state-' + f.state;
-                row.setAttribute('data-target', f.tab);
-                var icon = document.createElement('i');
-                icon.className = 'material-icons jc-feature-icon';
-                icon.setAttribute('aria-hidden', 'true');
-                icon.textContent = f.state === 'on'   ? 'check_circle'
-                                 : f.state === 'warn' ? 'warning'
-                                 : 'radio_button_unchecked';
-                row.appendChild(icon);
-                var body = document.createElement('div');
-                body.className = 'jc-feature-body';
-                var name = document.createElement('div');
-                name.className = 'jc-feature-name';
-                name.textContent = f.name;
-                body.appendChild(name);
-                var detail = document.createElement('div');
-                detail.className = 'jc-feature-detail';
-                detail.textContent = f.detail;
-                body.appendChild(detail);
-                row.appendChild(body);
-                row.addEventListener('click', function() {
-                    var targetTab = f.tab;
-                    var tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + targetTab + '"]');
-                    if (tabBtn) tabBtn.click();
-                });
-                root.appendChild(row);
-            });
-        }
-
-        // ==============================================================
-        // Gated help (phase 5). Any setup-instruction block that only
-        // applies when a specific toggle is on lives under a
-        // [data-gated-by="<checkbox-id>"] attribute. Hidden when the
-        // toggle is off; visible when on. Transitions from off→on also
-        // auto-open the accordion so the admin doesn't have to hunt
-        // for the freshly-revealed help.
-        //
-        // Declarative tag + generic dispatcher = no per-section wiring.
-        // Adding a new gated help block means: drop data-gated-by on
-        // the element + add the checkbox id below to GATED_HELP_IDS.
-        // ==============================================================
-
-        // Track prior checked state per gated-help parent so we can
-        // detect an off→on transition in the change listener and
-        // auto-expand the just-revealed accordion.
-        var _jeGatedHelpState = Object.create(null);
-
-        /**
-         * Syncs visibility of every [data-gated-by] element to its
-         * parent checkbox's checked state. If autoExpandOnRise is true
-         * AND a parent just went from unchecked to checked, the gated
-         * `<details>` is auto-opened.
-         */
-        function applyGatedHelp(autoExpandOnRise) {
-            var gated = document.querySelectorAll('[data-gated-by]');
-            gated.forEach(function(el) {
-                var parentAttr = el.getAttribute('data-gated-by');
-                if (!parentAttr) return;
-                // Allow comma-separated IDs: ALL listed parents must be checked
-                // for the gated element to show.
-                var parentIds = parentAttr.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-                var allOn = true;
-                var anyRise = false;
-                parentIds.forEach(function(parentId) {
-                    var parent = document.getElementById(parentId);
-                    if (!parent) { allOn = false; return; }
-                    var thisOn = !!parent.checked;
-                    if (!thisOn) allOn = false;
-                    var wasOn = _jeGatedHelpState[parentId] === true;
-                    if (thisOn && !wasOn) anyRise = true;
-                    _jeGatedHelpState[parentId] = thisOn;
-                });
-                el.hidden = !allOn;
-                if (autoExpandOnRise && allOn && anyRise && el.tagName === 'DETAILS') {
-                    el.open = true;
+            // Invalidate on commit (change), not per keystroke — per-keystroke rebuilds caused
+            // visible lag — and only when the value actually changed since the last commit.
+            let lastCommitted = null;
+            el.addEventListener('focus', function () {
+                if (lastCommitted === null) {
+                    lastCommitted = el.value;
                 }
             });
-        }
-
-        // Wire one change listener per unique parent id referenced by
-        // [data-gated-by]. A single bulk dispatch refreshes every gated
-        // element regardless of which parent fired.
-        //
-        // We also prime `_jeGatedHelpState` with each parent's current
-        // checked value at wire time. Without priming, the first user
-        // click on a gated parent that was already checked (e.g. after a
-        // config load flipped the DOM state out of band) would be read
-        // as `wasOn === undefined (falsy) → isOn === true`, i.e. a rise,
-        // and auto-expand when it shouldn't. Priming closes that hole
-        // for the initial render AND for any parent the config loader
-        // set programmatically (programmatic `.checked = true` does NOT
-        // fire a change event, so the listener wouldn't see it).
-        (function wireGatedHelp() {
-            var gated = document.querySelectorAll('[data-gated-by]');
-            var uniqueParents = Object.create(null);
-            gated.forEach(function(el) {
-                var attr = el.getAttribute('data-gated-by');
-                if (!attr) return;
-                attr.split(',').map(function(s) { return s.trim(); }).filter(Boolean).forEach(function(id) {
-                    uniqueParents[id] = true;
-                });
-            });
-            Object.keys(uniqueParents).forEach(function(id) {
-                var parent = document.getElementById(id);
-                if (!parent) {
-                    console.warn('[JC] gated-help: parent checkbox #' + id + ' not found — help will stay hidden');
+            el.addEventListener('change', function () {
+                if (lastCommitted !== null && el.value === lastCommitted) {
                     return;
                 }
-                _jeGatedHelpState[id] = !!parent.checked;
-                parent.addEventListener('change', function() {
-                    try { applyGatedHelp(true); } catch (e) {
-                        console.warn('[JC] applyGatedHelp threw in change handler:', e);
-                    }
-                });
+                lastCommitted = el.value;
+                invalidatePersistedTest(key);
             });
-            // Reflect initial visibility once so the DOM matches the primed
-            // state immediately (no flicker when loadConfig eventually
-            // triggers updateAllDependencies → applyGatedHelp(false)).
-            try { applyGatedHelp(false); } catch (e) {
-                console.warn('[JC] applyGatedHelp threw during init:', e);
-            }
-        })();
-
-        /**
-         * Orchestrator: evaluates all section, individual, and parent dependency rules.
-         * Each step is isolated so a throw in the status dashboard (which reads a lot
-         * of field values) can't cascade and break dependency updates.
-         */
-        function updateAllDependencies() {
-            SECTION_DEPS.forEach(updateSectionDep);
-            INDIVIDUAL_DEPS.forEach(updateIndividualDep);
-            PARENT_DEPS.forEach(updateParentDep);
-            // Keep the Requests Page requirements banner in sync with dep-relevant
-            // changes it now reads — notably the Seerr enable toggle (which fires
-            // updateAllDependencies) feeding hasSeerrConfigured(). Isolated so
-            // a throw here can't break the rest of the dependency pass.
-            try { updateRequestsRequirementsBanner(); } catch (e) {
-                console.warn('[JC] requirements banner refresh threw:', e);
-            }
-            updateClientTagCacheControlsVisibility();
-            // `updateStatusDashboard` and the legacy `renderChecklist` both
-            // now delegate to `renderServiceStatusDashboard`. Calling both
-            // here would rebuild the service grid TWICE per dependency tick
-            // (~30 times during a TMDB key rotation). One call is enough.
-            try {
-                renderServiceStatusDashboard();
-            } catch (e) {
-                console.warn('[JC] renderServiceStatusDashboard threw; dashboard may be stale:', e);
-            }
-            try {
-                renderOptionalPluginsDashboard();
-            } catch (e) {
-                console.warn('[JC] renderOptionalPluginsDashboard threw:', e);
-            }
-            try {
-                renderFeaturesDashboard();
-            } catch (e) {
-                console.warn('[JC] renderFeaturesDashboard threw:', e);
-            }
-            try {
-                // Re-sync banner parent gating. loadConfig sets .checked
-                // programmatically, which DOESN'T fire the change event our
-                // banner listener uses — so we need an explicit refresh here.
-                if (typeof syncAllBannerParents === 'function') syncAllBannerParents();
-            } catch (e) {
-                console.warn('[JC] syncAllBannerParents threw:', e);
-            }
-            try {
-                // Don't auto-expand when triggered by a bulk dep sync —
-                // that would fire `open = true` on every tick the parent
-                // is checked, which is noisy. Real off→on transitions
-                // go through the dedicated change listener above.
-                applyGatedHelp(false);
-            } catch (e) {
-                console.warn('[JC] applyGatedHelp threw; gated help may be stale:', e);
-            }
         }
 
-        /**
-         * Reads `.value` from a selector, returning '' if the element is missing.
-         * Logs once per missing selector so DOM/JS mismatches surface in devtools
-         * instead of throwing silently through a querySelector chain.
-         * @param {string} sel - CSS selector
-         * @returns {string} Trimmed value, or '' if element not found
-         */
-        var _jeMissingSelectorsWarned = Object.create(null);
-        function readFieldValue(sel) {
-            var el = document.querySelector(sel);
-            if (!el) {
-                if (!_jeMissingSelectorsWarned[sel]) {
-                    _jeMissingSelectorsWarned[sel] = true;
-                    console.warn('[JC] status dashboard: selector "' + sel + '" not found');
-                }
-                return '';
+        function jcFingerprintConnectionValue(value) {
+            // Comparison-only binding so internal URLs are never persisted verbatim.
+            // Identity fence, not a security primitive.
+            const str = String(value || '');
+            let hashA = 0x811c9dc5;
+            let hashB = 0x9e3779b9;
+            for (let i = 0; i < str.length; i++) {
+                const c = str.charCodeAt(i);
+                hashA = Math.imul(hashA ^ c, 0x01000193);
+                hashB = Math.imul(hashB ^ c, 0x5f356495);
             }
-            return (el.value || '').trim();
+            return 'v1:' + str.length.toString(36) + ':'
+                + (hashA >>> 0).toString(16).padStart(8, '0')
+                + (hashB >>> 0).toString(16).padStart(8, '0');
         }
 
-        /**
-         * Counts configured arr instance cards for a given type (sonarr|radarr).
-         * An instance is "configured" when both URL and API key are non-empty.
-         * Returns -1 (not 0) if the instance list container is missing, so callers
-         * can distinguish "user configured zero" from "DOM not ready / mismatched."
-         * @param {string} type - 'sonarr' or 'radarr'
-         * @returns {number} Count of fully-configured instances, or -1 if list missing
-         */
-        var _jeMissingListWarned = Object.create(null);
-        function countArrInstances(type) {
-            var listId = type === 'sonarr' ? 'sonarrInstancesList' : 'radarrInstancesList';
-            var list = document.getElementById(listId);
-            if (!list) {
-                if (!_jeMissingListWarned[listId]) {
-                    _jeMissingListWarned[listId] = true;
-                    console.warn('[JC] status dashboard: #' + listId + ' not found');
-                }
-                return -1;
-            }
-            var cards = list.querySelectorAll('.arr-instance-card');
-            var count = 0;
-            for (var i = 0; i < cards.length; i++) {
-                var url = cards[i].querySelector('.arr-instance-url');
-                var key = cards[i].querySelector('.arr-instance-apikey');
-                if (url && url.value.trim() && key && key.value.trim()) count++;
-            }
-            return count;
+        function _jeNormalizeArrUrl(url) {
+            return String(url || '').trim().toLowerCase().replace(/\/+$/, '');
         }
 
-        /**
-         * Merged Service Status renderer.
-         *
-         * Replaces the legacy status-card grid + Integration Health checklist
-         * with a single card list that sources:
-         *   - config state from the live form (key/URL/API-key presence, *arr
-         *     instance counts, Seerr URL list),
-         *   - test-result state from the connection-test cache (so a green
-         *     "connected" or red "failed" card reflects the latest probe).
-         *
-         * Card states (drive the left-border accent and icon):
-         *   - 'ok'      green    — configured; latest test passed (or no test
-         *                           run yet but no negative signal)
-         *   - 'warn'    amber    — configured partially (e.g. Seerr URL but no
-         *                           API key) OR connection-test returned
-         *                           amber (reachable but not healthy)
-         *   - 'error'   red      — connection-test returned error
-         *   - 'pending' grey dot — enabled + complete config, no cached result
-         *   - 'off'     faded    — disabled / no config entered yet
-         *
-         * Each card is a <button> that jumps to the relevant settings tab.
-         */
-        function renderServiceStatusDashboard() {
-            var root = document.getElementById('jc-service-dashboard');
-            if (!root) return;
+        // ---------------------------------------------------------------------------
+        // B1. Seerr connection test (multi-URL loop) + TMDB test
+        // ---------------------------------------------------------------------------
 
-            var cards = [];
-            function pushCard(opts) { cards.push(opts); }
-
-            // TMDB — no dedicated test endpoint; presence-based state only.
-            var tmdbKey = readFieldValue('#TMDB_API_KEY');
-            pushCard({
-                id: 'tmdb',
-                name: 'TMDB',
-                tab: 'elsewhere',
-                scrollTo: '#TMDB_API_KEY',
-                state: tmdbKey ? 'ok' : 'off',
-                detail: tmdbKey ? 'API key set' : 'No API key',
-                icon: 'vpn_key'
-            });
-
-            // Seerr
-            var seerrEnabled = document.getElementById('seerrEnabled');
-            var seerrUrls = readFieldValue('#seerrUrls');
-            var seerrKey = readFieldValue('#SeerrApiKey');
-            if (seerrEnabled && seerrEnabled.checked) {
-                if (seerrUrls && seerrKey) {
-                    var r = checklistRowState('seerr', 'Configured — not yet verified');
-                    var urlCount = seerrUrls.split(/\r?\n/).filter(function(u) { return u.trim(); }).length;
-                    pushCard({
-                        id: 'seerr', name: 'Seerr', tab: 'seerr', icon: 'bolt',
-                        state: r.state === 'amber' ? 'warn' : r.state === 'pending' ? 'pending' : r.state,
-                        detail: r.detail + (urlCount > 1 ? ' · ' + urlCount + ' URLs' : '')
-                    });
-                } else {
-                    pushCard({
-                        id: 'seerr', name: 'Seerr', tab: 'seerr', icon: 'bolt', state: 'warn',
-                        detail: !seerrUrls && !seerrKey ? 'Enabled but URL and API key missing'
-                            : !seerrUrls ? 'URL missing' : 'API key missing'
-                    });
-                }
-            } else if (seerrUrls || seerrKey) {
-                pushCard({
-                    id: 'seerr', name: 'Seerr', tab: 'seerr', icon: 'bolt', state: 'off',
-                    detail: 'Configured but integration disabled'
+        async function testSeerrConnection() {
+            const urlsInput = document.querySelector('#seerrUrls');
+            const keyInput = document.querySelector('#SeerrApiKey');
+            const urls = ((urlsInput && urlsInput.value) || '')
+                .split('\n')
+                .map(function (u) { return u.trim(); })
+                .filter(Boolean);
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
+            if (!urls.length || !apiKey) {
+                // Deliberately not suppressible — a misconfigured batch run should still surface this.
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide at least one Seerr URL and an API key to test the connection.'
                 });
-            }
-
-            // Maintainerr — deliberately URL-only because Maintainerr 3.18 has no
-            // API authentication. The cached test result contains sanitized state,
-            // never the internal URL or upstream response.
-            var maintainerrEnabled = document.getElementById('maintainerrEnabled');
-            var maintainerrUrl = readFieldValue('#maintainerrUrl');
-            var normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl(maintainerrUrl);
-            if (maintainerrEnabled && maintainerrEnabled.checked) {
-                if (normalizedMaintainerrUrl) {
-                    var maintainerrResult = checklistRowState(
-                        'maintainerr',
-                        'Configured — not yet verified',
-                        jcFingerprintConnectionValue(normalizedMaintainerrUrl)
-                    );
-                    pushCard({
-                        id: 'maintainerr',
-                        name: 'Maintainerr',
-                        tab: 'maintainerr',
-                        scrollTo: '#maintainerrUrl',
-                        icon: 'cleaning_services',
-                        state: maintainerrResult.state === 'amber'
-                            ? 'warn'
-                            : maintainerrResult.state === 'pending'
-                                ? 'pending'
-                                : maintainerrResult.state,
-                        detail: maintainerrResult.detail
-                    });
-                } else {
-                    pushCard({
-                        id: 'maintainerr',
-                        name: 'Maintainerr',
-                        tab: 'maintainerr',
-                        icon: 'cleaning_services',
-                        state: 'warn',
-                        detail: maintainerrUrl ? 'Enabled but URL is invalid' : 'Enabled but URL missing'
-                    });
-                }
-            } else if (maintainerrUrl) {
-                pushCard({
-                    id: 'maintainerr',
-                    name: 'Maintainerr',
-                    tab: 'maintainerr',
-                    icon: 'cleaning_services',
-                    state: 'off',
-                    detail: 'Configured but integration disabled'
-                });
-            }
-
-            // Sonarr / Radarr — one card per instance, reusing test-cache keys
-            ['sonarr', 'radarr'].forEach(function(type) {
-                var list = document.getElementById(type + 'InstancesList');
-                if (!list) return;
-                var arrCards = list.querySelectorAll('.arr-instance-card');
-                arrCards.forEach(function(card) {
-                    var urlEl = card.querySelector('.arr-instance-url');
-                    var keyEl = card.querySelector('.arr-instance-apikey');
-                    var nameEl = card.querySelector('.arr-instance-name');
-                    if (!urlEl || !keyEl) return;
-                    var urlVal = (urlEl.value || '').trim();
-                    var keyVal = (keyEl.value || '').trim();
-                    if (!urlVal && !keyVal) return;
-                    var nameVal = (nameEl && nameEl.value ? nameEl.value.trim() : '')
-                                  || (type === 'sonarr' ? 'Sonarr' : 'Radarr');
-                    var cacheKey = type + ':' + _jeNormalizeArrUrl(urlVal);
-                    var icon = type === 'sonarr' ? 'tv' : 'movie';
-
-                    // Disabled instances (Enabled checkbox unchecked) render as
-                    // a grayed-out "Disabled" card regardless of test-cache
-                    // state — a stale red/green badge on a disabled entry is
-                    // misleading because the instance isn't being used.
-                    var enCb = card.querySelector('.arr-instance-enabled');
-                    var isDisabled = enCb && !enCb.checked;
-                    if (isDisabled) {
-                        pushCard({
-                            id: cacheKey, name: nameVal, tab: 'arr', icon: icon, state: 'off',
-                            detail: 'Disabled'
-                        });
-                        return;
-                    }
-
-                    if (!urlVal || !keyVal) {
-                        pushCard({
-                            id: cacheKey, name: nameVal, tab: 'arr', icon: icon, state: 'warn',
-                            detail: !urlVal ? 'URL missing' : 'API key missing'
-                        });
-                        return;
-                    }
-                    var r = checklistRowState(cacheKey, 'Configured — not yet verified');
-                    pushCard({
-                        id: cacheKey, name: nameVal, tab: 'arr', icon: icon,
-                        state: r.state === 'amber' ? 'warn' : r.state === 'pending' ? 'pending' : r.state,
-                        detail: r.detail
-                    });
-                });
-            });
-
-            // Bazarr — no test endpoint; URL presence is the best signal
-            var bazarrUrl = readFieldValue('#bazarrUrl');
-            var bazarrMappings = readFieldValue('#bazarrUrlMappings');
-            if (bazarrUrl || bazarrMappings) {
-                pushCard({
-                    id: 'bazarr', name: 'Bazarr', tab: 'arr', icon: 'subtitles',
-                    state: bazarrUrl ? 'ok' : 'warn',
-                    detail: bazarrUrl ? 'URL configured' : 'Only URL mappings set'
-                });
-            }
-
-            root.textContent = '';
-            if (cards.length === 0) {
-                var empty = document.createElement('div');
-                empty.className = 'jc-checklist-empty';
-                empty.textContent = 'Configure TMDB, Seerr, Maintainerr, or an *arr instance to see its status here.';
-                root.appendChild(empty);
                 return;
             }
-
-            // Order: warn/error first, then pending, then ok, then off (faded)
-            var ord = { error: 0, warn: 1, pending: 2, ok: 3, off: 4 };
-            cards.sort(function(a, b) { return (ord[a.state] || 99) - (ord[b.state] || 99); });
-
-            cards.forEach(function(c) {
-                var btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'jc-service-card jc-state-' + c.state;
-                btn.setAttribute('data-target', c.tab);
-                btn.setAttribute('data-status-id', c.id);
-                var iconEl = document.createElement('i');
-                iconEl.className = 'material-icons jc-service-icon';
-                iconEl.setAttribute('aria-hidden', 'true');
-                iconEl.textContent = c.state === 'ok'      ? 'check_circle'
-                                   : c.state === 'warn'    ? 'warning'
-                                   : c.state === 'error'   ? 'error'
-                                   : c.state === 'pending' ? 'hourglass_empty'
-                                   : (c.icon || 'radio_button_unchecked');
-                btn.appendChild(iconEl);
-                var body = document.createElement('div');
-                body.className = 'jc-service-body';
-                var nameEl = document.createElement('div');
-                nameEl.className = 'jc-service-name';
-                nameEl.textContent = c.name;
-                body.appendChild(nameEl);
-                var detail = document.createElement('div');
-                detail.className = 'jc-service-detail';
-                detail.textContent = c.detail;
-                body.appendChild(detail);
-                btn.appendChild(body);
-                btn.addEventListener('click', function() {
-                    var tabBtn = document.querySelector('.jellyfin-tab-button[data-tab="' + c.tab + '"]');
-                    if (tabBtn) tabBtn.click();
-                    // Optional deep-link: after the tab activates AND
-                    // activateTab's own per-tab scroll-memory rAF has run
-                    // (double rAF), scroll the specific field into view.
-                    // activateTab schedules a rAF to restore scroll position,
-                    // so scheduling our scroll in the frame AFTER that wins
-                    // the race deterministically. Cards that don't set
-                    // scrollTo land at the tab's scroll-memory position.
-                    if (c.scrollTo) {
-                        requestAnimationFrame(function() {
-                            requestAnimationFrame(function() {
-                                var target = document.querySelector(c.scrollTo);
-                                if (target) {
-                                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                } else {
-                                    console.warn('[JC] service-status deep-link target not found:', c.scrollTo);
-                                }
-                            });
-                        });
-                    }
-                });
-                root.appendChild(btn);
-            });
-        }
-
-        // Back-compat: older code paths still call these by name. Delegate both
-        // to the unified renderer instead of maintaining dead duplicates.
-        function updateStatusDashboard() { renderServiceStatusDashboard(); }
-
-        /**
-         * Shows clear-client-cache controls only when server-side tag cache is disabled.
-         */
-        function updateClientTagCacheControlsVisibility() {
-            var serverModeCheckbox = document.getElementById('tagCacheServerMode');
-            var controls = document.getElementById('clientTagCacheControls');
-            var localStorageFallbackContainer = document.getElementById('tagsLocalStorageFallbackContainer');
-            var localStorageFallbackCheckbox = document.getElementById('enableTagsLocalStorageFallback');
-            if (!serverModeCheckbox || !controls) return;
-
-            if (localStorageFallbackContainer) {
-                var hide = serverModeCheckbox.checked ? 'none' : '';
-                localStorageFallbackContainer.style.display = hide;
-                var localStorageFallbackDesc = document.querySelector('[data-desc-for="enableTagsLocalStorageFallback"]');
-                if (localStorageFallbackDesc) localStorageFallbackDesc.style.display = hide;
+            const token = beginConnectionTest();
+            const btn = document.querySelector('#testSeerrBtn');
+            const indicator = document.querySelector('#seerrStatusIndicator');
+            if (btn) {
+                btn.disabled = true;
             }
-
-            if (!serverModeCheckbox.checked && localStorageFallbackCheckbox) {
-                localStorageFallbackCheckbox.checked = true;
+            if (indicator) {
+                indicator.textContent = 'sync';
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
             }
-
-            controls.style.display = serverModeCheckbox.checked ? 'none' : '';
-            updateClearTagCachesQuickBtnVisibility();
-        }
-
-        // Reactive dependency updates (debounced for text inputs, immediate for checkboxes)
-        var depDebounce;
-        /** Debounced wrapper that delays updateAllDependencies by 150ms. */
-        function debouncedUpdateDeps() {
-            clearTimeout(depDebounce);
-            depDebounce = setTimeout(updateAllDependencies, 150);
-        }
-        ['#TMDB_API_KEY', '#seerr_TMDB_API_KEY'].forEach(function(sel) {
-            document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
-        });
-        document.querySelector('#seerrEnabled').addEventListener('change', updateAllDependencies);
-        document.querySelector('#maintainerrEnabled').addEventListener('change', updateAllDependencies);
-        document.querySelector('#tagCacheServerMode').addEventListener('change', updateAllDependencies);
-        ['#seerrUrls', '#SeerrApiKey', '#maintainerrUrl'].forEach(function(sel) {
-            document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
-        });
-
-        // Drop persisted "Last tested <date>" entries when the inputs that produced
-        // those tests change — otherwise an admin who rotated their TMDB API key or
-        // changed Seerr URLs would keep seeing a green checkmark from the previous
-        // credentials. The next test (or page render) re-establishes the row.
-        function _wireInvalidate(sel, key) {
-            var el = document.querySelector(sel);
-            if (!el) return;
-            var lastValue = el.value;
-            // Use 'change' (fires on blur/commit) rather than 'input' (fires per
-            // keystroke). Input-per-keystroke would invalidate + rebuild the
-            // service-status grid 30+ times during a TMDB key rotation, causing
-            // visible lag on slower machines. Change-on-commit gets the same
-            // correctness outcome without the churn.
-            el.addEventListener('change', function() {
-                if (el.value !== lastValue) {
-                    invalidatePersistedTest(key);
-                    lastValue = el.value;
-                }
-            });
-        }
-        _wireInvalidate('#TMDB_API_KEY',         'tmdb');
-        _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
-        _wireInvalidate('#seerrUrls',       'seerr');
-        _wireInvalidate('#SeerrApiKey',     'seerr');
-        _wireInvalidate('#maintainerrUrl',  'maintainerr');
-        var maintainerrUrlInput = document.querySelector('#maintainerrUrl');
-        if (maintainerrUrlInput) {
-            maintainerrUrlInput.addEventListener('input', function() {
-                cancelActiveMaintainerrTest(true);
-            });
-        }
-
-        // Parent checkbox change listeners
-        var parentIds = {};
-        PARENT_DEPS.forEach(function(dep) { parentIds[dep.parent] = true; });
-        Object.keys(parentIds).forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) el.addEventListener('change', updateAllDependencies);
-        });
-
-        var originalTestTmdb = testTmdbConnection;
-        // Intentional wrap: the click handler is registered later by name, and
-        // this extends it to refresh dependency toggles after a TMDB connection test.
-        // eslint-disable-next-line no-func-assign
-        testTmdbConnection = async function(event) {
-            await originalTestTmdb(event);
-            updateAllDependencies();
-        };
-
-        // === Arr Service Test Buttons ===
-
-        /**
-         * Produces a user-friendly error message from a connection test failure.
-         * @param {Object} error - The ajax error object with a status property
-         * @param {string} serviceName - Display name of the service
-         * @param {string} url - The URL that was tested
-         * @returns {string} Human-readable error message
-         */
-        function connectionErrorMessage(error, serviceName, url) {
-            // surface backend's typed code/cf-ray so admins
-            // see actionable messages (HtmlResponse, Cloudflare5xx, etc.)
-            // instead of "API key rejected" for everything.
-            // Jellyfin's ApiClient.ajax errors don't expose responseJSON;
-            // they expose responseText. Parse it ourselves.
-            var body = error && (error.responseJSON || (function () {
+            let validated = false;
+            let lastError = '';
+            for (const url of urls) {
                 try {
-                    var txt = error.responseText || (error.response && error.response.text) || '';
-                    if (typeof txt === 'string' && txt.length > 0 && txt.trim().charAt(0) === '{') {
-                        return JSON.parse(txt);
+                    const res = await ApiClient.ajax({
+                        type: 'GET',
+                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/validate', { url: url }),
+                        dataType: 'json',
+                        headers: { 'X-Arr-ApiKey': apiKey }
+                    });
+                    if (res && res.ok) {
+                        validated = true;
+                        break;
                     }
-                } catch (_) { /* not JSON, fall through */ }
+                } catch (e) {
+                    console.error('Seerr validation failed for ' + url + ':', e);
+                    if (e && typeof e.json === 'function') {
+                        try {
+                            e.responseJSON = await e.clone().json();
+                        } catch (parseError) {
+                            // Body was not JSON; fall through to status-based messaging.
+                        }
+                    }
+                    lastError = connectionErrorMessage(e, 'Seerr', url);
+                }
+            }
+            if (btn) {
+                btn.disabled = false;
+            }
+            if (indicator) {
+                indicator.classList.remove('status-check');
+            }
+            if (validated) {
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
+                }
+                try {
+                    setConnectionTestResult('seerr', 'ok', 'Connected', token);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Seerr test result:', e);
+                }
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to Seerr!' });
+            } else {
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+                try {
+                    setConnectionTestResult('seerr', 'error', lastError.length < 80 ? lastError : 'Connection failed', token);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Seerr test result:', e);
+                }
+                jcTestAlert({
+                    title: 'Connection Failed',
+                    message: lastError || 'Could not connect to any provided URL.'
+                });
+            }
+        }
+
+
+        // ---------------------------------------------------------------------------
+        // B2. Maintainerr connection test
+        // ---------------------------------------------------------------------------
+
+        var JC_MAINTAINERR_MAX_URL_LENGTH = 2048;
+        var JC_MAINTAINERR_MAX_MAPPINGS_LENGTH = 65536;
+        var JC_MAINTAINERR_MAX_MAPPING_ROWS = 32;
+
+
+        let maintainerrTestGeneration = 0;
+        let activeMaintainerrTestController = null;
+
+        function jcSetMaintainerrTestStatus(icon, text, color, busy) {
+            const indicator = document.querySelector('#maintainerrStatusIndicator');
+            const statusText = document.querySelector('#maintainerrStatusText');
+            const btn = document.querySelector('#testMaintainerrBtn');
+            if (indicator) {
+                indicator.textContent = icon;
+                indicator.style.color = color;
+                indicator.classList.toggle('status-check', !!busy);
+            }
+            if (statusText) {
+                statusText.textContent = text;
+            }
+            if (btn) {
+                btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+            }
+        }
+
+        function cancelActiveMaintainerrTest(resetUi) {
+            maintainerrTestGeneration++;
+            if (activeMaintainerrTestController) {
+                try {
+                    activeMaintainerrTestController.abort();
+                } catch (e) {
+                    // Already aborted or unsupported; nothing to do.
+                }
+                activeMaintainerrTestController = null;
+            }
+            if (resetUi === true) {
+                const btn = document.querySelector('#testMaintainerrBtn');
+                if (btn) {
+                    btn.disabled = false;
+                }
+                jcSetMaintainerrTestStatus('', '', '', false);
+            }
+        }
+
+        function jcIsCurrentMaintainerrTest(generation, url, controller) {
+            // Checked after every await: a stale test must not touch UI or the cache.
+            if (generation !== maintainerrTestGeneration) {
+                return false;
+            }
+            if (!controller || controller !== activeMaintainerrTestController) {
+                return false;
+            }
+            if (controller.signal.aborted) {
+                return false;
+            }
+            const input = document.querySelector('#maintainerrUrl');
+            return jcNormalizeMaintainerrBaseUrl((input && input.value) || '') === url;
+        }
+
+        function jcIsSafeMaintainerrPathSegment(segment) {
+            let current = segment;
+            for (let depth = 0; depth <= 4; depth++) {
+                if (current === '.' || current === '..') {
+                    return false;
+                }
+                if (/[\u0000-\u001f\u007f-\u009f]/.test(current)) {
+                    return false;
+                }
+                if (current.indexOf('/') !== -1 || current.indexOf('\\') !== -1) {
+                    return false;
+                }
+                if (current.indexOf('%') === -1) {
+                    return true;
+                }
+                if (depth === 4) {
+                    // Never reached a %-free fixpoint within 4 decode levels.
+                    return false;
+                }
+                try {
+                    current = decodeURIComponent(current);
+                } catch (e) {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        function jcNormalizeMaintainerrBaseUrl(value) {
+            // Mirror of server ServiceUrlResolver.TryNormalizeHttpBaseUrl. Returns '' when invalid.
+            if (typeof value !== 'string') {
+                return '';
+            }
+            const trimmed = value.trim();
+            if (!trimmed || trimmed.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
+                return '';
+            }
+            if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+                return '';
+            }
+            if (trimmed.indexOf('\\') !== -1) {
+                return '';
+            }
+            if (/^\/\//.test(trimmed)) {
+                return '';
+            }
+            let parsed;
+            try {
+                parsed = new URL(trimmed);
+            } catch (e) {
+                return '';
+            }
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                return '';
+            }
+            if (!parsed.hostname) {
+                return '';
+            }
+            if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+                return '';
+            }
+            // URL canonicalizes dot segments, so traversal must be checked against the raw
+            // text after the authority.
+            const schemeEnd = trimmed.indexOf('//') + 2;
+            const authorityEnd = trimmed.indexOf('/', schemeEnd);
+            if (authorityEnd !== -1) {
+                const rawSegments = trimmed.slice(authorityEnd + 1).split('/');
+                for (const segment of rawSegments) {
+                    if (!jcIsSafeMaintainerrPathSegment(segment)) {
+                        return '';
+                    }
+                }
+            }
+            const path = parsed.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+            const normalized = parsed.protocol + '//' + parsed.host + (path ? '/' + path : '');
+            if (normalized.length > JC_MAINTAINERR_MAX_URL_LENGTH) {
+                return '';
+            }
+            return normalized;
+        }
+
+        function jcParseMaintainerrTestStatus(result) {
+            // Strict shape validation: returns null unless every invariant holds.
+            if (!result || typeof result !== 'object' || Array.isArray(result)) {
                 return null;
-            })());
+            }
+            const boolFields = ['ok', 'ready', 'jellyfinMode', 'capable', 'identityMatch'];
+            for (const field of boolFields) {
+                if (typeof result[field] !== 'boolean') {
+                    return null;
+                }
+            }
+            if (typeof result.version !== 'string'
+                || !result.version.trim()
+                || result.version.length > 80
+                || /[\u0000-\u001f\u007f-\u009f]/.test(result.version)) {
+                return null;
+            }
+            if (result.ok !== (result.capable && result.identityMatch)) {
+                return null;
+            }
+            if (result.capable && !(result.ready && result.jellyfinMode)) {
+                return null;
+            }
+            if (result.identityMatch) {
+                if (result.identityWarning !== undefined) {
+                    return null;
+                }
+            } else if (result.identityWarning !== 'identity_unknown' && result.identityWarning !== 'identity_mismatch') {
+                return null;
+            }
+            const caps = result.capabilities;
+            if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
+                return null;
+            }
+            const capKeys = ['collections', 'collectionContent', 'itemStatus', 'rules', 'storageMetrics', 'overlays'];
+            if (Object.keys(caps).length !== capKeys.length) {
+                return null;
+            }
+            for (const capKey of capKeys) {
+                const expected = capKey === 'itemStatus'
+                    ? (result.capable && result.identityMatch)
+                    : result.capable;
+                if (caps[capKey] !== expected) {
+                    return null;
+                }
+            }
+            if (result.capable) {
+                if (result.error !== undefined) {
+                    return null;
+                }
+            } else if (!result.ready) {
+                if (result.error !== 'not_ready') {
+                    return null;
+                }
+            } else if (!result.jellyfinMode) {
+                if (result.error !== 'not_ready' && result.error !== 'wrong_service') {
+                    return null;
+                }
+            } else if (result.error !== 'not_ready' && result.error !== 'unsupported') {
+                return null;
+            }
+            return result;
+        }
+
+        async function testMaintainerrConnection() {
+            const MAINTAINERR_TEST_ERROR_MESSAGES = {
+                invalid_configuration: 'The Maintainerr URL is invalid',
+                not_ready: 'Maintainerr is reachable but not ready',
+                not_jellyfin: 'Maintainerr is not configured for Jellyfin',
+                unsupported: 'Maintainerr does not expose the required read-only capabilities',
+                blocked_target: 'The destination is blocked by Canopy network policy',
+                timeout: 'The connection timed out',
+                canceled: 'The connection test was canceled',
+                redirect: 'Maintainerr returned a redirect',
+                wrong_service: 'The destination is not Maintainerr 3.18',
+                malformed_body: 'Maintainerr returned an invalid response',
+                malformed_response: 'Maintainerr returned an invalid response',
+                response_too_large: 'Maintainerr returned an oversized response',
+                too_large: 'Maintainerr returned too many records',
+                throttled: 'Maintainerr requests are temporarily limited',
+                identity_mismatch: 'Maintainerr is connected to a different Jellyfin server',
+                configuration_changed: 'The Maintainerr configuration changed during the test',
+                upstream_error: 'Maintainerr could not complete the read-only test',
+                disabled: 'The Maintainerr integration is disabled',
+                unavailable: 'Maintainerr is temporarily unavailable'
+            };
+            cancelActiveMaintainerrTest(true);
+            const input = document.querySelector('#maintainerrUrl');
+            const normalizedMaintainerrUrl = jcNormalizeMaintainerrBaseUrl((input && input.value) || '');
+            const url = normalizedMaintainerrUrl;
+            if (!url) {
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
+                Dashboard.alert({
+                    title: 'Missing or invalid URL',
+                    message: 'Provide an HTTP(S) Maintainerr base URL of at most 2048 characters without credentials, query, fragment, or path traversal.'
+                });
+                return;
+            }
+            const generation = maintainerrTestGeneration;
+            const controller = new AbortController();
+            activeMaintainerrTestController = controller;
+            const testToken = beginConnectionTest();
+            const cacheBinding = jcFingerprintConnectionValue(url);
+            const btn = document.querySelector('#testMaintainerrBtn');
+            if (btn) {
+                btn.disabled = true;
+            }
+            jcSetMaintainerrTestStatus('sync', 'Testing\u2026', 'var(--jc-accent)', true);
+            try {
+                const result = await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/maintainerr/test'),
+                    data: JSON.stringify({ url: url }),
+                    contentType: 'application/json',
+                    dataType: 'json',
+                    signal: controller.signal
+                });
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                const status = jcParseMaintainerrTestStatus(result);
+                if (!status) {
+                    const malformed = new Error('Maintainerr returned a malformed test response');
+                    malformed.responseJSON = { error: 'malformed_response' };
+                    throw malformed;
+                }
+                let identityState = 'unknown';
+                if (status.identityMatch) {
+                    identityState = 'matched';
+                } else if (status.identityWarning === 'identity_mismatch') {
+                    identityState = 'mismatch';
+                } else if (status.identityWarning === 'identity_unknown') {
+                    identityState = 'unknown';
+                }
+                const version = status.version.slice(0, 32);
+                if (!status.ready || !status.jellyfinMode || !status.capable) {
+                    const notCapable = new Error('Maintainerr is not ready for read-only access');
+                    notCapable.responseJSON = { error: status.error };
+                    throw notCapable;
+                }
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                const warning = identityState !== 'matched';
+                let detail = version ? 'Maintainerr ' + version : 'Connected';
+                if (identityState === 'mismatch') {
+                    detail += ' · different Jellyfin server';
+                } else if (identityState === 'unknown') {
+                    detail += ' · Jellyfin identity not confirmed';
+                }
+                try {
+                    setConnectionTestResult('maintainerr', warning ? 'amber' : 'ok', detail, testToken, cacheBinding);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache Maintainerr test result:', e);
+                }
+                jcSetMaintainerrTestStatus(
+                    warning ? 'warning' : 'check_circle',
+                    warning ? 'Connected with warning' : 'Connected',
+                    warning ? 'var(--jc-warning)' : 'var(--jc-success)',
+                    false
+                );
+                let message;
+                if (identityState === 'mismatch') {
+                    message = 'Maintainerr is reachable but is connected to a different Jellyfin server. Per-item status will remain disabled until the identities match.';
+                } else if (identityState === 'unknown') {
+                    message = 'Maintainerr is reachable, but its Jellyfin server identity could not be confirmed. Per-item status will remain disabled until identity can be verified.';
+                } else {
+                    message = 'Successfully connected to Maintainerr ' + version + '.';
+                }
+                // The success dialog's dismiss button renders as "Got It" (Dashboard.alert
+                // default) — e2e asserts that exact accessible name.
+                jcTestAlert({ title: warning ? 'Connected with warning' : 'Success', message: message });
+            } catch (e) {
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                let code = '';
+                if (e && e.responseJSON && typeof e.responseJSON.error === 'string') {
+                    code = e.responseJSON.error;
+                } else if (e && typeof e.json === 'function') {
+                    try {
+                        const body = await e.clone().json();
+                        if (body && typeof body.error === 'string') {
+                            code = body.error;
+                        }
+                    } catch (parseError) {
+                        // Body was not JSON; keep the fallback message.
+                    }
+                }
+                if (!jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    return;
+                }
+                code = String(code).slice(0, 48);
+                const detail = MAINTAINERR_TEST_ERROR_MESSAGES[code] || 'Connection could not be verified';
+                try {
+                    setConnectionTestResult('maintainerr', 'error', detail, testToken, cacheBinding);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache Maintainerr test result:', cacheError);
+                }
+                jcSetMaintainerrTestStatus('error', 'Failed', 'var(--jc-danger)', false);
+                jcTestAlert({
+                    title: 'Connection failed',
+                    message: detail + '. Confirm the server-only URL, network access, and Maintainerr 3.18 configuration.'
+                });
+            } finally {
+                if (jcIsCurrentMaintainerrTest(generation, url, controller)) {
+                    activeMaintainerrTestController = null;
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.setAttribute('aria-busy', 'false');
+                    }
+                    const indicator = document.querySelector('#maintainerrStatusIndicator');
+                    if (indicator) {
+                        indicator.classList.remove('status-check');
+                    }
+                }
+            }
+        }
+
+        async function testTmdbConnection(event) {
+            const input = document.querySelector('#TMDB_API_KEY');
+            const apiKey = ((input && input.value) || '').trim();
+            if (!apiKey) {
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide a TMDB API key to test the connection.'
+                });
+                return;
+            }
+            _testToken = beginConnectionTest();
+            // Multiple copies of the test button exist across tabs; resolve the indicator
+            // sitting next to the clicked button, falling back to the Elsewhere-tab one.
+            const button = event && event.target ? event.target.closest('button') : null;
+            let indicator = button && button.parentElement
+                ? button.parentElement.querySelector('.material-icons')
+                : null;
+            if (!indicator) {
+                indicator = document.querySelector('#tmdbStatusIndicator');
+            }
+            const buttons = document.querySelectorAll('.testTmdbBtn');
+            buttons.forEach(function (b) { b.disabled = true; });
+            if (indicator) {
+                indicator.textContent = 'sync';
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
+            }
+            try {
+                await ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('/JellyfinCanopy/tmdb/validate', { apiKey: apiKey })
+                });
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
+                }
+                try {
+                    setConnectionTestResult('tmdb', 'ok', 'API key valid', _testToken);
+                } catch (e) {
+                    console.warn('[JC] Failed to cache TMDB test result:', e);
+                }
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to TMDB!' });
+            } catch (e) {
+                console.error('TMDB validation failed:', e);
+                const status = e && e.status;
+                let message;
+                let cacheDetail;
+                if (status === 401) {
+                    message = 'The API key is invalid. Check that you copied it correctly.';
+                    cacheDetail = 'API key rejected';
+                } else if (status === 500 || !status) {
+                    message = 'Could not reach TMDB servers. Check your network connection.';
+                    cacheDetail = 'Unreachable';
+                } else {
+                    message = 'Connection failed (error ' + status + '). Check the key and your network.';
+                    cacheDetail = 'Error ' + status;
+                }
+                try {
+                    setConnectionTestResult('tmdb', 'error', cacheDetail, _testToken);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache TMDB test result:', cacheError);
+                }
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+                jcTestAlert({ title: 'Connection Failed', message: message });
+            } finally {
+                buttons.forEach(function (b) { b.disabled = false; });
+                if (indicator) {
+                    indicator.classList.remove('status-check');
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // B3. Sonarr/Radarr per-card connection test + shared error messaging
+        // ---------------------------------------------------------------------------
+
+        function connectionErrorMessage(error, serviceName, url) {
+            let body = null;
+            if (error && error.responseJSON) {
+                body = error.responseJSON;
+            } else {
+                let text = error && error.responseText;
+                if (!text && error && error.response && typeof error.response.text === 'string') {
+                    text = error.response.text;
+                }
+                if (typeof text === 'string' && text.trim().indexOf('{') === 0) {
+                    try {
+                        body = JSON.parse(text);
+                    } catch (e) {
+                        body = null;
+                    }
+                }
+            }
             if (body && body.code && body.message) {
-                var prefix = body.cfRay ? '[' + serviceName + ' cf-ray=' + body.cfRay + '] ' : '';
+                const prefix = body.cfRay ? '[' + serviceName + ' cf-ray=' + body.cfRay + '] ' : '';
                 return prefix + body.message;
             }
-            if (error.status === 502) return 'Could not reach ' + url + '. Check the URL is correct and ' + serviceName + ' is running.';
-            if (error.status === 504) return 'Connection timed out. The server may be unreachable.';
-            if (error.status === 401) return 'The API key was rejected. Check the key is correct.';
-            if (error.status === 403) return 'Permission denied. Check the API key has the correct permissions, or that CSRF protection is not enabled in ' + serviceName + '.';
-            if (error.status === 400) return 'Missing URL or API key.';
-            if (error.status === 404) return 'The URL responded but did not look like a valid ' + serviceName + ' instance (HTTP 404 on /api/v1/user). It may be a reverse-proxy auth challenge.';
-            return 'Connection to ' + serviceName + ' failed (error ' + (error.status || 'unknown') + ').';
+            const status = error && error.status;
+            switch (status) {
+                case 502:
+                    return 'Could not reach ' + url + '. Check the URL is correct and ' + serviceName + ' is running.';
+                case 504:
+                    return 'Connection timed out. The server may be unreachable.';
+                case 401:
+                    return 'The API key was rejected. Check the key is correct.';
+                case 403:
+                    return 'Permission denied. Check the API key has the correct permissions, or that CSRF protection is not enabled in ' + serviceName + '.';
+                case 400:
+                    return 'Missing URL or API key.';
+                case 404:
+                    return 'The URL responded but did not look like a valid ' + serviceName + ' instance (HTTP 404 on /api/v1/user). It may be a reverse-proxy auth challenge.';
+                default:
+                    return 'Connection to ' + serviceName + ' failed (error ' + (status || 'unknown') + ').';
+            }
         }
 
         async function testInstanceConnection(card) {
-            var type = card.dataset.type;
-            var urlVal = (card.querySelector('.arr-instance-url').value || '').trim();
-            var apiKeyVal = (card.querySelector('.arr-instance-apikey').value || '').trim();
-            var nameVal = card.querySelector('.arr-instance-name').value.trim() || (type === 'sonarr' ? 'Sonarr' : 'Radarr');
-            var btn = card.querySelector('.arr-instance-test');
-            var indicator = card.querySelector('.arr-instance-status');
-
-            if (!urlVal || !apiKeyVal) {
-                Dashboard.alert({ title: 'Missing Information', message: 'Please provide both a URL and API key to test the connection.' });
+            const type = card.dataset.type;
+            const defaultName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+            const urlInput = card.querySelector('.arr-instance-url');
+            const keyInput = card.querySelector('.arr-instance-apikey');
+            const nameInput = card.querySelector('.arr-instance-name');
+            const url = ((urlInput && urlInput.value) || '').trim();
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
+            const name = ((nameInput && nameInput.value) || '').trim() || defaultName;
+            const btn = card.querySelector('.arr-instance-test');
+            const indicator = card.querySelector('.arr-instance-status');
+            if (!url || !apiKey) {
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide both a URL and API key to test the connection.'
+                });
                 return;
             }
-
-            var _testToken = (typeof beginConnectionTest === 'function') ? beginConnectionTest() : undefined;
-            btn.disabled = true;
-            indicator.textContent = 'sync';
-            // Don't wipe the indicator's class wholesale with `className = ...` —
-            // that drops `arr-instance-status`, the identifier used to re-query
-            // this element on subsequent Test clicks. classList.add leaves the
-            // identifier class intact so repeated tests on the same card work.
-            indicator.classList.add('status-check');
-            indicator.style.color = 'var(--primary-accent-color, #00a4dc)';
-
-            var arrCacheKey = type + ':' + _jeNormalizeArrUrl(urlVal);
+            const token = beginConnectionTest();
+            if (btn) {
+                btn.disabled = true;
+            }
+            if (indicator) {
+                indicator.textContent = 'sync';
+                // classList, never className = — the arr-instance-status identifier class must survive.
+                indicator.classList.add('status-check');
+                indicator.style.color = 'var(--jc-accent)';
+            }
+            const cacheKey = type + ':' + _jeNormalizeArrUrl(url);
             try {
-                var endpoint = type === 'sonarr' ? 'sonarr' : 'radarr';
-                var validationUrl = ApiClient.getUrl('/JellyfinCanopy/arr/validate/' + endpoint, { url: urlVal });
-                await ApiClient.ajax({ type: 'GET', url: validationUrl, dataType: 'json', headers: { 'X-Arr-ApiKey': apiKeyVal } });
-
-                indicator.textContent = 'check_circle';
-                indicator.style.color = '#52b54b';
-                indicator.classList.remove('status-check');
-                try { setConnectionTestResult(arrCacheKey, 'ok', 'Connected', _testToken); } catch (err) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Success', message: 'Successfully connected to ' + nameVal + '!' });
-            } catch (e) {
-                indicator.classList.remove('status-check');
-                indicator.textContent = 'error';
-                indicator.style.color = '#dc3545';
-
-                var msg = connectionErrorMessage(e, nameVal, urlVal);
-                try {
-                    var shortArrDetail = e && e.status === 401 ? 'API key rejected'
-                        : e && (e.status === 500 || e.status === 0 || !e.status) ? 'Unreachable'
-                        : 'Error ' + (e && e.status ? e.status : '?');
-                    setConnectionTestResult(arrCacheKey, 'error', shortArrDetail, _testToken);
-                } catch (err) { /* cache is best-effort */ }
-                jcTestAlert({ title: 'Connection Failed', message: msg });
-            } finally {
-                btn.disabled = false;
-            }
-
-            updateAllDependencies();
-        }
-
-        // === URL Mapping Validation ===
-        /**
-         * Appends an issue message div to a validation result container.
-         * @param {HTMLElement} container - The container element to append to
-         * @param {string} text - The issue message text
-         */
-        function addIssue(container, text) {
-            var div = document.createElement('div');
-            div.style.cssText = 'margin-bottom: 0.5em;';
-            div.textContent = text;
-            container.appendChild(div);
-        }
-
-        /**
-         * Validates URL mapping entries for syntactic correctness.
-         * @param {Array<Object>} mappingDefs - Array of mapping definitions with inputId and expectedService
-         * @param {string} btnId - DOM id of the validate button
-         * @param {string} resultDivId - DOM id of the results container
-         */
-        async function validateMappingSet(mappingDefs, btnId, resultDivId) {
-            var btn = document.getElementById(btnId);
-            var resultDiv = document.getElementById(resultDivId);
-            // Update button label safely whether the markup wraps the text
-            // in a <span> (legacy emby-button pattern) or has bare text content.
-            // The previous implementation assumed a <span> always existed and
-            // threw `Cannot set properties of null` when it didn't, which silently
-            // killed the rest of validation (button stayed disabled, result div
-            // stayed empty, no error surfaced to the admin).
-            function setBtnLabel(text) {
-                var span = btn.querySelector('span');
-                if (span) span.textContent = text;
-                else btn.textContent = text;
-            }
-            btn.disabled = true;
-            setBtnLabel('Validating...');
-            resultDiv.textContent = '';
-            resultDiv.style.display = 'block';
-            resultDiv.style.backgroundColor = 'color-mix(in srgb, var(--primary-accent-color, #00a4dc) 10%, transparent)';
-            resultDiv.style.borderLeft = '4px solid var(--primary-accent-color, #00a4dc)';
-            resultDiv.textContent = 'Testing URLs...';
-
-            // Collect all pairs with basic format validation first
-            var pairs = [];
-            var formatIssues = [];
-
-            mappingDefs.forEach(function(m) {
-                var textarea = document.getElementById(m.id);
-                if (!textarea) return;
-                textarea.value.split('\n').forEach(function(line, idx) {
-                    var trimmed = line.trim();
-                    if (!trimmed) return;
-                    var lineLabel = m.service + ' line ' + (idx + 1);
-                    var parts = trimmed.split('|');
-                    if (parts.length !== 2) {
-                        formatIssues.push(lineLabel + ': Invalid format. Use jellyfin_url|' + m.service.toLowerCase() + '_url separated by a pipe (|).');
-                        return;
-                    }
-                    var left = parts[0].trim();
-                    var right = parts[1].trim();
-                    if (!left || !right) {
-                        formatIssues.push(lineLabel + ': Both sides of the pipe must have a URL.');
-                        return;
-                    }
-                    if (!left.match(/^https?:\/\//i)) {
-                        formatIssues.push(lineLabel + ': Left side (' + left + ') should start with http:// or https://.');
-                        return;
-                    }
-                    if (!right.match(/^https?:\/\//i)) {
-                        formatIssues.push(lineLabel + ': Right side (' + right + ') should start with http:// or https://.');
-                        return;
-                    }
-                    pairs.push({ left: left, right: right, service: m.service, label: lineLabel });
+                await ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('/JellyfinCanopy/arr/validate/' + type, { url: url }),
+                    dataType: 'json',
+                    headers: { 'X-Arr-ApiKey': apiKey }
                 });
-            });
-
-            if (formatIssues.length > 0 && pairs.length === 0) {
-                resultDiv.textContent = '';
-                resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #dc3545';
-                formatIssues.forEach(function(i) { addIssue(resultDiv, i); });
-                btn.disabled = false;
-                setBtnLabel('Validate Mappings');
-                return;
-            }
-
-            if (pairs.length === 0 && formatIssues.length === 0) {
-                resultDiv.style.display = 'none';
-                btn.disabled = false;
-                setBtnLabel('Validate Mappings');
-                return;
-            }
-
-            // Syntax-only validation: ensure each URL parses as a valid URL
-            // and that the two sides of a mapping aren't identical. We used to
-            // probe each URL server-side (and fall back to a browser probe) and
-            // identify whether the far end was actually Sonarr/Radarr/Jellyfin/…
-            // but mappings are only used to rewrite link hrefs, so "is this
-            // URL parseable and distinct from its pair" is the only thing that
-            // actually needs to hold. Probing breaks for anyone behind an auth
-            // proxy (Authentik, Authelia, Cloudflare Access, …) because the
-            // backend never reaches the service to identify it.
-            var issues = formatIssues.slice();
-            var warnings = [];
-            var good = 0;
-
-            pairs.forEach(function(p) {
-                var leftTrim  = p.left.replace(/\/+$/, '');
-                var rightTrim = p.right.replace(/\/+$/, '');
-
-                function urlOk(u) {
-                    try { var parsed = new URL(u); return !!parsed.host; }
-                    catch (e) { return false; }
-                }
-
-                if (!urlOk(p.left)) {
-                    issues.push(p.label + ': Left side (' + p.left + ') is not a valid URL.');
-                    return;
-                }
-                if (!urlOk(p.right)) {
-                    issues.push(p.label + ': Right side (' + p.right + ') is not a valid URL.');
-                    return;
-                }
-                if (leftTrim.toLowerCase() === rightTrim.toLowerCase()) {
-                    issues.push(p.label + ': Both sides are the same URL. Left should be Jellyfin, right should be ' + p.service + '.');
-                    return;
-                }
-
-                good++;
-            });
-
-            // Display results
-            resultDiv.textContent = '';
-            if (issues.length === 0 && warnings.length === 0) {
-                resultDiv.style.backgroundColor = 'rgba(82, 181, 75, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #52b54b';
-                var icon = document.createElement('i');
-                icon.className = 'material-icons';
-                icon.style.cssText = 'vertical-align: middle; color: #52b54b; margin-right: 0.5em;';
-                icon.textContent = 'check_circle';
-                resultDiv.appendChild(icon);
-                resultDiv.appendChild(document.createTextNode(good + ' mapping' + (good !== 1 ? 's' : '') + ' verified.'));
-            } else {
-                if (issues.length > 0) {
-                    resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                    resultDiv.style.borderLeft = '4px solid #dc3545';
-                    issues.forEach(function(i) { addIssue(resultDiv, i); });
-                } else {
-                    resultDiv.style.backgroundColor = 'rgba(255, 193, 7, 0.15)';
-                    resultDiv.style.borderLeft = '4px solid #ffc107';
-                }
-                warnings.forEach(function(w) { addIssue(resultDiv, w); });
-                if (good > 0) {
-                    addIssue(resultDiv, good + ' other mapping' + (good !== 1 ? 's' : '') + ' verified.');
-                }
-            }
-
-            btn.disabled = false;
-            setBtnLabel('Validate Mappings');
-        }
-
-        // Maintainerr uses the same strict parser here and during Save. Keep it
-        // separate from the legacy cross-service validator so unsafe URL values
-        // are never interpolated into validation output.
-        function validateMaintainerrMappingSet(inputId, btnId, resultDivId) {
-            var input = document.getElementById(inputId);
-            var btn = document.getElementById(btnId);
-            var resultDiv = document.getElementById(resultDivId);
-            if (!input || !btn || !resultDiv) return;
-            var span = btn.querySelector('span');
-            function setBtnLabel(value) {
-                if (span) span.textContent = value;
-                else btn.textContent = value;
-            }
-
-            btn.disabled = true;
-            setBtnLabel('Validating...');
-            var result = jcValidateMaintainerrMappings(input.value);
-            resultDiv.textContent = '';
-            resultDiv.style.display = 'block';
-            if (result.issues.length === 0) {
-                resultDiv.style.backgroundColor = 'rgba(82, 181, 75, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #52b54b';
-                var icon = document.createElement('i');
-                icon.className = 'material-icons';
-                icon.style.cssText = 'vertical-align: middle; color: #52b54b; margin-right: 0.5em;';
-                icon.textContent = 'check_circle';
-                resultDiv.appendChild(icon);
-                resultDiv.appendChild(document.createTextNode(
-                    result.validCount + ' mapping' + (result.validCount === 1 ? '' : 's') + ' verified.'
-                ));
-            } else {
-                resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                resultDiv.style.borderLeft = '4px solid #dc3545';
-                result.issues.forEach(function(issue) {
-                    addIssue(resultDiv, issue);
-                });
-                if (result.validCount > 0) {
-                    addIssue(
-                        resultDiv,
-                        result.validCount + ' other mapping'
-                            + (result.validCount === 1 ? '' : 's') + ' verified.'
-                    );
-                }
-            }
-            btn.disabled = false;
-            setBtnLabel('Validate Mappings');
-        }
-
-        // Per-service mapping validation helpers. Each service's Validate button
-        // collects only its own instances' mappings (plus Bazarr's single field),
-        // feeds them through validateMappingSet, and cleans up any temp textareas
-        // it creates. Split from the old "validate everything" button so results
-        // land next to the service being tested.
-        function _jeValidateInstanceMappings(type, btnId, resultId, displayName) {
-            var mappingDefs = [];
-            var createdTempIds = [];
-            // Wipe orphan temp textareas from a prior run (lets us also accept
-            // those leftover from a previous failed validation with the same
-            // prefix).
-            document.querySelectorAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function(el) { el.remove(); });
-
-            var listId = type + 'InstancesList';
-            document.querySelectorAll('#' + listId + ' .arr-instance-card').forEach(function(card, idx) {
-                var name = card.querySelector('.arr-instance-name').value.trim() || (displayName + ' ' + (idx + 1));
-                var textarea = card.querySelector('.arr-instance-urlmappings');
-                if (textarea && textarea.value.trim()) {
-                    var tempId = 'arr-validate-' + type + '-' + idx;
-                    var temp = document.createElement('textarea');
-                    temp.id = tempId;
-                    temp.value = textarea.value;
-                    temp.style.display = 'none';
-                    temp.setAttribute('data-arr-validate-temp-' + type, 'true');
-                    document.body.appendChild(temp);
-                    createdTempIds.push(tempId);
-                    mappingDefs.push({ id: tempId, service: name });
-                }
-            });
-
-            if (mappingDefs.length === 0) {
-                Dashboard.alert({ title: 'No Mappings', message: 'No URL mappings configured for ' + displayName + '. Expand an instance card and fill in the URL Mappings field to validate.' });
-                return;
-            }
-            var cleanup = function() {
-                createdTempIds.forEach(function(id) {
-                    var el = document.getElementById(id);
-                    if (el) el.remove();
-                });
-            };
-            validateMappingSet(mappingDefs, btnId, resultId)
-                .finally(cleanup)
-                .catch(function(err) {
-                    // Without an explicit .catch, a thrown rejection (missing btn
-                    // node, pre-await TypeError, failed Promise.all inside the
-                    // validator) would leave the Validate button stuck on its
-                    // disabled/"Validating..." state and the admin with no visible
-                    // signal beyond an Uncaught (in promise) message in devtools.
-                    console.error('[JC] mapping validation crashed:', err);
-                    var btn = document.getElementById(btnId);
-                    if (btn) {
-                        btn.disabled = false;
-                        var span = btn.querySelector('span');
-                        if (span) span.textContent = 'Validate Mappings';
-                        else btn.textContent = 'Validate Mappings';
-                    }
-                    try {
-                        Dashboard.alert({ title: 'Validation error', message: 'Mapping validation crashed unexpectedly — check the browser console for details.' });
-                    } catch (alertErr) {
-                        console.warn('[JC] Dashboard.alert threw during validation-error notify:', alertErr);
-                        try { window.alert('Validation error: ' + ((err && err.message) || err)); } catch (_) { /* last-resort notify — if alert() itself throws we've given up */ }
-                    }
-                });
-        }
-
-        var validateSonarrMappingsBtn = document.getElementById('validateSonarrMappingsBtn');
-        if (validateSonarrMappingsBtn) {
-            validateSonarrMappingsBtn.addEventListener('click', function() {
-                _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
-            });
-        }
-        var validateRadarrMappingsBtn = document.getElementById('validateRadarrMappingsBtn');
-        if (validateRadarrMappingsBtn) {
-            validateRadarrMappingsBtn.addEventListener('click', function() {
-                _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
-            });
-        }
-        // Safety-net wrapper used by the three mapping-validate buttons.
-        // Mirrors the .catch + button-reset handler inside _jeValidateInstanceMappings
-        // so Bazarr/Seerr direct callers get the same treatment. Without this,
-        // a rejected validateMappingSet() promise would leave the button stuck on
-        // "Validating..." with only an Uncaught (in promise) in devtools.
-        function _jeRunMappingValidation(mappingDefs, btnId, resultId) {
-            validateMappingSet(mappingDefs, btnId, resultId).catch(function(err) {
-                console.error('[JC] mapping validation crashed:', err);
-                var b = document.getElementById(btnId);
-                if (b) {
-                    b.disabled = false;
-                    var span = b.querySelector('span');
-                    if (span) span.textContent = 'Validate Mappings';
-                    else b.textContent = 'Validate Mappings';
+                if (indicator) {
+                    indicator.textContent = 'check_circle';
+                    indicator.style.color = 'var(--jc-success)';
                 }
                 try {
-                    Dashboard.alert({ title: 'Validation error', message: 'Mapping validation crashed unexpectedly — check the browser console for details.' });
-                } catch (alertErr) {
-                    console.warn('[JC] Dashboard.alert threw during validation-error notify:', alertErr);
-                    try { window.alert('Validation error: ' + ((err && err.message) || err)); } catch (_) { /* last-resort notify — if alert() itself throws we've given up */ }
-                }
-            });
-        }
-
-        var validateBazarrMappingsBtn = document.getElementById('validateBazarrMappingsBtn');
-        if (validateBazarrMappingsBtn) {
-            validateBazarrMappingsBtn.addEventListener('click', function() {
-                var mappings = document.getElementById('bazarrUrlMappings');
-                if (!mappings || !mappings.value.trim()) {
-                    Dashboard.alert({ title: 'No Mappings', message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.' });
-                    return;
-                }
-                _jeRunMappingValidation(
-                    [{ id: 'bazarrUrlMappings', service: 'Bazarr' }],
-                    'validateBazarrMappingsBtn', 'bazarrMappingsValidationResult'
-                );
-            });
-        }
-
-        var validateSeerrMappingsBtn = document.getElementById('validateSeerrMappingsBtn');
-        if (validateSeerrMappingsBtn) {
-            validateSeerrMappingsBtn.addEventListener('click', function() {
-                _jeRunMappingValidation(
-                    [{ id: 'seerrUrlMappings', service: 'Seerr' }],
-                    'validateSeerrMappingsBtn', 'seerrMappingsValidationResult'
-                );
-            });
-        }
-        var validateMaintainerrMappingsBtn = document.getElementById('validateMaintainerrMappingsBtn');
-        if (validateMaintainerrMappingsBtn) {
-            validateMaintainerrMappingsBtn.addEventListener('click', function() {
-                var mappings = document.getElementById('maintainerrUrlMappings');
-                if (!mappings || !mappings.value.trim()) {
-                    Dashboard.alert({ title: 'No Mappings', message: 'No Maintainerr URL mappings are configured.' });
-                    return;
-                }
-                validateMaintainerrMappingSet(
-                    'maintainerrUrlMappings',
-                    'validateMaintainerrMappingsBtn', 'maintainerrMappingsValidationResult'
-                );
-            });
-        }
-
-        clearTagsCacheBtn.addEventListener('click', async () => {
-            if (confirm("Clear all client caches?\n\nThis will force all clients to clear their quality and genre tag caches on next page load.")) {
-                Dashboard.showLoadingMsg();
-                try {
-                    const config = await ApiClient.getPluginConfiguration(pluginId);
-                    config.ClearLocalStorageTimestamp = Date.now();
-                    await ApiClient.updatePluginConfiguration(pluginId, config);
-                    Dashboard.hideLoadingMsg();
-                    Dashboard.alert({
-                        title: 'Success',
-                        message: 'Cache clear signal sent. All clients will clear their caches on next page load.'
-                    });
+                    setConnectionTestResult(cacheKey, 'ok', 'Connected', token);
                 } catch (e) {
-                    Dashboard.hideLoadingMsg();
-                    console.error('Failed to set cache clear timestamp:', e);
-                    Dashboard.alert({
-                        title: 'Error',
-                        message: 'Failed to set cache clear timestamp. Check server logs for details.'
-                    });
+                    console.warn('[JC] Failed to cache instance test result:', e);
                 }
-            }
-        });
-        testSeerrBtn.addEventListener('click', testSeerrConnection);
-        testMaintainerrBtn.addEventListener('click', testMaintainerrConnection);
-
-        /* jc-seerr-scan-helpers:start */
-        function jcNormalizeSeerrIdentityDomain(value) {
-            const trimmed = String(value || '').trim().replace(/\/+$/, '');
-            if (!trimmed) return '';
-
-            // WHATWG URL repairs forms such as `http:seerr.example` into an
-            // authority URL, while System.Uri deliberately retains that input
-            // as invalid/no-host. Require the explicit configuration grammar
-            // before parsing so manual and background scans use one identity
-            // policy and an unsaved malformed value is never silently retargeted.
-            if (!/^https?:\/\//i.test(trimmed)) return trimmed;
-
-            try {
-                const parsed = new URL(trimmed);
-                if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-                    || !parsed.hostname
-                    || parsed.username
-                    || parsed.password
-                    || parsed.search
-                    || parsed.hash) {
-                    // Configuration validation owns malformed URL reporting.
-                    // Preserve the exact trimmed value here so duplicate invalid
-                    // entries are still collapsed without changing their meaning.
-                    return trimmed;
+                jcTestAlert({ title: 'Success', message: 'Successfully connected to ' + name + '!' });
+            } catch (e) {
+                const msg = connectionErrorMessage(e, name, url);
+                const status = e && e.status;
+                let cacheDetail;
+                if (status === 401) {
+                    cacheDetail = 'API key rejected';
+                } else if (status === 500 || !status) {
+                    cacheDetail = 'Unreachable';
+                } else {
+                    cacheDetail = 'Error ' + (status || '?');
                 }
-
-                const path = parsed.pathname === '/'
-                    ? ''
-                    : parsed.pathname.replace(/\/+$/, '');
-                // URL canonicalizes the case-insensitive scheme/host and removes
-                // default ports; pathname casing remains identity-significant.
-                const normalizedHostname = parsed.hostname.endsWith('.') && !parsed.hostname.endsWith('..')
-                    ? parsed.hostname.slice(0, -1)
-                    : parsed.hostname;
-                if (!normalizedHostname) return trimmed;
-                return parsed.protocol + '//' + normalizedHostname
-                    + (parsed.port ? ':' + parsed.port : '') + path;
-            } catch (_) {
-                return trimmed;
+                try {
+                    setConnectionTestResult(cacheKey, 'error', cacheDetail, token);
+                } catch (cacheError) {
+                    console.warn('[JC] Failed to cache instance test result:', cacheError);
+                }
+                jcTestAlert({ title: 'Connection Failed', message: msg });
+                if (indicator) {
+                    indicator.textContent = 'error';
+                    indicator.style.color = 'var(--jc-danger)';
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                }
+                if (indicator) {
+                    indicator.classList.remove('status-check');
+                }
+                updateAllDependencies();
             }
         }
 
-        function jcParseSeerrIdentityDomains(rawUrls) {
-            const seen = new Set();
-            const domains = [];
+        // ---------------------------------------------------------------------------
+        // B4. URL-mapping validation (syntax-only; probing broke behind auth proxies)
+        // ---------------------------------------------------------------------------
 
-            String(rawUrls || '').split(/[\r\n,]+/).forEach(value => {
-                // Match SeerrUrlIdentity.ParseConfigured in the server project.
-                const domain = jcNormalizeSeerrIdentityDomain(value);
-                if (domain && !seen.has(domain)) {
-                    seen.add(domain);
-                    domains.push(domain);
-                }
-            });
-
-            return domains;
-        }
-
-        async function jcDispatchSeerrScanDomains(rawUrls, send, signal) {
-            const domains = jcParseSeerrIdentityDomains(rawUrls);
-            if (signal && signal.aborted) {
-                return { domains, results: [], cancelled: true };
-            }
-
-            // One server request owns the complete manual batch. This lets the lifecycle state
-            // machine atomically drain a pending automatic timer without a later per-domain call
-            // duplicating work that the drained batch already covered.
-            try {
-                const response = await send(domains, signal);
-                if (signal && signal.aborted) {
-                    return { domains, results: [], cancelled: true };
-                }
-
-                const upstream = response && Array.isArray(response.results)
-                    ? response.results
-                    : [];
-                const results = domains.map(domain => {
-                    const row = upstream.find(candidate => candidate
-                        && jcNormalizeSeerrIdentityDomain(candidate.domain) === domain);
-                    if (row) {
-                        return {
-                            domain,
-                            ok: row.ok === true,
-                            error: row.message ? String(row.message) : ''
-                        };
-                    }
-
-                    return {
-                        domain,
-                        ok: Boolean(response && response.ok === true),
-                        error: response && response.message ? String(response.message) : ''
-                    };
-                });
-                return { domains, results, cancelled: false };
-            } catch (error) {
-                if (signal && signal.aborted) {
-                    return { domains, results: [], cancelled: true };
-                }
+        function jcValidateMaintainerrMappings(value) {
+            // Bounded shared parser (Validate button + Save). Issues carry row numbers and
+            // reasons only — never URL values.
+            const issues = [];
+            let validCount = 0;
+            let invalidCount = 0;
+            if (value.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
                 return {
-                    domains,
-                    results: domains.map(domain => ({ domain, ok: false, error })),
-                    cancelled: false
+                    value: '',
+                    validCount: 0,
+                    invalidCount: 1,
+                    issues: ['Maintainerr mappings exceed the 64 KiB limit.']
                 };
             }
+            const kept = [];
+            const seenSources = Object.create(null);
+            let nonEmptyRows = 0;
+            let droppedRows = false;
+            value.split(/\r\n?|\n/).forEach(function (line, idx) {
+                if (!line.trim()) {
+                    return;
+                }
+                nonEmptyRows++;
+                if (nonEmptyRows > JC_MAINTAINERR_MAX_MAPPING_ROWS) {
+                    droppedRows = true;
+                    invalidCount++;
+                    return;
+                }
+                const label = 'Maintainerr line ' + (idx + 1);
+                const parts = line.split('|');
+                if (parts.length !== 2) {
+                    invalidCount++;
+                    issues.push(label + ': use exactly one pipe between two URLs.');
+                    return;
+                }
+                const source = jcNormalizeMaintainerrBaseUrl(parts[0]);
+                const target = jcNormalizeMaintainerrBaseUrl(parts[1]);
+                if (!source || !target) {
+                    invalidCount++;
+                    issues.push(label + ': both sides must be bounded HTTP(S) base URLs without credentials, query, fragment, or traversal.');
+                    return;
+                }
+                if (source.toLowerCase() === target.toLowerCase()) {
+                    invalidCount++;
+                    issues.push(label + ': the Jellyfin and Maintainerr URLs must be different.');
+                    return;
+                }
+                const sourceKey = source.toLowerCase();
+                if (seenSources[sourceKey]) {
+                    invalidCount++;
+                    issues.push(label + ': the Jellyfin source URL is duplicated.');
+                    return;
+                }
+                seenSources[sourceKey] = true;
+                kept.push(source + '|' + target);
+                validCount++;
+            });
+            if (droppedRows) {
+                issues.push('Maintainerr mappings are limited to 32 nonempty rows; extra rows were dropped.');
+            }
+            const joined = kept.join('\n');
+            if (joined.length > JC_MAINTAINERR_MAX_MAPPINGS_LENGTH) {
+                return {
+                    value: '',
+                    validCount: 0,
+                    invalidCount: invalidCount + validCount,
+                    issues: issues.concat(['Normalized Maintainerr mappings exceed the 64 KiB limit.'])
+                };
+            }
+            return { value: joined, validCount: validCount, invalidCount: invalidCount, issues: issues };
         }
 
-        function jcSummarizeSeerrScanDispatch(dispatch) {
-            const total = dispatch.domains.length;
-            const succeeded = dispatch.results.filter(result => result.ok).length;
-            const failed = total - succeeded;
-            return {
-                total,
-                succeeded,
-                failed,
-                outcome: failed === 0 ? 'success' : (succeeded > 0 ? 'partial' : 'failure')
-            };
+        function renderMappingValidationResult(resultDiv, issues, goodCount) {
+            if (!resultDiv) {
+                return;
+            }
+            resultDiv.style.display = 'block';
+            resultDiv.style.padding = '0.6em 0.8em';
+            resultDiv.style.borderRadius = '4px';
+            resultDiv.style.marginTop = '0.5em';
+            if (!issues.length) {
+                resultDiv.style.background = 'rgba(40, 167, 69, 0.15)';
+                resultDiv.style.border = '1px solid var(--jc-success)';
+                resultDiv.innerHTML = '<span class="material-icons" style="vertical-align: middle; color: var(--jc-success);">check_circle</span> '
+                    + goodCount + ' mapping(s) verified.';
+                return;
+            }
+            resultDiv.style.background = 'rgba(220, 53, 69, 0.15)';
+            resultDiv.style.border = '1px solid var(--jc-danger)';
+            let html = issues.map(function (issue) {
+                return '<div>' + escapeHtml(issue) + '</div>';
+            }).join('');
+            if (goodCount > 0) {
+                html += '<div>' + goodCount + ' other mapping(s) verified.</div>';
+            }
+            resultDiv.innerHTML = html;
         }
-        /* jc-seerr-scan-helpers:end */
+
+        async function validateMappingSet(mappingDefs, btnId, resultDivId) {
+            const btn = document.querySelector('#' + btnId);
+            const resultDiv = document.querySelector('#' + resultDivId);
+            function setBtnLabel(text) {
+                if (!btn) {
+                    return;
+                }
+                const span = btn.querySelector('span');
+                if (span) {
+                    span.textContent = text;
+                } else {
+                    btn.textContent = text;
+                }
+            }
+            setBtnLabel('Validating...');
+            if (btn) {
+                btn.disabled = true;
+            }
+            try {
+                const issues = [];
+                const pairs = [];
+                // Phase 1: format check per line.
+                mappingDefs.forEach(function (def) {
+                    const el = document.querySelector('#' + def.id);
+                    const lines = ((el && el.value) || '').split('\n');
+                    lines.forEach(function (line, i) {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                            return;
+                        }
+                        const label = def.service + ' line ' + (i + 1);
+                        const parts = trimmed.split('|');
+                        if (parts.length !== 2) {
+                            issues.push(label + ': Invalid format. Use jellyfin_url|' + def.service.toLowerCase() + '_url separated by a pipe (|).');
+                            return;
+                        }
+                        const left = parts[0].trim();
+                        const right = parts[1].trim();
+                        if (!left || !right) {
+                            issues.push(label + ': Both sides of the pipe must have a URL.');
+                            return;
+                        }
+                        if (!/^https?:\/\//i.test(left)) {
+                            issues.push(label + ': Left side (' + left + ') should start with http:// or https://.');
+                            return;
+                        }
+                        if (!/^https?:\/\//i.test(right)) {
+                            issues.push(label + ': Right side (' + right + ') should start with http:// or https://.');
+                            return;
+                        }
+                        pairs.push({ label: label, left: left, right: right, service: def.service });
+                    });
+                });
+                if (issues.length) {
+                    renderMappingValidationResult(resultDiv, issues, 0);
+                    return;
+                }
+                if (!pairs.length) {
+                    if (resultDiv) {
+                        resultDiv.style.display = 'none';
+                    }
+                    return;
+                }
+                // Phase 2: URL sanity per pair.
+                let good = 0;
+                pairs.forEach(function (pair) {
+                    let leftUrl = null;
+                    let rightUrl = null;
+                    try {
+                        leftUrl = new URL(pair.left);
+                    } catch (e) {
+                        leftUrl = null;
+                    }
+                    if (!leftUrl || !leftUrl.host) {
+                        issues.push(pair.label + ': Left side (' + pair.left + ') is not a valid URL.');
+                        return;
+                    }
+                    try {
+                        rightUrl = new URL(pair.right);
+                    } catch (e) {
+                        rightUrl = null;
+                    }
+                    if (!rightUrl || !rightUrl.host) {
+                        issues.push(pair.label + ': Right side (' + pair.right + ') is not a valid URL.');
+                        return;
+                    }
+                    const leftNorm = pair.left.replace(/\/+$/, '').toLowerCase();
+                    const rightNorm = pair.right.replace(/\/+$/, '').toLowerCase();
+                    if (leftNorm === rightNorm) {
+                        issues.push(pair.label + ': Both sides are the same URL. Left should be Jellyfin, right should be ' + pair.service + '.');
+                        return;
+                    }
+                    good++;
+                });
+                renderMappingValidationResult(resultDiv, issues, good);
+            } finally {
+                setBtnLabel('Validate Mappings');
+                if (btn) {
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        function jcRunMappingValidation(mappingDefs, btnId, resultDivId) {
+            return validateMappingSet(mappingDefs, btnId, resultDivId).catch(function (e) {
+                console.warn('[JC] Mapping validation crashed:', e);
+                const btn = document.querySelector('#' + btnId);
+                if (btn) {
+                    btn.disabled = false;
+                    const span = btn.querySelector('span');
+                    if (span) {
+                        span.textContent = 'Validate Mappings';
+                    } else {
+                        btn.textContent = 'Validate Mappings';
+                    }
+                }
+                try {
+                    Dashboard.alert({
+                        title: 'Validation error',
+                        message: 'Mapping validation crashed unexpectedly — check the browser console for details.'
+                    });
+                } catch (alertError) {
+                    window.alert('Mapping validation crashed unexpectedly — check the browser console for details.');
+                }
+            });
+        }
+
+        function _jeValidateInstanceMappings(type, btnId, resultDivId, displayName) {
+            document.querySelectorAll('textarea[data-arr-validate-temp-' + type + '="true"]').forEach(function (orphan) {
+                orphan.remove();
+            });
+            const defs = [];
+            const temps = [];
+            document.querySelectorAll('#' + type + 'InstancesList .arr-instance-card').forEach(function (card, idx) {
+                const mappingsEl = card.querySelector('.arr-instance-urlmappings');
+                const value = (mappingsEl && mappingsEl.value) || '';
+                if (!value.trim()) {
+                    return;
+                }
+                const nameInput = card.querySelector('.arr-instance-name');
+                const name = ((nameInput && nameInput.value) || '').trim() || (displayName + ' ' + (idx + 1));
+                const temp = document.createElement('textarea');
+                temp.id = 'arr-validate-' + type + '-' + idx;
+                temp.value = value;
+                temp.hidden = true;
+                temp.setAttribute('data-arr-validate-temp-' + type, 'true');
+                document.body.appendChild(temp);
+                temps.push(temp);
+                defs.push({ id: temp.id, service: name });
+            });
+            if (!defs.length) {
+                Dashboard.alert({
+                    title: 'No Mappings',
+                    message: 'No URL mappings configured for ' + displayName + '. Expand an instance card and fill in the URL Mappings field to validate.'
+                });
+                return;
+            }
+            jcRunMappingValidation(defs, btnId, resultDivId).finally(function () {
+                temps.forEach(function (temp) {
+                    temp.remove();
+                });
+            });
+        }
+
+        function validateMaintainerrMappingSet(textareaId, btn, resultDivId) {
+            // Synchronous; uses the strict bounded parser, which never echoes URL values.
+            const input = document.querySelector('#' + textareaId);
+            const resultDiv = document.querySelector('#' + resultDivId);
+            if (!input || !resultDiv) {
+                return;
+            }
+            const result = jcValidateMaintainerrMappings(input.value);
+            renderMappingValidationResult(resultDiv, result.issues, result.validCount);
+        }
+
+        // ---------------------------------------------------------------------------
+        // B5. Seerr recently-added scan trigger
+        // ---------------------------------------------------------------------------
 
         let activeSeerrScanController = null;
 
+        /* jc-seerr-scan-helpers:start */
+        function jcNormalizeSeerrIdentityDomain(value) {
+            // Mirror of server SeerrUrlIdentity.ParseConfigured normalization. Pure:
+            // only the URL global and its argument (contract-tested by extraction).
+            const trimmed = String(value || '').trim().replace(/\/+$/, '');
+            if (!trimmed) {
+                return '';
+            }
+            if (!/^https?:\/\//i.test(trimmed)) {
+                return trimmed;
+            }
+            let parsed;
+            try {
+                parsed = new URL(trimmed);
+            } catch (e) {
+                return trimmed;
+            }
+            if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+                || !parsed.hostname
+                || parsed.username
+                || parsed.password
+                || parsed.search
+                || parsed.hash) {
+                return trimmed;
+            }
+            // URL canonicalizes scheme/host case and drops default ports. Strip one
+            // DNS absolute-name trailing dot, but never repair '..' or a root-only
+            // host into a different authority.
+            let host = parsed.hostname;
+            if (host.length > 1 && host.charAt(host.length - 1) === '.' && host.charAt(host.length - 2) !== '.') {
+                host = host.slice(0, -1);
+            }
+            const port = parsed.port ? ':' + parsed.port : '';
+            const path = parsed.pathname.replace(/\/+$/, '');
+            return parsed.protocol + '//' + host + port + path;
+        }
+
+        function jcParseSeerrIdentityDomains(raw) {
+            const seen = Object.create(null);
+            const domains = [];
+            String(raw || '').split(/[\r\n,]+/).forEach(function (part) {
+                const domain = jcNormalizeSeerrIdentityDomain(part);
+                if (!domain || seen[domain]) {
+                    return;
+                }
+                seen[domain] = true;
+                domains.push(domain);
+            });
+            return domains;
+        }
+
+        async function jcDispatchSeerrScanDomains(rawInput, sender, signal) {
+            // Parses + dedupes the raw multi-URL input, hands the WHOLE batch to the
+            // injected sender exactly once, and maps the authoritative response rows
+            // back onto the requested domains by normalized-domain equality. Pure of
+            // DOM/network: the sender owns transport (and cancellation side effects).
+            const domains = jcParseSeerrIdentityDomains(rawInput);
+            const results = domains.map(function (domain) {
+                return { domain: domain, ok: false, error: '' };
+            });
+            let response = null;
+            try {
+                response = await sender(domains);
+            } catch (e) {
+                response = { ok: false, message: String((e && e.message) || e || '') };
+            }
+            const topOk = !!(response && response.ok);
+            const topMessage = response && response.message ? String(response.message) : '';
+            const rows = response && Array.isArray(response.results) ? response.results : [];
+            results.forEach(function (entry) {
+                const row = rows.find(function (r) {
+                    return r && jcNormalizeSeerrIdentityDomain(r.url || r.domain || '') === entry.domain;
+                });
+                if (row) {
+                    entry.ok = !!row.ok;
+                    entry.error = row.ok ? '' : (row.message ? String(row.message) : '');
+                } else {
+                    entry.ok = topOk;
+                    entry.error = topOk ? '' : topMessage;
+                }
+            });
+            return {
+                domains: domains,
+                results: results,
+                cancelled: !!(signal && signal.aborted)
+            };
+        }
+
+        function jcSummarizeSeerrScanDispatch(result) {
+            const rows = (result && result.results) || [];
+            const total = rows.length;
+            let succeeded = 0;
+            rows.forEach(function (entry) {
+                if (entry.ok) {
+                    succeeded++;
+                }
+            });
+            const failed = total - succeeded;
+            const outcome = failed === 0 ? 'success' : (succeeded > 0 ? 'partial' : 'failure');
+            return { outcome: outcome, total: total, succeeded: succeeded, failed: failed };
+        }
+        /* jc-seerr-scan-helpers:end */
+
         function cancelActiveSeerrScan() {
             if (activeSeerrScanController) {
-                activeSeerrScanController.abort();
+                try {
+                    activeSeerrScanController.abort();
+                } catch (e) {
+                    // Already aborted; nothing to do.
+                }
                 activeSeerrScanController = null;
             }
         }
 
-        // Jellyfin dashboard builds have used both lifecycle event names. The
-        // dispatch helper also checks the signal between domains, so leaving the
-        // page cannot start another POST after the current request settles.
-        page.addEventListener('pagehide', cancelActiveSeerrScan);
-        page.addEventListener('viewhide', cancelActiveSeerrScan);
-        page.addEventListener('pagehide', function() {
-            cancelActiveMaintainerrTest(true);
-        });
-        page.addEventListener('viewhide', function() {
-            cancelActiveMaintainerrTest(true);
-        });
-
         async function triggerSeerrScanNow() {
-            const rawUrls = document.querySelector('#seerrUrls').value || '';
+            const urlsInput = document.querySelector('#seerrUrls');
+            const keyInput = document.querySelector('#SeerrApiKey');
+            const rawUrls = (urlsInput && urlsInput.value) || '';
             const domains = jcParseSeerrIdentityDomains(rawUrls);
-            const apiKey = (document.querySelector('#SeerrApiKey').value || '').trim();
-            const btn = document.querySelector('#triggerSeerrScanNowBtn');
-            const status = document.querySelector('#triggerSeerrScanNowStatus');
-
+            const apiKey = ((keyInput && keyInput.value) || '').trim();
             if (!domains.length || !apiKey) {
-                Dashboard.alert({ title: 'Missing Information', message: 'Please provide at least one Seerr URL and an API key in the Setup section above.' });
+                Dashboard.alert({
+                    title: 'Missing Information',
+                    message: 'Please provide at least one Seerr URL and an API key in the Setup section above.'
+                });
                 return;
             }
-
             cancelActiveSeerrScan();
             const controller = new AbortController();
             activeSeerrScanController = controller;
-            btn.disabled = true;
-            status.textContent = 'sync';
-            status.className = 'material-icons status-check';
-            status.style.color = '#00a4dc';
-
+            const btn = document.querySelector('#triggerSeerrScanNowBtn');
+            const statusEl = document.querySelector('#triggerSeerrScanNowStatus');
+            if (btn) {
+                btn.disabled = true;
+            }
+            if (statusEl) {
+                statusEl.textContent = 'sync';
+                statusEl.className = 'material-icons status-check';
+                statusEl.style.color = 'var(--jc-accent)';
+            }
             try {
-                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, async (domains, signal) => {
-                    const triggerUrl = ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { urls: domains.join('\n') });
+                const dispatch = await jcDispatchSeerrScanDomains(rawUrls, function (batch) {
                     return ApiClient.ajax({
                         type: 'POST',
-                        url: triggerUrl,
+                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/trigger-recently-added-scan', { urls: batch.join('\n') }),
                         dataType: 'json',
                         headers: { 'X-Arr-ApiKey': apiKey },
-                        signal
+                        signal: controller.signal
+                    }).catch(function (e) {
+                        if (controller.signal.aborted) {
+                            return { ok: false, message: '' };
+                        }
+                        return { ok: false, message: connectionErrorMessage(e, 'Seerr', batch[0] || '') };
                     });
                 }, controller.signal);
-
-                if (dispatch.cancelled || controller.signal.aborted) {
+                if (dispatch.cancelled) {
                     return;
                 }
-
-                const summary = jcSummarizeSeerrScanDispatch(dispatch);
-                const { succeeded, failed, total } = summary;
-                dispatch.results.filter(result => !result.ok).forEach(result => {
-                    console.error('Seerr scan trigger failed for ' + result.domain + ':', result.error || 'Upstream rejected the trigger');
+                dispatch.results.forEach(function (entry) {
+                    if (!entry.ok) {
+                        console.error('Seerr scan trigger failed for ' + entry.domain + ':', entry.error || 'Upstream rejected the trigger');
+                    }
                 });
-
+                const summary = jcSummarizeSeerrScanDispatch(dispatch);
                 if (summary.outcome === 'success') {
-                    status.textContent = 'check_circle';
-                    status.style.color = '#52b54b';
-                    Dashboard.alert({
+                    if (statusEl) {
+                        statusEl.textContent = 'check_circle';
+                        statusEl.style.color = 'var(--jc-success)';
+                    }
+                    jcTestAlert({
                         title: 'Scans Triggered',
-                        message: `Triggered "Jellyfin Recently Added Scan" for all ${total} Seerr identity domain${total === 1 ? '' : 's'}.`
+                        message: 'Triggered "Jellyfin Recently Added Scan" for all ' + summary.total
+                            + ' Seerr identity domain' + (summary.total === 1 ? '' : 's') + '.'
                     });
                 } else if (summary.outcome === 'partial') {
-                    status.textContent = 'warning';
-                    status.style.color = '#ffb300';
-                    Dashboard.alert({
+                    if (statusEl) {
+                        statusEl.textContent = 'warning';
+                        statusEl.style.color = 'var(--jc-warning)';
+                    }
+                    jcTestAlert({
                         title: 'Scans Partially Triggered',
-                        message: `Triggered ${succeeded} of ${total} Seerr identity domains; ${failed} failed. Each URL was attempted once. Check the browser console and server log for failure details.`
+                        message: 'Triggered ' + summary.succeeded + ' of ' + summary.total
+                            + ' Seerr identity domains; ' + summary.failed
+                            + ' failed. Each URL was attempted once. Check the browser console and server log for failure details.'
                     });
                 } else {
-                    status.textContent = 'error';
-                    status.style.color = '#dc3545';
-                    Dashboard.alert({
+                    if (statusEl) {
+                        statusEl.textContent = 'error';
+                        statusEl.style.color = 'var(--jc-danger)';
+                    }
+                    jcTestAlert({
                         title: 'Trigger Failed',
-                        message: `None of the ${total} Seerr identity domain${total === 1 ? '' : 's'} accepted the scan trigger. Check the browser console and server log for failure details.`
+                        message: 'None of the ' + summary.total + ' Seerr identity domain'
+                            + (summary.total === 1 ? '' : 's')
+                            + ' accepted the scan trigger. Check the browser console and server log for failure details.'
                     });
                 }
             } finally {
                 if (activeSeerrScanController === controller) {
                     activeSeerrScanController = null;
                 }
-                if (!activeSeerrScanController) {
+                if (btn) {
                     btn.disabled = false;
-                    status.classList.remove('status-check');
+                }
+                if (statusEl) {
+                    statusEl.classList.remove('status-check');
                     if (controller.signal.aborted) {
-                        status.textContent = '';
-                        status.style.color = '';
+                        statusEl.textContent = '';
                     }
                 }
             }
         }
 
-        document.querySelector('#triggerSeerrScanNowBtn').addEventListener('click', triggerSeerrScanNow);
+        // ---------------------------------------------------------------------------
+        // C. Sonarr/Radarr multi-instance cards
+        // ---------------------------------------------------------------------------
 
-        /**
-         * Quick Action: re-test every external-service connection by proxying
-         * clicks to the existing per-service test buttons. Preserves the per-
-         * button UX (spinners, toasts, status-card updates) without duplicating
-         * logic. Does NOT fabricate a cache — Phase 4 layers a real test cache
-         * on top.
-         *
-         * Services invoked:
-         *   - TMDB: one `.testTmdbBtn` click (multiple copies exist across tabs
-         *     but any one test updates the shared status card)
-         *   - Seerr: `#testSeerrBtn` when Seerr is enabled + URL + key set
-         *   - Maintainerr: `#testMaintainerrBtn` when enabled + URL set
-         *   - Sonarr / Radarr: every `.arr-instance-test` inside the instance
-         *     lists that has a URL + API key populated
-         *
-         * Skipping an unconfigured service is intentional — clicking a test
-         * button with empty fields would pop a Dashboard.alert per service,
-         * which is noisy for a "one-shot retest" action.
-         */
-        // Client-side throttle + in-flight lock for the Re-test-all batch.
-        // The button is disabled for the full cooldown window so rapid
-        // clicks can't fire ~8 parallel external-API tests per click. This
-        // is NOT a security boundary — a determined user could still spam
-        // via devtools — it's a guardrail against well-intentioned double-
-        // clicks and page-reload retries.
-        // Minimum time the Re-test-all button stays disabled even if every
-        // test finishes instantly. Acts as the rate-limit floor so rapid
-        // re-clicks can't fire dozens of external API tests per second.
-        var RETEST_ALL_MIN_COOLDOWN_MS = 4 * 1000;
-        // Hard upper bound for the polling loop. If a test still hasn't
-        // resolved after this long, we force-release anyway so the UI
-        // doesn't sit "Retesting…" forever on a hung connection.
-        var RETEST_ALL_MAX_WAIT_MS = 25 * 1000;
-        var _jeRetestAllCooldownUntil = 0;
-        var _jeRetestAllReenableTimer = null;
-        var _jeRetestAllPollTimer = null;
+        let _arrParseOK = { sonarr: true, radarr: true };
 
-        function _setRetestAllButtonLabel(btn, text) {
-            if (!btn) return;
-            var labelEl = btn.querySelector('.jc-quick-action-title');
-            if (labelEl) labelEl.textContent = text;
+        function normalizeArrInstanceId(value) {
+            // Instance ids are opaque 128-bit hex tokens. Never derive one in the browser
+            // from URL/API-key material — credentials must not become client-visible identity.
+            const id = String(value || '').toLowerCase();
+            return /^[0-9a-f]{32}$/.test(id) ? id : '';
         }
 
-        var retestAllConnectionsBtn = document.getElementById('retestAllConnectionsBtn');
-        if (retestAllConnectionsBtn) {
-            var _retestAllOriginalLabel = retestAllConnectionsBtn.querySelector('.jc-quick-action-title');
-            _retestAllOriginalLabel = _retestAllOriginalLabel ? _retestAllOriginalLabel.textContent : 'Re-test all service connections';
-
-            retestAllConnectionsBtn.addEventListener('click', function() {
-                // Throttle: block rapid re-clicks within the cooldown window.
-                var now = Date.now();
-                if (now < _jeRetestAllCooldownUntil) {
-                    var remainSec = Math.ceil((_jeRetestAllCooldownUntil - now) / 1000);
-                    try {
-                        Dashboard.alert({
-                            title: 'Please wait',
-                            message: 'Re-test is rate-limited. Try again in ' + remainSec + ' s.'
-                        });
-                    } catch (e) { /* ignore */ }
-                    return;
-                }
-
-                // Invalidate the cache up front so every checklist row flips
-                // to "pending" immediately; the individual test handlers will
-                // repopulate it as they finish.
-                cancelActiveMaintainerrTest(true);
-                try { clearConnectionTestCache(); } catch (e) { /* renderChecklist logs */ }
-
-                // Suppress per-test Dashboard.alert dialogs for the duration
-                // of this batch — per-service indicators + the Integration
-                // Health rows already communicate results.
-                _jeSuppressTestAlerts = true;
-                _jeRetestAllCooldownUntil = now + RETEST_ALL_MIN_COOLDOWN_MS;
-                retestAllConnectionsBtn.disabled = true;
-                _setRetestAllButtonLabel(retestAllConnectionsBtn, 'Retesting…');
-
-                var tested = 0;
-
-                // TMDB — one click is enough; pages share the same backing key
-                var tmdbBtn = document.querySelector('.testTmdbBtn');
-                if (tmdbBtn && !tmdbBtn.disabled) { tmdbBtn.click(); tested++; }
-
-                // Seerr — only if enabled with a URL + key (otherwise button
-                // would show a "missing info" toast, which is noisy for a
-                // batch re-test action).
-                var seerrEnabled = document.querySelector('#seerrEnabled');
-                var seerrUrls = document.querySelector('#seerrUrls');
-                var seerrKey = document.querySelector('#SeerrApiKey');
-                if (seerrEnabled && seerrEnabled.checked
-                    && seerrUrls && seerrUrls.value.trim()
-                    && seerrKey && seerrKey.value.trim()
-                    && testSeerrBtn && !testSeerrBtn.disabled) {
-                    testSeerrBtn.click();
-                    tested++;
-                }
-
-                // Maintainerr — URL-only by design; Maintainerr 3.18 has no API key.
-                var maintainerrEnabled = document.querySelector('#maintainerrEnabled');
-                var maintainerrUrl = document.querySelector('#maintainerrUrl');
-                if (maintainerrEnabled && maintainerrEnabled.checked
-                    && maintainerrUrl && jcNormalizeMaintainerrBaseUrl(maintainerrUrl.value)
-                    && testMaintainerrBtn && !testMaintainerrBtn.disabled) {
-                    testMaintainerrBtn.click();
-                    tested++;
-                }
-
-                // Sonarr / Radarr — per-instance tests. The per-instance test
-                // function itself guards against empty URL/API-key, so we
-                // don't need to re-check here; we just skip already-disabled
-                // buttons (mid-flight tests).
-                var arrBtns = document.querySelectorAll('.arr-instance-test');
-                arrBtns.forEach(function(btn) {
-                    var card = btn.closest('.arr-instance-card');
-                    if (!card) return;
-                    var urlEl = card.querySelector('.arr-instance-url');
-                    var keyEl = card.querySelector('.arr-instance-apikey');
-                    if (!urlEl || !keyEl) return;
-                    if (!urlEl.value.trim() || !keyEl.value.trim()) return;
-                    if (btn.disabled) return;
-                    btn.click();
-                    tested++;
-                });
-
-                // Always refresh the dashboard dots so the user sees feedback
-                // even when no service was re-tested.
-                try { updateStatusDashboard(); } catch (e) { /* logged inside */ }
-
-                if (tested === 0) {
-                    _jeSuppressTestAlerts = false;
-                    retestAllConnectionsBtn.disabled = false;
-                    _setRetestAllButtonLabel(retestAllConnectionsBtn, _retestAllOriginalLabel);
-                    _jeRetestAllCooldownUntil = 0; // reset cooldown — nothing fired
-                    try {
-                        Dashboard.alert({
-                            title: 'Nothing to re-test',
-                            message: 'Enable and configure at least one service (TMDB, Seerr, Maintainerr, Sonarr, or Radarr) before running a re-test.'
-                        });
-                    } catch (e) { /* ignore */ }
-                    return;
-                }
-
-                // The individual test functions don't return promises
-                // (they're event handlers fired via .click()), so we poll
-                // the DOM for the "in-flight" signal each test sets on
-                // start: the `.status-check` class on its status indicator.
-                // When no indicators still carry that class, every test
-                // has resolved — release the button immediately. Falls
-                // back to a hard max-wait so a hung request doesn't leave
-                // the button stuck on "Retesting…".
-                clearTimeout(_jeRetestAllReenableTimer);
-                clearInterval(_jeRetestAllPollTimer);
-                var batchStartedAt = Date.now();
-                function releaseRetestBatch() {
-                    clearInterval(_jeRetestAllPollTimer);
-                    clearTimeout(_jeRetestAllReenableTimer);
-                    _jeSuppressTestAlerts = false;
-                    retestAllConnectionsBtn.disabled = false;
-                    _setRetestAllButtonLabel(retestAllConnectionsBtn, _retestAllOriginalLabel);
-                    try { renderChecklist(); } catch (e) { /* logged */ }
-                }
-                _jeRetestAllPollTimer = setInterval(function() {
-                    var elapsed = Date.now() - batchStartedAt;
-                    // `.status-check` is applied on test START and removed on
-                    // test RESOLVE (success or failure), so it's an accurate
-                    // "in-flight" signal for the three test functions.
-                    var inFlight = document.querySelectorAll('.status-check').length;
-                    // Release when BOTH:
-                    //  - no tests still in flight (UI has caught up), and
-                    //  - the min-cooldown floor has elapsed (rate limit).
-                    // The floor ensures a user who hits retest-all with zero
-                    // real tests configured still has the button disabled long
-                    // enough to prevent double-run, and covers the first-tick
-                    // race where indicators haven't swapped to 'sync' yet.
-                    if (inFlight === 0 && elapsed >= RETEST_ALL_MIN_COOLDOWN_MS) {
-                        releaseRetestBatch();
-                    } else if (elapsed >= RETEST_ALL_MAX_WAIT_MS) {
-                        console.warn('[JC] retest-all: giving up on ' + inFlight + ' in-flight test(s) after ' + elapsed + 'ms');
-                        releaseRetestBatch();
-                    }
-                }, 300);
-                // Hard-stop safety net in case setInterval is suspended
-                // (backgrounded tab, browser throttling, etc.).
-                _jeRetestAllReenableTimer = setTimeout(releaseRetestBatch, RETEST_ALL_MAX_WAIT_MS + 500);
-            });
-        }
-
-        /**
-         * Quick Action: proxy the "Clear client tag caches" button from the
-         * Display tab. Keeps the canonical clear-flow in one place while
-         * giving the action a home on Overview.
-         */
-        var clearTagCachesQuickBtn = document.getElementById('clearTagCachesQuickBtn');
-        if (clearTagCachesQuickBtn && clearTagsCacheBtn) {
-            clearTagCachesQuickBtn.addEventListener('click', function() {
-                clearTagsCacheBtn.click();
-            });
-        }
-
-        /**
-         * Syncs the "Clear all client tag caches" quick-action button visibility
-         * with the server-mode toggle — it's only relevant when server-side cache
-         * is disabled.
-         */
-        function updateClearTagCachesQuickBtnVisibility() {
-            var serverModeCheckbox = document.getElementById('tagCacheServerMode');
-            if (!clearTagCachesQuickBtn || !serverModeCheckbox) return;
-            clearTagCachesQuickBtn.style.display = serverModeCheckbox.checked ? 'none' : '';
-        }
-
-        /**
-         * Updates the blocked users count badge in the collapsible summary.
-         */
-        function updateBlockedUsersCount() {
-            const total = document.querySelectorAll('.blockedUserCheckbox:checked').length;
-            const countEl = document.getElementById('blockedUsersCount');
-            if (countEl) {
-                countEl.textContent = total > 0 ? '(' + total + ' blocked)' : '(none)';
-            }
-        }
-
-        /**
-         * Loads all Jellyfin users and renders a checkbox list for the blocklist.
-         * Pre-checks users whose IDs appear in the saved blocklist config.
-         * @param {string} blockedIdsString - Comma-separated dashless user IDs to pre-select.
-         */
-        // Tracks whether the most recent loadBlockedUsersList successfully rendered
-        // checkboxes. If /Users API fails, syncBlockedUsersToHiddenInput must not
-        // run — otherwise it would wipe the entire blocklist on save.
-        let _blockedUsersLoaded = false;
-
-        async function loadBlockedUsersList(blockedIdsString) {
-            const container = document.getElementById('blockedUsersContainer');
-            const blockedSet = new Set(
-                (blockedIdsString || '').split(/[,\r\n]+/).map(id => id.trim().replace(/-/g, '').toLowerCase()).filter(Boolean)
-            );
-
-            _blockedUsersLoaded = false;
+        function createArrInstanceId() {
             try {
-                const users = await ApiClient.getUsers();
-                container.textContent = '';
-                users.sort((a, b) => a.Name.localeCompare(b.Name));
-                users.forEach(user => {
-                    const normalizedId = user.Id.replace(/-/g, '').toLowerCase();
-                    const div = document.createElement('div');
-                    div.className = 'checkboxContainer';
-                    div.style.marginBottom = '0.3em';
-
-                    const label = document.createElement('label');
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.setAttribute('is', 'emby-checkbox');
-                    checkbox.className = 'blockedUserCheckbox';
-                    checkbox.dataset.userid = normalizedId;
-                    checkbox.checked = blockedSet.has(normalizedId);
-                    checkbox.addEventListener('change', updateBlockedUsersCount);
-
-                    const span = document.createElement('span');
-                    span.textContent = user.Name;
-
-                    label.appendChild(checkbox);
-                    label.appendChild(span);
-                    div.appendChild(label);
-                    container.appendChild(div);
-                });
-                updateBlockedUsersCount();
-                _blockedUsersLoaded = true;
-
-                // Show scroll hint if content overflows, hide it once user scrolls to bottom
-                const scrollHint = document.getElementById('blockedUsersScrollHint');
-                if (scrollHint) {
-                    const updateHint = () => {
-                        const atBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 4;
-                        scrollHint.style.display = (container.scrollHeight > container.clientHeight && !atBottom) ? 'block' : 'none';
-                    };
-                    // Check after render
-                    requestAnimationFrame(updateHint);
-                    container.addEventListener('scroll', updateHint);
+                const bytes = new Uint8Array(16);
+                window.crypto.getRandomValues(bytes);
+                let id = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    id += bytes[i].toString(16).padStart(2, '0');
                 }
+                return id;
             } catch (e) {
-                container.textContent = 'Could not load users.';
-                console.error('Failed to load users for blocklist:', e);
-                _blockedUsersLoaded = false;
+                // Safe: the server save hook fills blanks.
+                return '';
             }
         }
 
-        /**
-         * Syncs checked blocked-user checkboxes into the hidden input for config save.
-         * Skipped if loadBlockedUsersList failed — otherwise we'd wipe the whole
-         * blocklist on save.
-         */
-        function syncBlockedUsersToHiddenInput() {
-            if (!_blockedUsersLoaded) {
-                console.warn('Jellyfin Canopy: skipping blocklist sync — user list failed to load. Existing config preserved.');
-                return;
+        function tryParseInstanceList(raw, type, container) {
+            // Runs in a bare context in tests: reference only _arrParseOK, console and
+            // insertCorruptBanner here. Never log the raw payload or key material.
+            if (!raw) {
+                return [];
             }
-            const checkboxes = document.querySelectorAll('.blockedUserCheckbox:checked');
-            const ids = Array.from(checkboxes).map(cb => cb.dataset.userid);
-            document.querySelector('#seerrImportBlockedUsers').value = ids.join(',');
-        }
-
-        document.getElementById('btnImportSeerrUsers').addEventListener('click', async () => {
-            const btn = document.getElementById('btnImportSeerrUsers');
-            const resultDiv = document.getElementById('importUsersResult');
-            btn.disabled = true;
-            btn.textContent = 'Saving config...';
-            resultDiv.style.display = 'none';
-
             try {
-                // Save config first so the server uses the current blocklist
-                await saveConfig(new Event('submit'));
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    throw new Error('Instances value is not an array');
+                }
+                return parsed;
             } catch (e) {
-                resultDiv.style.display = 'block';
-                resultDiv.textContent = 'Could not save config. Import was not attempted.';
-                resultDiv.style.color = '#f44336';
-                console.error('Config save failed before import:', e);
-                btn.disabled = false;
-                btn.textContent = 'Import Users Now';
-                return;
+                _arrParseOK[type] = false;
+                const errorClass = e instanceof SyntaxError ? 'SyntaxError' : 'InvalidShape';
+                console.error('[JC Config] Failed to parse ' + type + 'Instances (' + errorClass + ') — refusing to overwrite on save.');
+                insertCorruptBanner(container, type);
+                return [];
             }
-
-            try {
-                btn.textContent = 'Importing...';
-                const response = await ApiClient.fetch({
-                    url: ApiClient.getUrl('JellyfinCanopy/seerr/import-users'),
-                    type: 'POST',
-                    dataType: 'json'
-                });
-
-                // Handle different response shapes defensively (object, wrapped object, or JSON string)
-                let payload = response;
-                if (typeof payload === 'string') {
-                    try {
-                        payload = JSON.parse(payload);
-                    } catch (_) {
-                        payload = {};
-                    }
-                }
-                if (payload && payload.data && typeof payload.data === 'object') {
-                    payload = payload.data;
-                }
-
-                const usersImported = Number(payload && payload.usersImported);
-                const totalUsers = Number(payload && payload.totalUsers);
-                const importedCount = Number.isFinite(usersImported) ? usersImported : 0;
-                const totalCount = Number.isFinite(totalUsers) ? totalUsers : 0;
-                const errors = Array.isArray(payload && payload.errors) ? payload.errors : [];
-
-                resultDiv.style.display = 'block';
-                // surface backend errors[] so the admin sees WHY
-                // partial imports failed (email collision, 401, etc.) instead
-                // of a flat "Imported 0 new users" with no diagnosis.
-                while (resultDiv.firstChild) resultDiv.removeChild(resultDiv.firstChild);
-                const summary = document.createElement('div');
-                summary.textContent = 'Imported ' + importedCount + ' new user(s) out of ' + totalCount + ' total.';
-                summary.style.color = errors.length > 0 ? '#ff9800' : '#4caf50';
-                resultDiv.appendChild(summary);
-                if (errors.length > 0) {
-                    const list = document.createElement('ul');
-                    list.style.marginTop = '6px';
-                    list.style.color = '#f44336';
-                    list.style.fontSize = '0.9em';
-                    for (const err of errors) {
-                        const li = document.createElement('li');
-                        li.textContent = String(err);
-                        list.appendChild(li);
-                    }
-                    resultDiv.appendChild(list);
-                }
-            } catch (e) {
-                resultDiv.style.display = 'block';
-                while (resultDiv.firstChild) resultDiv.removeChild(resultDiv.firstChild);
-                const msg = document.createElement('div');
-                msg.textContent = 'Import failed. Check Seerr configuration and API key permissions.';
-                msg.style.color = '#f44336';
-                resultDiv.appendChild(msg);
-                // Show response.errors[] when the server returned 502 with structured errors.
-                const detailErrors = e && e.responseJSON && Array.isArray(e.responseJSON.errors) ? e.responseJSON.errors : [];
-                if (detailErrors.length > 0) {
-                    const list = document.createElement('ul');
-                    list.style.marginTop = '6px';
-                    list.style.color = '#f44336';
-                    list.style.fontSize = '0.9em';
-                    for (const err of detailErrors) {
-                        const li = document.createElement('li');
-                        li.textContent = String(err);
-                        list.appendChild(li);
-                    }
-                    resultDiv.appendChild(list);
-                }
-                console.error('User import failed:', e);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Import Users Now';
-            }
-        });
-
-        // Permission Audit — admin scans every Jellyfin user for missing Seerr
-        // permissions required by the features the admin has currently enabled.
-        // GETs /JellyfinCanopy/seerr/permission-audit which returns
-        // [{ jellyfinUsername, linked, issues:[...] }]. We render a summary
-        // line + a table of users with gaps (warnings/unlinked first, then
-        // a collapsed "OK" group). Errors surface inline in the result div
-        // and are also logged to console.error so the admin can debug.
-        (function wirePermissionAudit() {
-            var btn = document.getElementById('btnPermissionAudit');
-            if (!btn) return;
-            // Resilient label setter (mirrors the validate-mapping fix): some
-            // emby-button markup wraps text in a <span>, some places it bare.
-            function setBtnLabel(text) {
-                var span = btn.querySelector('span');
-                if (span) span.textContent = text;
-                else btn.textContent = text;
-            }
-            btn.addEventListener('click', async function() {
-                var resultDiv = document.getElementById('permissionAuditResult');
-                btn.disabled = true;
-                setBtnLabel('Running…');
-                resultDiv.style.display = 'none';
-                resultDiv.innerHTML = '';
-                try {
-                    var data = await ApiClient.ajax({
-                        type: 'GET',
-                        url: ApiClient.getUrl('/JellyfinCanopy/seerr/permission-audit'),
-                        dataType: 'json'
-                    });
-                    var withIssues = data.filter(function(u) { return u.linked && u.issues && u.issues.length > 0; });
-                    var ok         = data.filter(function(u) { return u.linked && (!u.issues || u.issues.length === 0); });
-                    var unlinked   = data.filter(function(u) { return !u.linked; });
-
-                    // Summary panel with a title line and chip-based counts
-                    var summaryEl = document.createElement('div');
-                    summaryEl.className = 'jc-audit-summary';
-                    var summaryTitle = document.createElement('div');
-                    summaryTitle.className = 'jc-audit-summary-title';
-                    if (withIssues.length === 0 && unlinked.length === 0) {
-                        summaryTitle.textContent = '✅ All ' + ok.length + ' linked user(s) have the required permissions.';
-                        summaryEl.appendChild(summaryTitle);
-                    } else {
-                        summaryTitle.textContent = 'Audit complete — review the users below.';
-                        summaryEl.appendChild(summaryTitle);
-                        var chips = document.createElement('div');
-                        chips.className = 'jc-audit-summary-chips';
-                        function chip(kind, icon, count, label) {
-                            if (!count) return;
-                            var c = document.createElement('span');
-                            c.className = 'jc-audit-chip jc-audit-chip-' + kind;
-                            var i = document.createElement('i');
-                            i.className = 'material-icons';
-                            i.setAttribute('aria-hidden', 'true');
-                            i.textContent = icon;
-                            c.appendChild(i);
-                            c.appendChild(document.createTextNode(count + ' ' + label));
-                            chips.appendChild(c);
-                        }
-                        chip('warn',     'warning',        withIssues.length, withIssues.length === 1 ? 'with gaps' : 'with gaps');
-                        chip('unlinked', 'link_off',       unlinked.length,   'not linked');
-                        chip('ok',       'check_circle',   ok.length,         'OK');
-                        summaryEl.appendChild(chips);
-                    }
-                    resultDiv.appendChild(summaryEl);
-
-                    // Build one card per user with issues or unlinked status
-                    if (withIssues.length > 0 || unlinked.length > 0) {
-                        var cards = document.createElement('div');
-                        cards.className = 'jc-audit-cards';
-                        function buildCard(u) {
-                            var card = document.createElement('div');
-                            card.className = 'jc-audit-card ' + (u.linked ? 'jc-audit-card-warn' : 'jc-audit-card-unlinked');
-                            var header = document.createElement('div');
-                            header.className = 'jc-audit-card-header';
-                            var userEl = document.createElement('span');
-                            userEl.className = 'jc-audit-card-user';
-                            var userIcon = document.createElement('i');
-                            userIcon.className = 'material-icons';
-                            userIcon.setAttribute('aria-hidden', 'true');
-                            userIcon.textContent = u.linked ? 'person' : 'person_off';
-                            userEl.appendChild(userIcon);
-                            userEl.appendChild(document.createTextNode(u.jellyfinUsername));
-                            header.appendChild(userEl);
-                            var statusChip = document.createElement('span');
-                            statusChip.className = 'jc-audit-chip ' + (u.linked ? 'jc-audit-chip-warn' : 'jc-audit-chip-unlinked');
-                            var statusIcon = document.createElement('i');
-                            statusIcon.className = 'material-icons';
-                            statusIcon.setAttribute('aria-hidden', 'true');
-                            statusIcon.textContent = u.linked ? 'warning' : 'link_off';
-                            statusChip.appendChild(statusIcon);
-                            statusChip.appendChild(document.createTextNode(u.linked ? 'Permissions Missing' : 'Not linked'));
-                            header.appendChild(statusChip);
-                            card.appendChild(header);
-                            if (u.issues && u.issues.length > 0) {
-                                var ul = document.createElement('ul');
-                                ul.className = 'jc-audit-card-issues';
-                                u.issues.forEach(function(issue) {
-                                    var li = document.createElement('li');
-                                    li.textContent = issue;
-                                    ul.appendChild(li);
-                                });
-                                card.appendChild(ul);
-                            }
-                            return card;
-                        }
-                        withIssues.forEach(function(u) { cards.appendChild(buildCard(u)); });
-                        unlinked.forEach(function(u) { cards.appendChild(buildCard(u)); });
-                        resultDiv.appendChild(cards);
-                    }
-
-                    // Collapsed list of OK users rendered as name pills so many names
-                    // wrap naturally instead of pushing the table layout wide
-                    if (ok.length > 0 && (withIssues.length > 0 || unlinked.length > 0)) {
-                        var details = document.createElement('details');
-                        details.className = 'jc-audit-ok-section';
-                        var summary = document.createElement('summary');
-                        summary.textContent = 'Show ' + ok.length + ' user(s) with no issues';
-                        details.appendChild(summary);
-                        var nameList = document.createElement('ul');
-                        nameList.className = 'jc-audit-ok-names';
-                        ok.forEach(function(u) {
-                            var li = document.createElement('li');
-                            li.textContent = u.jellyfinUsername;
-                            nameList.appendChild(li);
-                        });
-                        details.appendChild(nameList);
-                        resultDiv.appendChild(details);
-                    }
-                    resultDiv.style.display = 'block';
-                } catch (err) {
-                    // Build the error node with createElement + textContent so any
-                    // server-supplied message can't smuggle HTML into the page.
-                    var errEl = document.createElement('div');
-                    errEl.className = 'jc-audit-error';
-                    errEl.textContent = 'Audit failed: ' + ((err && err.message) || 'Check server logs.');
-                    resultDiv.appendChild(errEl);
-                    resultDiv.style.display = 'block';
-                    console.error('[JC] Permission ', err);
-                } finally {
-                    btn.disabled = false;
-                    setBtnLabel('Run Audit');
-                }
-            });
-        })();
-
-        // Shortcuts Panel & Toast timing previews — lets admins see how long
-        // their chosen durations feel without leaving the settings page. Both
-        // previews read the CURRENT (unsaved) input value so you can tweak the
-        // number, click preview, and immediately see the result.
-        //   - Shortcuts panel preview: full-screen overlay with a live countdown
-        //     that self-dismisses at the configured delay (Esc / click-outside /
-        //     Close-now also dismiss).
-        //   - Toast preview: replicates the in-app toast styling at bottom-center
-        //     and fades out at the configured duration.
-        (function wireTimingPreviews() {
-            var panelBtn = document.getElementById('jcTestShortcutsPanel');
-            var toastBtn = document.getElementById('jcTestToast');
-            var panelInput = document.getElementById('HelpPanelAutocloseDelay');
-            var toastInput = document.getElementById('ToastDuration');
-
-            // Clamp to a sane window: at least 200 ms (anything shorter is a flash
-            // that the user can't see), at most 120 s (prevents stuck overlays
-            // from fat-fingered values). Fallback if the field is blank/invalid.
-            function readMs(input, fallback) {
-                var raw = parseInt(input && input.value, 10);
-                if (!Number.isFinite(raw) || raw < 200) return fallback;
-                return Math.min(raw, 120000);
-            }
-
-            function fmtSeconds(ms) {
-                return (ms / 1000).toFixed(1) + 's';
-            }
-
-            // Active-preview cleanup tracking — otherwise repeated clicks leak
-            // setIntervals, setTimeouts, and document-level keydown listeners
-            // because simply removing the prior overlay's DOM node never calls
-            // its enclosing cleanup() closure.
-            var _activePanelPreviewCleanup = null;
-
-            if (panelBtn && panelInput && !panelBtn.dataset.jcWired) {
-                panelBtn.dataset.jcWired = '1';
-                panelBtn.addEventListener('click', function() {
-                    // Dismiss any previous preview FULLY — cleanup clears the
-                    // interval/timeout/keydown handler in addition to removing
-                    // the DOM node.
-                    if (_activePanelPreviewCleanup) _activePanelPreviewCleanup();
-
-                    var ms = readMs(panelInput, 15000);
-                    var overlay = document.createElement('div');
-                    overlay.className = 'jc-preview-panel-overlay';
-
-                    var card = document.createElement('div');
-                    card.className = 'jc-preview-panel-card';
-
-                    var title = document.createElement('div');
-                    title.className = 'jc-preview-panel-title';
-                    title.innerHTML = '<i class="material-icons" aria-hidden="true">keyboard</i>Shortcuts Panel preview';
-                    card.appendChild(title);
-
-                    var body = document.createElement('div');
-                    body.className = 'jc-preview-panel-body';
-                    var countdown = document.createElement('span');
-                    countdown.className = 'jc-preview-panel-countdown';
-                    countdown.textContent = fmtSeconds(ms);
-                    body.appendChild(document.createTextNode('This is how long the real shortcuts/settings panel (opened with the '));
-                    var kbd = document.createElement('kbd');
-                    kbd.textContent = '?';
-                    body.appendChild(kbd);
-                    body.appendChild(document.createTextNode(' key in the main Jellyfin UI) will stay open without interaction. Auto-closes in '));
-                    body.appendChild(countdown);
-                    body.appendChild(document.createTextNode('.'));
-                    card.appendChild(body);
-
-                    var actions = document.createElement('div');
-                    actions.className = 'jc-preview-panel-actions';
-                    var closeBtn = document.createElement('button');
-                    closeBtn.type = 'button';
-                    closeBtn.className = 'emby-button raised raised-mini';
-                    closeBtn.textContent = 'Close now';
-                    actions.appendChild(closeBtn);
-                    card.appendChild(actions);
-
-                    // Minimal dialog-style a11y: screen readers announce as dialog,
-                    // title serves as accessible name, closeBtn gets initial focus.
-                    overlay.setAttribute('role', 'dialog');
-                    overlay.setAttribute('aria-modal', 'true');
-                    title.id = 'jc-preview-panel-title';
-                    overlay.setAttribute('aria-labelledby', 'jc-preview-panel-title');
-                    overlay.appendChild(card);
-                    document.body.appendChild(overlay);
-                    try { closeBtn.focus(); } catch (e) { /* focus may fail in rare host conditions */ }
-
-                    var startTs = Date.now();
-                    var isActive = true;
-                    var intervalId = setInterval(function() {
-                        if (!isActive) return;
-                        var remaining = Math.max(0, ms - (Date.now() - startTs));
-                        countdown.textContent = fmtSeconds(remaining);
-                        if (remaining <= 0) cleanup();
-                    }, 100);
-                    var timeoutId = setTimeout(cleanup, ms);
-
-                    function cleanup() {
-                        if (!isActive) return;
-                        isActive = false;
-                        clearInterval(intervalId);
-                        clearTimeout(timeoutId);
-                        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-                        document.removeEventListener('keydown', onKey);
-                        if (_activePanelPreviewCleanup === cleanup) _activePanelPreviewCleanup = null;
-                    }
-                    function onKey(e) {
-                        if (e.key === 'Escape') {
-                            e.stopPropagation();
-                            cleanup();
-                        }
-                    }
-                    closeBtn.addEventListener('click', cleanup);
-                    overlay.addEventListener('click', function(e) {
-                        if (e.target === overlay) cleanup();
-                    });
-                    document.addEventListener('keydown', onKey);
-                    _activePanelPreviewCleanup = cleanup;
-                });
-            }
-
-            if (toastBtn && toastInput && !toastBtn.dataset.jcWired) {
-                toastBtn.dataset.jcWired = '1';
-                toastBtn.addEventListener('click', function() {
-                    // Clear any prior preview toasts AND their still-pending timers
-                    // (otherwise rapid-fire clicks leave detached toasts with pending
-                    // slide-in/out/remove setTimeouts that would fire against removed
-                    // DOM — harmless but wasteful).
-                    document.querySelectorAll('.jc-preview-toast').forEach(function(el) {
-                        if (el._jeShowTimer)   clearTimeout(el._jeShowTimer);
-                        if (el._jeHideTimer)   clearTimeout(el._jeHideTimer);
-                        if (el._jeRemoveTimer) clearTimeout(el._jeRemoveTimer);
-                        el.remove();
-                    });
-                    var ms = readMs(toastInput, 3000);
-                    var toast = document.createElement('div');
-                    toast.className = 'jc-preview-toast';
-                    toast.setAttribute('role', 'status');
-                    toast.setAttribute('aria-live', 'polite');
-                    toast.textContent = 'Example toast — disappears in ' + fmtSeconds(ms);
-                    document.body.appendChild(toast);
-                    // Mirror real JC.toast(): slide in from the right after a tick,
-                    // stay for `ms`, then slide back out by removing the .jc-shown class.
-                    toast._jeShowTimer = setTimeout(function() { toast.classList.add('jc-shown'); }, 10);
-                    toast._jeHideTimer = setTimeout(function() {
-                        toast.classList.remove('jc-shown');
-                        toast._jeRemoveTimer = setTimeout(function() {
-                            if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
-                        }, 350);
-                    }, ms);
-                });
-            }
-        })();
-
-        // Collapsible info banners
-        //
-        // When the "Descriptions" toggle is off, every inline info banner is
-        // folded into a small (i) icon next to its anchor (fieldset legend, or
-        // the parent container of the checkbox the banner describes). Clicking
-        // the icon toggles the banner(s) open in place; clicking outside closes
-        // them. Multiple banners sharing an anchor toggle together under a
-        // single icon.
-        //
-        // Anchor detection:
-        //  - Banner inside a <div class="jc-setting-description" data-desc-for="id">
-        //    → anchor is the nearest .checkboxContainer / .inputContainer that
-        //      contains the input with that id. We attach to the container (as a
-        //      sibling of the <label>) so clicking the trigger can't forward to
-        //      the checkbox via the label's click behavior.
-        //  - Otherwise → anchor is the nearest <legend class="sectionTitle">
-        //    inside the same <fieldset>.
-        //
-        // All banners matching are marked .jc-banner-managed; the CSS in
-        // configPage.css handles visibility keyed off body.jc-hide-descriptions
-        // and the .jc-banner-open toggle.
-        // Tracks every wired banner group so we can re-sync the parent-
-        // checkbox gating (see below) when loadConfig runs AFTER wiring.
-        var _jeBannerGroups = [];
-
-        /**
-         * Re-syncs every gated banner group's parent-off state. Called from
-         * updateAllDependencies so programmatic `checkbox.checked = x` applied
-         * during loadConfig picks up correctly (a direct assignment doesn't
-         * fire the 'change' event we listen to otherwise).
-         */
-        function syncAllBannerParents() {
-            _jeBannerGroups.forEach(function(group) {
-                if (!group.parentCheckbox) return;
-                _jeSyncBannerParent(group);
-            });
         }
 
-        function _jeSyncBannerParent(group) {
-            var off = !group.parentCheckbox.checked;
-            group.banners.forEach(function(b) {
-                b.classList.toggle('jc-banner-parent-off', off);
-                if (off) b.classList.remove('jc-banner-open');
-            });
-            group.trigger.classList.toggle('jc-banner-parent-off', off);
-            if (off) group.trigger.setAttribute('aria-expanded', 'false');
-        }
-
-        (function wireCollapsibleBanners() {
-            var banners = document.querySelectorAll('.jc-info-banner-inline, .jc-info-banner-inline-center');
-            if (!banners.length) return;
-
-            function findAnchor(banner) {
-                // Explicit overrides on the banner itself:
-                //   data-banner-anchor="legend"       → force fieldset legend
-                //   data-banner-anchor="#elementId"   → force arbitrary element
-                // Used for banners that live inside one setting's description
-                // wrapper but are semantically about the whole fieldset.
-                var override = banner.getAttribute('data-banner-anchor');
-                if (override === 'legend') {
-                    var fsOverride = banner.closest('fieldset');
-                    if (fsOverride) {
-                        var legendOverride = fsOverride.querySelector('legend.sectionTitle');
-                        if (legendOverride) return legendOverride;
-                    }
-                } else if (override && override.charAt(0) === '#') {
-                    var el = document.querySelector(override);
-                    if (el) return el;
-                }
-
-                var descWrapper = banner.closest('.jc-setting-description[data-desc-for]');
-                if (descWrapper) {
-                    var targetId = descWrapper.getAttribute('data-desc-for');
-                    var target = document.getElementById(targetId);
-                    if (target) {
-                        var container = target.closest('.checkboxContainer, .inputContainer');
-                        if (container) return container;
-                    }
-                }
-                var fieldset = banner.closest('fieldset');
-                if (fieldset) {
-                    var legend = fieldset.querySelector('legend.sectionTitle');
-                    if (legend) return legend;
-                }
-                return null;
-            }
-
-            // Find the parent checkbox whose "checked" state gates this banner
-            // (auto-detect via nearest .jc-setting-description[data-desc-for="X"]
-            // where #X is a checkbox). Explicit opt-out: data-banner-no-gate="true"
-            // on the banner disables the gating for that specific banner.
-            function findParentCheckbox(banner) {
-                if (banner.getAttribute('data-banner-no-gate') === 'true') return null;
-                var descWrapper = banner.closest('.jc-setting-description[data-desc-for]');
-                if (!descWrapper) return null;
-                var targetId = descWrapper.getAttribute('data-desc-for');
-                var target = document.getElementById(targetId);
-                if (target && target.type === 'checkbox') return target;
-                return null;
-            }
-
-            // Group banners by anchor; also capture the shared parent checkbox
-            // (we assume all banners under one anchor share the same gate —
-            // currently true because they live in the same .jc-setting-description).
-            var anchorMap = new Map();
-            banners.forEach(function(banner, idx) {
-                banner.classList.add('jc-banner-managed');
-                if (!banner.id) banner.id = 'jc-banner-' + idx + '-' + Math.random().toString(36).slice(2, 8);
-                var anchor = findAnchor(banner);
-                if (!anchor) {
-                    // Future contributors adding a banner outside a fieldset / outside
-                    // any .jc-setting-description[data-desc-for] will end up here —
-                    // the banner gets `jc-banner-managed` (so CSS hides it when
-                    // descriptions-off) but no trigger icon. Without a log, the
-                    // banner would just disappear when the admin toggles
-                    // descriptions off with no way to get it back.
-                    console.warn('[JC] banner has no anchor — collapse trigger will not be wired:', banner.id || banner);
-                    return;
-                }
-                if (!anchorMap.has(anchor)) {
-                    anchorMap.set(anchor, { banners: [], parentCheckbox: findParentCheckbox(banner) });
-                }
-                anchorMap.get(anchor).banners.push(banner);
-            });
-
-            anchorMap.forEach(function(data, anchor) {
-                if (anchor.dataset.jcBannerWired === '1') return;
-                anchor.dataset.jcBannerWired = '1';
-
-                var trigger = document.createElement('button');
-                trigger.type = 'button';
-                trigger.className = 'jc-banner-trigger';
-                trigger.setAttribute('aria-expanded', 'false');
-                var labelText = data.banners.length > 1 ? 'Show ' + data.banners.length + ' info panels' : 'Show info';
-                trigger.setAttribute('aria-label', labelText);
-                trigger.title = labelText;
-                var icon = document.createElement('i');
-                icon.className = 'material-icons';
-                icon.setAttribute('aria-hidden', 'true');
-                icon.textContent = 'info';
-                trigger.appendChild(icon);
-                anchor.appendChild(trigger);
-
-                var group = { banners: data.banners, trigger: trigger, parentCheckbox: data.parentCheckbox };
-                _jeBannerGroups.push(group);
-
-                trigger.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    var nextOpen = trigger.getAttribute('aria-expanded') !== 'true';
-                    trigger.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-                    data.banners.forEach(function(b) {
-                        b.classList.toggle('jc-banner-open', nextOpen);
-                    });
-                });
-
-                // Gate on the parent checkbox: when unchecked, hide banners
-                // and surface the trigger icon (same UX as descriptions-off
-                // mode). Initial sync runs here; syncAllBannerParents() is
-                // also called from updateAllDependencies so loadConfig's
-                // programmatic .checked assignments pick up correctly.
-                if (data.parentCheckbox) {
-                    _jeSyncBannerParent(group);
-                    data.parentCheckbox.addEventListener('change', function() {
-                        _jeSyncBannerParent(group);
-                    });
-                }
-            });
-
-            // Outside-click closes every open banner. Clicks inside an open
-            // banner (e.g. code copy button, links) don't close it.
-            document.addEventListener('click', function(e) {
-                if (!e.target) return;
-                if (e.target.closest('.jc-banner-trigger, .jc-banner-managed')) return;
-                document.querySelectorAll('.jc-banner-trigger[aria-expanded="true"]').forEach(function(t) {
-                    t.setAttribute('aria-expanded', 'false');
-                });
-                document.querySelectorAll('.jc-banner-managed.jc-banner-open').forEach(function(b) {
-                    b.classList.remove('jc-banner-open');
-                });
-            });
-        })();
-
-        // Custom Plugin Links functionality
-        const testCustomPluginLinksBtn = document.getElementById('testCustomPluginLinksBtn');
-        const customPluginLinksTextarea = document.getElementById('customPluginLinks');
-
-        if (testCustomPluginLinksBtn) {
-            testCustomPluginLinksBtn.addEventListener('click', async () => {
-                const linksText = customPluginLinksTextarea.value.trim();
-                if (!linksText) {
-                    Dashboard.alert({
-                        title: 'No Links',
-                        message: 'Please add some custom plugin links first.'
-                    });
-                    return;
-                }
-
-                // Parse and validate the links
-                const lines = linksText.split('\n');
-                const validLinks = [];
-                const invalidLines = [];
-
-                lines.forEach((line, index) => {
-                    const trimmedLine = line.trim();
-                    if (!trimmedLine) return;
-
-                    const parts = trimmedLine.split('|').map(part => part.trim());
-                    if (parts.length >= 2 && parts[0] && parts[1]) {
-                        validLinks.push({ name: parts[0], icon: parts[1] });
-                    } else {
-                        invalidLines.push(`Line ${index + 1}: "${trimmedLine}"`);
-                    }
-                });
-
-                if (invalidLines.length > 0) {
-                    Dashboard.alert({
-                        title: 'Invalid Format',
-                        message: `The following lines have invalid format:\n\n${invalidLines.join('\n')}\n\nPlease use the format: Configuration Page Name | icon_name`
-                    });
-                    return;
-                }
-
-                if (validLinks.length === 0) {
-                    Dashboard.alert({
-                        title: 'No Valid Links',
-                        message: 'No valid plugin links found. Please check the format.'
-                    });
-                    return;
-                }
-
-                // Test the links by temporarily adding them to the sidebar
-                // Trigger the plugin icons script to refresh with test data
-                if (window.JellyfinCanopy && window.JellyfinCanopy.customPlugins) {
-                    // Temporarily store test data
-                    window.testCustomPluginLinks = validLinks;
-                    window.JellyfinCanopy.customPlugins.refresh();
-                }
-            });
-        }
-
-        // click handlers to all TMDB test buttons
-        document.querySelectorAll('.testTmdbBtn').forEach(btn => {
-            btn.addEventListener('click', testTmdbConnection);
-        });
-
-        // Copy button handler for HTML code snippets
-        document.querySelectorAll('.jc-copy-html-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
+        function insertCorruptBanner(container, type) {
+            const label = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+            const banner = document.createElement('div');
+            banner.className = 'arr-corrupt-banner';
+            banner.setAttribute('data-arr-corrupt', type);
+            banner.style.cssText = 'padding: 0.8em 1em; margin-bottom: 1em; border: 1px solid var(--jc-danger); background: color-mix(in srgb, var(--jc-danger) 15%, transparent); border-radius: 4px;';
+            const title = document.createElement('strong');
+            title.textContent = '⚠ Stored ' + label + ' instance configuration is corrupted.';
+            banner.appendChild(title);
+            const detail = document.createElement('div');
+            detail.textContent = 'The saved JSON could not be parsed. Saving this page will NOT overwrite the stored value or the legacy '
+                + label + ' URL/API key — so existing configuration is preserved. To recover: either fix the stored JSON directly in '
+                + 'Jellyfin\'s plugin config, or click the button below to reset this list (destroys the unreadable value).';
+            banner.appendChild(detail);
+            const resetBtn = document.createElement('button');
+            resetBtn.setAttribute('is', 'emby-button');
+            resetBtn.type = 'button';
+            resetBtn.className = 'raised emby-button';
+            const resetSpan = document.createElement('span');
+            resetSpan.textContent = 'Reset ' + label + ' instances (clears stored value)';
+            resetBtn.appendChild(resetSpan);
+            resetBtn.addEventListener('click', function (e) {
                 e.preventDefault();
-                e.stopPropagation();
+                Dashboard.confirm(
+                    'Reset the corrupt ' + label + ' instance configuration? The stored JSON is unreadable so any instances it contained cannot be recovered. You will need to add them again. The reset takes effect when you click Save.',
+                    'Reset Instances',
+                    function (confirmed) {
+                        if (!confirmed) {
+                            return;
+                        }
+                        _arrParseOK[type] = true;
+                        banner.remove();
+                    }
+                );
+            });
+            banner.appendChild(resetBtn);
+            if (container && container.appendChild) {
+                container.appendChild(banner);
+            }
+        }
 
-                const htmlCode = this.getAttribute('data-copy-text');
-                const btnText = this.querySelector('.copy-btn-text');
+        function createInstanceCard(type, instance, startOpen) {
+            const isSonarr = type === 'sonarr';
+            const defaultName = isSonarr ? 'Sonarr' : 'Radarr';
+            const namePlaceholder = isSonarr ? 'e.g., TV Shows, Anime' : 'e.g., Movies, 4K Movies';
+            const defaultPort = isSonarr ? '8989' : '7878';
+            const urlPlaceholder = 'e.g., http://192.168.1.100:' + defaultPort;
 
-                // Try clipboard API first
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(htmlCode).then(function() {
-                        btnText.textContent = 'Copied!';
-                        btn.style.color = '#4CAF50';
-                        setTimeout(function() {
-                            btnText.textContent = 'Copy';
-                            btn.style.color = '';
-                        }, 2000);
-                    }).catch(function(err) {
-                        console.error('Clipboard API failed: ', err);
-                        fallbackCopy(htmlCode, btn, btnText);
-                    });
-                } else {
-                    // Fallback for older browsers
-                    fallbackCopy(htmlCode, btn, btnText);
+            const card = document.createElement('details');
+            card.className = 'arr-instance-card';
+            card.dataset.type = type;
+            // A blank URL identifies a genuinely-new card and gets a fresh random id;
+            // legacy populated rows stay blank so the server applies its deterministic migration.
+            card.dataset.instanceId = normalizeArrInstanceId(instance.InstanceId)
+                || (String(instance.Url || '').trim() === '' ? createArrInstanceId() : '');
+            if (startOpen) {
+                card.open = true;
+            }
+
+            const initialName = String(instance.Name || '').trim() || defaultName;
+            const initiallyEnabled = instance.Enabled !== false;
+
+            // --- Summary row: [enabled checkbox][name][(disabled) chip][url] ---
+            const summary = document.createElement('summary');
+            summary.className = 'arr-instance-summary';
+
+            // Plain checkbox on purpose — is="emby-checkbox" needs a label wrapper that
+            // breaks the summary flex row.
+            const enabledCheckbox = document.createElement('input');
+            enabledCheckbox.type = 'checkbox';
+            enabledCheckbox.className = 'arr-instance-enabled';
+            enabledCheckbox.checked = initiallyEnabled;
+            enabledCheckbox.setAttribute('aria-label', 'Enable ' + initialName + ' instance');
+            enabledCheckbox.title = 'Uncheck to skip this instance in all fan-out paths (links, calendar, queue, tag sync) without deleting its URL/API key';
+            ['click', 'mousedown', 'keydown'].forEach(function (evt) {
+                enabledCheckbox.addEventListener(evt, function (e) {
+                    e.stopPropagation();
+                });
+            });
+
+            const summaryName = document.createElement('span');
+            summaryName.className = 'arr-instance-summary-name';
+            summaryName.textContent = instance.Name || defaultName;
+
+            const disabledChip = document.createElement('span');
+            disabledChip.className = 'arr-instance-summary-disabled';
+            disabledChip.textContent = '(disabled)';
+            disabledChip.style.cssText = 'color: var(--jc-warning); font-size: 0.85em; margin-right: 0.5em;';
+            disabledChip.style.display = initiallyEnabled ? 'none' : 'inline';
+
+            const summaryUrl = document.createElement('span');
+            summaryUrl.className = 'arr-instance-summary-url';
+            summaryUrl.textContent = instance.Url || '';
+
+            summary.appendChild(enabledCheckbox);
+            summary.appendChild(summaryName);
+            summary.appendChild(disabledChip);
+            summary.appendChild(summaryUrl);
+            card.appendChild(summary);
+
+            // --- Body ---
+            const body = document.createElement('div');
+            body.className = 'arr-instance-card-body';
+            body.innerHTML =
+                '<div class="arr-instance-header" style="display: flex; gap: 0.5em; align-items: center;">'
+                + '<input is="emby-input" type="text" class="arr-instance-name" style="flex: 1;" placeholder="' + escapeHtml(namePlaceholder) + '" value="' + escapeHtml(instance.Name || '') + '" />'
+                + '<button is="emby-button" type="button" class="raised arr-instance-remove" title="Remove instance"><span>Remove</span></button>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">URL (internal)</label>'
+                + '<input is="emby-input" type="text" class="arr-instance-url" placeholder="' + escapeHtml(urlPlaceholder) + '" value="' + escapeHtml(instance.Url || '') + '" />'
+                + '<div class="fieldDescription">The Jellyfin server uses this URL to talk to ' + defaultName + ' directly. If your public URL sits behind an auth proxy (Authentik, Authelia, Cloudflare Access, etc.), put the INTERNAL address here (e.g. http://' + type + ':' + defaultPort + ' or http://192.168.x.y:' + defaultPort + ') and set the External URL below for user-facing links.</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">External URL (optional)</label>'
+                + '<input is="emby-input" type="text" class="arr-instance-externalurl" placeholder="e.g., https://' + type + '.example.com" value="' + escapeHtml(instance.ExternalUrl || '') + '" />'
+                + '<div class="fieldDescription">Public URL a user&#39;s browser opens for links to this instance. Leave blank to reuse the internal URL above. URL Mappings below still take priority when a mapping matches.</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">API Key</label>'
+                + '<div style="display: flex; align-items: center; gap: 0.5em;">'
+                + '<input is="emby-input" type="text" class="arr-instance-apikey" autocomplete="off" placeholder="API key (find in Settings &gt; General &gt; Security)" style="flex: 1;" value="' + escapeHtml(instance.ApiKey || '') + '" />'
+                + '<span class="material-icons arr-instance-status" style="transition: color 0.3s ease;" aria-hidden="true"></span>'
+                + '<button is="emby-button" type="button" class="raised arr-instance-test"><span>Test</span></button>'
+                + '</div>'
+                + '<div class="fieldDescription">Find this in ' + defaultName + ' under Settings &gt; General &gt; Security &gt; API Key</div>'
+                + '</div>'
+                + '<div class="inputContainer">'
+                + '<label class="inputLabel inputLabelUnfocused">URL Mappings (optional)</label>'
+                + '<textarea class="emby-textarea emby-input arr-instance-urlmappings" rows="3" placeholder="jellyfin_url|arr_url (one per line)">' + escapeHtml(instance.UrlMappings || '') + '</textarea>'
+                + '<div class="fieldDescription">Map Jellyfin access URLs to this instance&#39;s URL. Format: jellyfin_url|arr_url (one per line). Useful for reverse-proxy setups.</div>'
+                + '</div>';
+            card.appendChild(body);
+
+            // --- Behaviors ---
+            const nameInput = body.querySelector('.arr-instance-name');
+            const urlInput = body.querySelector('.arr-instance-url');
+            const removeBtn = body.querySelector('.arr-instance-remove');
+            const testBtn = body.querySelector('.arr-instance-test');
+
+            nameInput.addEventListener('input', function () {
+                const name = nameInput.value.trim() || defaultName;
+                summaryName.textContent = name;
+                enabledCheckbox.setAttribute('aria-label', 'Enable ' + name + ' instance');
+            });
+            urlInput.addEventListener('input', function () {
+                summaryUrl.textContent = urlInput.value.trim();
+            });
+
+            function setBodyDisabled(disabled) {
+                // Hard-disable every control so edits can't silently persist while disabled.
+                body.querySelectorAll('input, textarea, button, select').forEach(function (el) {
+                    if (disabled) {
+                        el.setAttribute('disabled', '');
+                    } else {
+                        el.removeAttribute('disabled');
+                    }
+                });
+            }
+
+            enabledCheckbox.addEventListener('change', function () {
+                // Backend remains the authority — this is UI feedback until Save.
+                const enabled = enabledCheckbox.checked;
+                disabledChip.style.display = enabled ? 'none' : 'inline';
+                card.classList.toggle('arr-instance-disabled', !enabled);
+                setBodyDisabled(!enabled);
+                try {
+                    renderServiceStatusDashboard();
+                } catch (e) {
+                    console.warn('[JC] renderServiceStatusDashboard threw from arr-instance enable-toggle:', e);
                 }
             });
-        });
+            setBodyDisabled(!initiallyEnabled);
+            if (!initiallyEnabled) {
+                card.classList.add('arr-instance-disabled');
+            }
 
-        // Fallback copy method
-        function fallbackCopy(text, btn, btnText) {
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
+            removeBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                const name = nameInput.value.trim() || defaultName;
+                Dashboard.confirm(
+                    'Remove "' + name + '" from the instance list? The change takes effect when you click Save. If you leave the page without saving, the instance is kept.\n\nTip: If you just want to stop using it temporarily, uncheck Enabled instead — that preserves the URL and API key.',
+                    'Remove Instance',
+                    function (confirmed) {
+                        if (!confirmed) {
+                            return;
+                        }
+                        card.remove();
+                        jcMarkConfigDirty();
+                        updateAllDependencies();
+                    }
+                );
+            });
+
+            testBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                testInstanceConnection(card);
+            });
+
+            return card;
+        }
+
+        function loadArrInstances(config) {
+            _arrParseOK.sonarr = true;
+            _arrParseOK.radarr = true;
+            ['sonarr', 'radarr'].forEach(function (type) {
+                const container = document.querySelector('#' + type + 'InstancesList');
+                if (!container) {
+                    return;
+                }
+                container.textContent = '';
+                const typeName = type === 'sonarr' ? 'Sonarr' : 'Radarr';
+                let instances = tryParseInstanceList(config[typeName + 'Instances'], type, container);
+                // Legacy migration: only when the parse succeeded AND there are zero instances
+                // AND both legacy fields are present. Skipped on parse failure — legacy fields
+                // may be stale/already migrated.
+                if (_arrParseOK[type] && instances.length === 0) {
+                    const legacyUrl = config[typeName + 'Url'];
+                    const legacyKey = config[typeName + 'ApiKey'];
+                    if (legacyUrl && legacyKey) {
+                        instances = [{
+                            Name: typeName,
+                            Url: legacyUrl,
+                            ExternalUrl: config[typeName + 'ExternalUrl'] || '',
+                            ApiKey: legacyKey,
+                            UrlMappings: config[typeName + 'UrlMappings'] || ''
+                        }];
+                    }
+                }
+                instances.forEach(function (inst) {
+                    container.appendChild(createInstanceCard(type, inst || {}, false));
+                });
+            });
+        }
+
+        function renderArrInstances(config) {
+            loadArrInstances(config);
+        }
+
+        /* jcIsHttpUrl is owned by the core section. */
+
+        function collectInstancesFromDom(selector, defaultName) {
+            const instances = [];
+            const incomplete = [];
+            const renamed = [];
+            const droppedExternal = [];
+            const seen = Object.create(null);
+            document.querySelectorAll(selector).forEach(function (card) {
+                const urlInput = card.querySelector('.arr-instance-url');
+                const keyInput = card.querySelector('.arr-instance-apikey');
+                const nameInput = card.querySelector('.arr-instance-name');
+                const url = ((urlInput && urlInput.value) || '').trim();
+                const apiKey = ((keyInput && keyInput.value) || '').trim();
+                const rawName = ((nameInput && nameInput.value) || '').trim() || defaultName;
+                if (url && !apiKey) {
+                    // Would otherwise be silently dropped — surface it as a save warning.
+                    incomplete.push(rawName);
+                    return;
+                }
+                if (!url || !apiKey) {
+                    // Neither, or only an API key → dropped silently.
+                    return;
+                }
+                // Duplicate-name disambiguation: Name is the ONLY runtime targeting key
+                // (arr links, calendar, tag sync, action-sheet grab/monitor).
+                let name = rawName;
+                const nameKey = rawName.toLowerCase();
+                const priorCount = seen[nameKey] || 0;
+                if (priorCount > 0) {
+                    name = rawName + ' (' + (priorCount + 1) + ')';
+                    seen[nameKey] = priorCount + 1;
+                    const suffixedKey = name.toLowerCase();
+                    seen[suffixedKey] = (seen[suffixedKey] || 0) + 1;
+                    renamed.push(rawName + '” → “' + name);
+                } else {
+                    seen[nameKey] = 1;
+                }
+                const externalInput = card.querySelector('.arr-instance-externalurl');
+                const rawExternal = ((externalInput && externalInput.value) || '').trim();
+                let externalUrl = '';
+                if (rawExternal) {
+                    if (jcIsHttpUrl(rawExternal)) {
+                        externalUrl = rawExternal;
+                    } else {
+                        droppedExternal.push(name + ': ' + rawExternal);
+                    }
+                }
+                const mappingsEl = card.querySelector('.arr-instance-urlmappings');
+                const enabledCheckbox = card.querySelector('.arr-instance-enabled');
+                instances.push({
+                    InstanceId: normalizeArrInstanceId(card.dataset.instanceId),
+                    Name: name,
+                    Url: url,
+                    ExternalUrl: externalUrl,
+                    ApiKey: apiKey,
+                    UrlMappings: (mappingsEl && mappingsEl.value) || '',
+                    // Missing checkbox = enabled (defensive against DOM surgery).
+                    Enabled: enabledCheckbox ? enabledCheckbox.checked : true
+                });
+            });
+            return {
+                instances: instances,
+                incomplete: incomplete,
+                renamed: renamed,
+                droppedExternal: droppedExternal
+            };
+        }
+
+        // Warning-string builders for the save path (core's saveArrInstances consumes these;
+        // the caller alerts each with title '⚠ Incomplete *arr instance').
+        function buildArrIncompleteWarning(typeName, name) {
+            return typeName + ' instance "' + name + '" has a URL but no API key — it was not saved.';
+        }
+
+        function buildArrRenamedWarning(typeName, renamedFragment) {
+            // renamedFragment already contains the 'old” → “new' interior; this template
+            // supplies the surrounding curly quotes.
+            return 'Renamed duplicate ' + typeName + ' instance “' + renamedFragment + '” so actions target the right instance.';
+        }
+
+        function buildArrDroppedExternalWarning(typeName, dropped) {
+            return 'Dropped invalid ' + typeName + ' External URL (must be an http(s) URL without credentials or query/fragment) — ' + dropped;
+        }
+
+        function buildArrInstanceWarnings(typeName, collected) {
+            const warnings = [];
+            collected.incomplete.forEach(function (name) {
+                warnings.push(buildArrIncompleteWarning(typeName, name));
+            });
+            collected.renamed.forEach(function (renamedFragment) {
+                warnings.push(buildArrRenamedWarning(typeName, renamedFragment));
+            });
+            collected.droppedExternal.forEach(function (dropped) {
+                warnings.push(buildArrDroppedExternalWarning(typeName, dropped));
+            });
+            return warnings;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Wiring (called once by the integrator's init sequence — the old per-pageshow
+        // rewiring accumulated duplicate listeners; wiring once is the approved fix)
+        // ---------------------------------------------------------------------------
+
+        function wireConnections() {
+            const testSeerrBtn = document.querySelector('#testSeerrBtn');
+            if (testSeerrBtn) {
+                testSeerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    testSeerrConnection();
+                });
+            }
+
+            const testMaintainerrBtn = document.querySelector('#testMaintainerrBtn');
+            if (testMaintainerrBtn) {
+                testMaintainerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    testMaintainerrConnection();
+                });
+            }
+
+            // Multiple TMDB test buttons exist across tabs; each resolves its own indicator.
+            // After the test settles, refresh TMDB-gated toggles.
+            document.querySelectorAll('.testTmdbBtn').forEach(function (btn) {
+                btn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    Promise.resolve(testTmdbConnection(e)).then(function () {
+                        updateAllDependencies();
+                    });
+                });
+            });
+
+            // TMDB key mirror sync: #TMDB_API_KEY (Elsewhere tab) and #seerr_TMDB_API_KEY
+            // (Seerr tab) back a single config value; on save the Seerr-tab field wins.
+            const tmdbMain = document.querySelector('#TMDB_API_KEY');
+            const tmdbSeerr = document.querySelector('#seerr_TMDB_API_KEY');
+            if (tmdbMain && tmdbSeerr) {
+                tmdbMain.addEventListener('input', function () {
+                    tmdbSeerr.value = tmdbMain.value;
+                });
+                tmdbSeerr.addEventListener('input', function () {
+                    tmdbMain.value = tmdbSeerr.value;
+                });
+            }
+
+            // Persisted-result invalidation on committed edits of the tested inputs.
+            _wireInvalidate('#TMDB_API_KEY', 'tmdb');
+            _wireInvalidate('#seerr_TMDB_API_KEY', 'tmdb');
+            _wireInvalidate('#seerrUrls', 'seerr');
+            _wireInvalidate('#SeerrApiKey', 'seerr');
+            _wireInvalidate('#maintainerrUrl',  'maintainerr');
+
+            // Typing in the Maintainerr URL aborts an in-flight test and resets its UI.
+            const maintainerrUrlInput = document.querySelector('#maintainerrUrl');
+            if (maintainerrUrlInput) {
+                maintainerrUrlInput.addEventListener('input', function () {
+                    cancelActiveMaintainerrTest(true);
+                });
+            }
+
+            // Mapping validation buttons.
+            const validateSonarrBtn = document.querySelector('#validateSonarrMappingsBtn');
+            if (validateSonarrBtn) {
+                validateSonarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    _jeValidateInstanceMappings('sonarr', 'validateSonarrMappingsBtn', 'sonarrMappingsValidationResult', 'Sonarr');
+                });
+            }
+            const validateRadarrBtn = document.querySelector('#validateRadarrMappingsBtn');
+            if (validateRadarrBtn) {
+                validateRadarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
+                });
+            }
+            const validateBazarrBtn = document.querySelector('#validateBazarrMappingsBtn');
+            if (validateBazarrBtn) {
+                validateBazarrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const bazarrMappings = document.querySelector('#bazarrUrlMappings');
+                    if (!bazarrMappings || !bazarrMappings.value.trim()) {
+                        Dashboard.alert({
+                            title: 'No Mappings',
+                            message: 'No Bazarr URL mappings configured. Fill in the Bazarr URL Mappings field above to validate.'
+                        });
+                        return;
+                    }
+                    jcRunMappingValidation([{ id: 'bazarrUrlMappings', service: 'Bazarr' }], 'validateBazarrMappingsBtn', 'bazarrMappingsValidationResult');
+                });
+            }
+            const validateSeerrBtn = document.querySelector('#validateSeerrMappingsBtn');
+            if (validateSeerrBtn) {
+                validateSeerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    jcRunMappingValidation([{ id: 'seerrUrlMappings', service: 'Seerr' }], 'validateSeerrMappingsBtn', 'seerrMappingsValidationResult');
+                });
+            }
+            const validateMaintainerrBtn = document.querySelector('#validateMaintainerrMappingsBtn');
+            if (validateMaintainerrBtn) {
+                validateMaintainerrBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const maintainerrMappings = document.querySelector('#maintainerrUrlMappings');
+                    if (!maintainerrMappings || !maintainerrMappings.value.trim()) {
+                        Dashboard.alert({
+                            title: 'No Mappings',
+                            message: 'No Maintainerr URL mappings are configured.'
+                        });
+                        return;
+                    }
+                    validateMaintainerrMappingSet('maintainerrUrlMappings', validateMaintainerrBtn, 'maintainerrMappingsValidationResult');
+                });
+            }
+
+            const triggerSeerrScanBtn = document.querySelector('#triggerSeerrScanNowBtn');
+            if (triggerSeerrScanBtn) {
+                triggerSeerrScanBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    triggerSeerrScanNow();
+                });
+            }
+
+        }
+
+        /* Page-lifecycle cancellation (both event names exist across Jellyfin
+           builds). Wired via init isolation like every other subsystem; the
+           dedented addEventListener lines keep the drift-guard's pinned
+           12-space handler-body shape. */
+        function wireConnectionLifecycle() {
+            if (!page) return;
+        page.addEventListener('pagehide', function() {
+            cancelActiveMaintainerrTest(true);
+            cancelActiveSeerrScan();
+        });
+        page.addEventListener('viewhide', function() {
+            cancelActiveMaintainerrTest(true);
+            cancelActiveSeerrScan();
+        });
+        }
+
+        function wireArrInstances() {
+            [['#addSonarrInstance', 'sonarr'], ['#addRadarrInstance', 'radarr']].forEach(function (pair) {
+                const btn = document.querySelector(pair[0]);
+                if (!btn) {
+                    return;
+                }
+                btn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    const container = document.querySelector('#' + pair[1] + 'InstancesList');
+                    if (!container) {
+                        return;
+                    }
+                    // Open card; fresh random InstanceId since Url is blank. Adding does not
+                    // itself mark dirty — typing into the new card does, via the form listener.
+                    container.appendChild(createInstanceCard(pair[1], { Name: '', Url: '', ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true));
+                    updateAllDependencies();
+                });
+            });
+        }
+
+/* SECTION: widgets — owns: descriptions toggle (jc-settings-descriptions-visible), dependency gating
+   (SECTION_DEPS/INDIVIDUAL_DEPS/PARENT_DEPS, applyGatedHelp, updateAllDependencies, debouncedUpdateDeps,
+   requests requirements banner, collapsible info banners + syncAllBannerParents,
+   updateClientTagCacheControlsVisibility), shortcuts editor (defaultShortcuts, shortcutOverrides,
+   collectShortcuts), maintenance-mode users UI, branding uploads, permission audit, timing previews,
+   order rows (_qualityCatRenderOK/_pagesOrderRenderOK, renderQualityCatOrderAdmin/renderPagesOrderAdmin),
+   blocked users + syncBlockedUsersToHiddenInput + Seerr user import, language options, client refresh,
+   sticky header, custom plugin links tester, copy buttons, auto-movie request selects.
+   wires: wireWidgets() (call once at init; NOT on pageshow). Core additionally calls, from loadConfig:
+   renderShortcuts(config), renderOrderRows(config), loadMaintenanceUsers(), loadBlockedUsersList(ids),
+   populateAutoMovieRequestSelects(config), updateAllDependencies(); and once at init:
+   loadLanguageOptions(). refreshBrandingPreviews() available for re-refresh. Save path reads
+   _qualityCatRenderOK/_pagesOrderRenderOK and calls collectShortcuts() + syncBlockedUsersToHiddenInput().
+   NOTE: applyGatedHelp and updateAllDependencies are listed in the shared-core assume-list but are
+   OWNED and defined here.
+   depends: form, jcMarkConfigDirty (core); saveConfig (binder); jcNormalizeMaintainerrBaseUrl
+   (connections); hasIntroSkipper, renderServiceStatusDashboard, renderOptionalPluginsDashboard,
+   renderFeaturesDashboard, updateClearTagCachesQuickBtnVisibility (dashboards); ApiClient, Dashboard.
+   Owned mutable state (top-level lets, literal initializers only): shortcutOverrides,
+   _qualityCatRenderOK, _pagesOrderRenderOK, _blockedUsersLoaded, _jeGatedHelpState, _jcBannerGroups,
+   _activePanelPreviewCleanup, _depsDebounceTimer, _autoMovieServerListenerAdded,
+   _brandingStatusTimers, _shortcutErrorTimer, _shortcutShakeEl. */
+
+/* ------------------------------------------------------------------ */
+/* 1. Descriptions toggle                                              */
+/* ------------------------------------------------------------------ */
+
+const DESC_PREF_KEY = 'jc-settings-descriptions-visible';
+
+function applyDescriptionVisibility(show) {
+    try {
+        document.body.classList.toggle('jc-hide-descriptions', !show);
+    } catch (e) {
+        console.warn('[JC] descriptions body-class toggle failed', e);
+    }
+    const btn = document.querySelector('#toggleDescriptionsBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    btn.classList.toggle('jc-desc-toggle-off', !show);
+    const state = btn.querySelector('.jc-desc-toggle-state');
+    if (state) state.textContent = show ? 'On' : 'Off';
+}
+
+function wireDescriptionsToggle() {
+    let stored = null;
+    try {
+        stored = localStorage.getItem(DESC_PREF_KEY);
+    } catch (e) {
+        // storage unavailable — default visible
+    }
+    applyDescriptionVisibility(stored !== 'false');
+    const btn = document.querySelector('#toggleDescriptionsBtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const showNow = !document.body.classList.contains('jc-hide-descriptions');
+        const next = !showNow;
+        applyDescriptionVisibility(next);
+        try {
+            localStorage.setItem(DESC_PREF_KEY, next ? 'true' : 'false');
+        } catch (e) {
+            // storage failure tolerated — UI still toggles
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Dependency system                                                */
+/* ------------------------------------------------------------------ */
+
+function hasTmdbKey() {
+    const a = document.querySelector('#TMDB_API_KEY');
+    const b = document.querySelector('#seerr_TMDB_API_KEY');
+    return !!((a && a.value.trim()) || (b && b.value.trim()));
+}
+
+function hasAtLeastOneValidSeerrUrl(value) {
+    return String(value || '').split('\n').map(l => l.trim()).filter(Boolean).some(line => {
+        try {
+            const u = new URL(line);
+            return u.protocol === 'http:' || u.protocol === 'https:';
+        } catch (e) {
+            return false;
+        }
+    });
+}
+
+function hasSeerrConfigured() {
+    const enabled = document.querySelector('#seerrEnabled');
+    const urls = document.querySelector('#seerrUrls');
+    const key = document.querySelector('#SeerrApiKey');
+    return !!(enabled && enabled.checked
+        && urls && hasAtLeastOneValidSeerrUrl(urls.value)
+        && key && key.value.trim());
+}
+
+function hasMaintainerrConfigured() {
+    const enabled = document.querySelector('#maintainerrEnabled');
+    const url = document.querySelector('#maintainerrUrl');
+    return !!(enabled && enabled.checked && url && jcNormalizeMaintainerrBaseUrl(url.value));
+}
+
+function hasAnyArrService() {
+    return Array.from(document.querySelectorAll('.arr-instance-card')).some(card => {
+        const enabledCb = card.querySelector('.arr-instance-enabled');
+        const enabled = enabledCb ? enabledCb.checked : true; // missing checkbox counts enabled
+        const url = card.querySelector('.arr-instance-url');
+        const key = card.querySelector('.arr-instance-apikey');
+        return enabled && url && url.value.trim() && key && key.value.trim();
+    });
+}
+
+/* Dep tags: comma-separated data-dep-disabled — an element is only released
+   when its LAST tag is removed, so overlapping gates compose. */
+
+function jcDepTags(el) {
+    return (el.dataset.depDisabled || '').split(',').filter(Boolean);
+}
+
+function addDepTag(el, tag) {
+    const tags = jcDepTags(el);
+    if (!tags.includes(tag)) tags.push(tag);
+    el.dataset.depDisabled = tags.join(',');
+}
+
+function removeDepTag(el, tag) {
+    const tags = jcDepTags(el).filter(t => t !== tag);
+    if (tags.length) {
+        el.dataset.depDisabled = tags.join(',');
+        return false;
+    }
+    delete el.dataset.depDisabled;
+    return true;
+}
+
+const SECTION_DEPS = [
+    {
+        tab: '#seerr',
+        check: hasSeerrConfigured,
+        bannerId: 'dep-banner-seerr',
+        title: 'Enable "Seerr integration" to configure',
+        hint: 'Provide a Seerr URL and API key in the Setup section above, then enable the integration.'
+    },
+    {
+        tab: '#maintainerr',
+        check: hasMaintainerrConfigured,
+        bannerId: 'dep-banner-maintainerr',
+        title: 'Enable Maintainerr to configure',
+        hint: 'Provide the server-only Maintainerr URL above, then enable the integration.'
+    },
+    {
+        tab: '#arr',
+        check: hasAnyArrService,
+        bannerId: 'dep-banner-arr',
+        title: 'Enable a *arr service to configure',
+        hint: 'Add a URL and API key for Sonarr or Radarr above to enable these features.'
+    }
+];
+
+function createDepBanner(id, dep) {
+    const banner = document.createElement('div');
+    banner.className = 'jc-dep-banner';
+    banner.id = id;
+    const icon = document.createElement('i');
+    icon.className = 'material-icons jc-dep-banner-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'link_off';
+    const text = document.createElement('div');
+    text.className = 'jc-dep-banner-text';
+    const strong = document.createElement('strong');
+    strong.textContent = dep.title;
+    text.appendChild(strong);
+    text.appendChild(document.createElement('br'));
+    const hint = document.createElement('span');
+    hint.className = 'jc-dep-banner-hint';
+    hint.textContent = dep.hint;
+    text.appendChild(hint);
+    banner.appendChild(icon);
+    banner.appendChild(text);
+    return banner;
+}
+
+function updateSectionDep(dep) {
+    const tabEl = document.querySelector(dep.tab);
+    if (!tabEl) return;
+    const met = dep.check();
+    const allFieldsets = Array.from(tabEl.querySelectorAll(':scope > fieldset'));
+    // Setup fieldsets stay editable so an admin can add a connection.
+    const targets = allFieldsets.filter(fs => !fs.hasAttribute('data-dep-setup'));
+    const tag = dep.bannerId;
+    targets.forEach(fs => {
+        const bannerId = dep.bannerId + '-' + allFieldsets.indexOf(fs);
+        let banner = document.getElementById(bannerId);
+        if (!met) {
+            if (!banner) {
+                banner = createDepBanner(bannerId, dep);
+                const legend = fs.querySelector('legend');
+                if (legend) {
+                    legend.parentNode.insertBefore(banner, legend.nextSibling);
+                } else {
+                    fs.prepend(banner);
+                }
+            }
+            banner.classList.remove('jc-hidden');
+            fs.querySelectorAll('input, select, textarea, button').forEach(el => {
+                if (banner.contains(el)) return;
+                el.disabled = true;
+                addDepTag(el, tag);
+            });
+            fs.querySelectorAll('label, .inputLabel, .selectLabel').forEach(el => {
+                el.style.opacity = '.5';
+                el.style.cursor = 'not-allowed';
+                addDepTag(el, tag);
+            });
+            fs.querySelectorAll('.fieldDescription').forEach(el => {
+                el.style.opacity = '.5';
+                addDepTag(el, tag);
+            });
+        } else {
+            if (banner) banner.classList.add('jc-hidden');
+            fs.querySelectorAll('[data-dep-disabled]').forEach(el => {
+                if (removeDepTag(el, tag)) {
+                    if (el.tagName !== 'LABEL' && el.tagName !== 'DIV') el.disabled = false;
+                    el.style.opacity = '';
+                    el.style.cursor = '';
+                }
+            });
+        }
+    });
+}
+
+const INDIVIDUAL_DEPS = [
+    { id: 'elsewhereEnabled', check: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
+    { id: 'showReviews', check: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
+    { id: 'showElsewhereOnSeerr', check: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
+    { id: 'autoMovieRequestEnabled', check: hasTmdbKey, hint: 'Add a TMDB API Key to enable', icon: 'key' },
+    // Tri-state fail-open: unknown/null plugin probe does NOT disable the toggles.
+    { id: 'autoSkipIntro', check: function () { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' },
+    { id: 'autoSkipOutro', check: function () { return hasIntroSkipper !== false; }, hint: 'Install Intro Skipper plugin to enable', icon: 'extension' }
+];
+
+function updateIndividualDep(dep) {
+    const cb = document.getElementById(dep.id);
+    if (!cb) return;
+    const label = cb.closest('label');
+    const tag = 'ind-' + dep.id;
+    if (!dep.check()) {
+        cb.disabled = true;
+        addDepTag(cb, tag);
+        if (label) {
+            label.style.opacity = '.5';
+            label.style.cursor = 'not-allowed';
+            label.title = dep.hint;
+            addDepTag(label, tag);
+            const span = label.querySelector('span');
+            if (span) {
+                if (!span.querySelector('.dep-required-icon')) {
+                    const icon = document.createElement('i');
+                    icon.className = 'material-icons dep-required-icon';
+                    icon.textContent = dep.icon;
+                    icon.title = dep.hint;
+                    icon.style.fontSize = '16px';
+                    icon.style.color = 'var(--jc-warning)';
+                    span.appendChild(icon);
+                }
+                if (!span.querySelector('.dep-hint-text')) {
+                    const hintEl = document.createElement('span');
+                    hintEl.className = 'dep-hint-text';
+                    hintEl.textContent = dep.hint;
+                    span.appendChild(hintEl);
+                }
+            }
+        }
+    } else {
+        if (removeDepTag(cb, tag)) cb.disabled = false;
+        if (label) {
+            if (removeDepTag(label, tag)) {
+                label.style.opacity = '';
+                label.style.cursor = '';
+                label.removeAttribute('title');
+            }
+            const span = label.querySelector('span');
+            if (span) {
+                const icon = span.querySelector('.dep-required-icon');
+                if (icon) icon.remove();
+                const hintEl = span.querySelector('.dep-hint-text');
+                if (hintEl) hintEl.remove();
+            }
+        }
+    }
+}
+
+const PARENT_DEPS = [
+    // Deliberately ONLY the branding fields: provider/region inputs are shared with
+    // features that render independently of Elsewhere.
+    { parent: 'elsewhereEnabled', label: 'Enable Elsewhere', children: ['ElsewhereCustomBrandingText', 'ElsewhereCustomBrandingImageUrl'] },
+    { parent: 'showReviews', label: 'Show Reviews', children: ['reviewsExpandedByDefault'] },
+    { parent: 'showUserReviews', label: 'Enable User Reviews', children: ['hideReviewsFromHiddenUsers', 'hideReviewsFromDisabledUsers', 'showUserRatingDash', 'showUserRatingOnPosters'] },
+    { parent: 'randomButtonEnabled', label: 'Enable Random Button', children: ['randomUnwatchedOnly', 'randomIncludeMovies', 'randomIncludeShows'] },
+    { parent: 'showWatchProgress', label: 'Show watch progress', children: ['watchProgressDefaultMode', 'watchProgressTimeFormat'] },
+    { parent: 'qualityTagsEnabled', label: 'Enable Quality Tags', noHint: true, children: ['qualityTagsPosition', 'showResolutionTag', 'showSourceTag', 'showDynamicRangeTag', 'showSpecialFormatTag', 'showVideoCodecTag', 'showAudioInfoTag'] },
+    { parent: 'genreTagsEnabled', label: 'Enable Genre Tags', noHint: true, children: ['genreTagsPosition'] },
+    { parent: 'languageTagsEnabled', label: 'Enable Language Tags', noHint: true, children: ['languageTagsPosition'] },
+    { parent: 'ratingTagsEnabled', label: 'Enable Rating Tags', noHint: true, children: ['ratingTagsPosition'] },
+    { parent: 'useIcons', label: 'Use Icons', children: ['iconStyle'] },
+    { parent: 'letterboxdEnabled', label: 'Enable Letterboxd', children: ['showLetterboxdLinkAsText'] },
+    { parent: 'enableCustomSplashScreen', label: 'Enable Custom Splash Screen', children: ['splashScreenImageUrl'] },
+    { parent: 'seerrShowSearchResults', label: 'Show Seerr Results in Search', children: ['showCollectionsInSearch'] },
+    { parent: 'seerrShowReportButton', label: 'Show Report Issue button', children: ['seerrShowIssueIndicator'] },
+    { parent: 'downloadsPageEnabled', label: 'Enable Requests Page', children: ['showDownloadsInRequests', 'downloadsPageShowIssues', 'downloadsPagePollingEnabled', 'downloadsAllowActiveForRegularUsers', 'downloadsAllowProcessingForRegularUsers', 'downloadsAllowWarningsForRegularUsers', 'downloadsAllowHistoryForRegularUsers', 'downloadsAllowProvenanceForRegularUsers', 'downloadsDetailedLifecycleForRegularUsers', 'downloadsHistoryWindowDays', 'requestsAllowSeerrStatusAndHistoryForRegularUsers'] },
+    // Overlap with downloadsPageEnabled composes via tags.
+    { parent: 'showDownloadsInRequests', label: 'Show Downloads in Requests Page', children: ['downloadsFilterByUserRequests', 'downloadsAllowActiveForRegularUsers', 'downloadsAllowProcessingForRegularUsers', 'downloadsAllowWarningsForRegularUsers', 'downloadsAllowHistoryForRegularUsers', 'downloadsAllowProvenanceForRegularUsers', 'downloadsDetailedLifecycleForRegularUsers', 'downloadsHistoryWindowDays'] },
+    { parent: 'downloadsPagePollingEnabled', label: 'Enable Auto-Refresh', children: ['downloadsPollIntervalSeconds'] },
+    { parent: 'arrLinksEnabled', label: 'Enable *arr Links', children: ['showArrLinksAsText', 'arrLinksShowStatusSingle'] },
+    { parent: 'arrTagsSyncEnabled', label: 'Enable *arr Tags Sync', children: ['arrTagsPrefix', 'arrTagsClearOldTags', 'arrTagsShowAsLinks', 'arrTagsSyncFilter'] },
+    { parent: 'arrTagsShowAsLinks', label: 'Show synced tags as links', children: ['arrTagsLinksFilter', 'arrTagsLinksHideFilter'] },
+    { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested'] },
+    { parent: 'autoMovieRequestEnabled', label: 'Enable Automatic Movie Requests', children: ['autoMovieRequestTriggerOnStart', 'autoMovieRequestTriggerOnMinutesWatched', 'autoMovieRequestMinutesWatched', 'autoMovieRequestCheckReleaseDate', 'autoMovieRequestQualityMode', 'autoMovieRequestFallbackOn4k'] },
+    { parent: 'autoSeasonRequestEnabled', label: 'Enable Automatic Season Requests', children: ['autoSeasonRequestRequireAllWatched', 'autoSeasonRequestThresholdValue'] },
+    { parent: 'preventWatchlistReAddition', label: 'Prevent re-adding removed items', children: ['watchlistMemoryRetentionDays'] },
+    { parent: 'triggerSeerrScanOnItemAdded', label: 'Trigger Seerr scan on item added', children: ['seerrScanDebounceSeconds'] },
+    // Empty-children entries exist so the parent still participates in change wiring.
+    { parent: 'bookmarksEnabled', label: 'Enable Bookmarks', children: [] },
+    { parent: 'hiddenContentEnabled', label: 'Enable Hidden Content', children: [] }
+];
+
+function updateParentDep(dep) {
+    const parent = document.getElementById(dep.parent);
+    if (!parent) return;
+    const tag = 'parent-' + dep.parent;
+    const on = parent.checked;
+    dep.children.forEach(childId => {
+        const child = document.getElementById(childId);
+        if (!child) return;
+        const container = child.closest('.checkboxContainer, .inputContainer, .selectContainer') || child.closest('label');
+        if (!on) {
+            child.disabled = true;
+            addDepTag(child, tag);
+            if (container) {
+                container.style.opacity = '.5';
+                container.style.cursor = 'not-allowed';
+                addDepTag(container, tag);
+                if (!dep.noHint && !container.querySelector('.parent-hint-' + dep.parent)) {
+                    const hint = document.createElement('div');
+                    hint.className = 'dep-hint-text parent-hint-' + dep.parent;
+                    hint.textContent = 'Enable "' + dep.label + '" to configure';
+                    container.appendChild(hint);
+                }
+            }
+        } else {
+            if (removeDepTag(child, tag)) child.disabled = false;
+            if (container) {
+                if (removeDepTag(container, tag)) {
+                    container.style.opacity = '';
+                    container.style.cursor = '';
+                }
+                const hint = container.querySelector('.parent-hint-' + dep.parent);
+                if (hint) hint.remove();
+            }
+        }
+    });
+}
+
+function updateRequestsRequirementsBanner() {
+    const line = document.querySelector('#requestsPageRequirementsLine');
+    if (!line) return;
+    const list = document.querySelector('#requestsPageRequirementsList');
+    // The page is useful with EITHER source: downloads <- any enabled *arr; requests/issues <- Seerr.
+    const met = hasAnyArrService() || hasSeerrConfigured();
+    if (met) {
+        line.style.display = 'none';
+    } else {
+        const target = list || line;
+        target.textContent = 'Configure Seerr (for requests) and/or Sonarr or Radarr (for downloads) — URL and API key each.';
+        line.style.display = '';
+    }
+}
+
+function updateClientTagCacheControlsVisibility() {
+    const serverMode = document.querySelector('#tagCacheServerMode');
+    if (!serverMode) return;
+    const serverOn = serverMode.checked;
+    const fallbackContainer = document.querySelector('#tagsLocalStorageFallbackContainer');
+    const fallbackDesc = document.querySelector('[data-desc-for="enableTagsLocalStorageFallback"]');
+    const clientControls = document.querySelector('#clientTagCacheControls');
+    if (fallbackContainer) fallbackContainer.style.display = serverOn ? 'none' : '';
+    if (fallbackDesc) fallbackDesc.style.display = serverOn ? 'none' : '';
+    if (clientControls) clientControls.style.display = serverOn ? 'none' : '';
+    if (!serverOn) {
+        const fallbackCb = document.querySelector('#enableTagsLocalStorageFallback');
+        if (fallbackCb) fallbackCb.checked = true;
+    }
+    if (typeof updateClearTagCachesQuickBtnVisibility === 'function') {
+        try {
+            updateClearTagCachesQuickBtnVisibility();
+        } catch (e) {
+            console.warn('[JC] quick-action visibility sync failed', e);
+        }
+    }
+}
+
+function updateAllDependencies() {
+    SECTION_DEPS.forEach(dep => {
+        try { updateSectionDep(dep); } catch (e) { console.warn('[JC] section dep update failed', e); }
+    });
+    INDIVIDUAL_DEPS.forEach(dep => {
+        try { updateIndividualDep(dep); } catch (e) { console.warn('[JC] individual dep update failed', e); }
+    });
+    PARENT_DEPS.forEach(dep => {
+        try { updateParentDep(dep); } catch (e) { console.warn('[JC] parent dep update failed', e); }
+    });
+    try { updateRequestsRequirementsBanner(); } catch (e) { console.warn('[JC] requests requirements banner update failed', e); }
+    updateClientTagCacheControlsVisibility();
+    // Unified dashboard renderer called ONCE (both legacy alias names would rebuild the grid twice).
+    try { renderServiceStatusDashboard(); } catch (e) { console.warn('[JC] service status dashboard render failed', e); }
+    try { renderOptionalPluginsDashboard(); } catch (e) { console.warn('[JC] optional plugins dashboard render failed', e); }
+    try { renderFeaturesDashboard(); } catch (e) { console.warn('[JC] features dashboard render failed', e); }
+    // Needed because loadConfig's programmatic `.checked =` fires no change event.
+    try { syncAllBannerParents(); } catch (e) { console.warn('[JC] banner parent sync failed', e); }
+    // false = never auto-expand from a bulk sync.
+    try { applyGatedHelp(false); } catch (e) { console.warn('[JC] gated help refresh failed', e); }
+}
+
+let _depsDebounceTimer = null;
+
+function debouncedUpdateDeps() {
+    if (_depsDebounceTimer) clearTimeout(_depsDebounceTimer);
+    _depsDebounceTimer = setTimeout(() => {
+        _depsDebounceTimer = null;
+        updateAllDependencies();
+    }, 150);
+}
+
+function wireReactiveDeps() {
+    // Unguarded selectors — elements required by the markup contract.
+    ['#TMDB_API_KEY', '#seerr_TMDB_API_KEY', '#seerrUrls', '#SeerrApiKey', '#maintainerrUrl'].forEach(sel => {
+        document.querySelector(sel).addEventListener('input', debouncedUpdateDeps);
+    });
+    ['#seerrEnabled', '#maintainerrEnabled', '#tagCacheServerMode'].forEach(sel => {
+        document.querySelector(sel).addEventListener('change', () => updateAllDependencies());
+    });
+    const seen = {};
+    PARENT_DEPS.forEach(dep => {
+        if (seen[dep.parent]) return;
+        seen[dep.parent] = true;
+        const parent = document.getElementById(dep.parent);
+        if (parent) parent.addEventListener('change', () => updateAllDependencies());
+    });
+}
+
+function wireRequestsBannerReactive() {
+    if (!form) {
+        console.error('[JC] #JellyfinCanopyForm missing — reactive dep updates disabled');
+        return;
+    }
+    const refresh = () => {
+        try {
+            updateRequestsRequirementsBanner();
+            debouncedUpdateDeps();
+        } catch (err) {
+            console.error('[JC] dep refresh failed', err);
+        }
+    };
+    // Deliberately no parallel `change` listener: checkboxes fire both -> double-run.
+    form.addEventListener('input', evt => {
+        const t = evt.target;
+        if (!t || !t.classList) return;
+        if (t.id === 'seerrUrls' || t.id === 'SeerrApiKey'
+            || t.classList.contains('arr-instance-url')
+            || t.classList.contains('arr-instance-apikey')
+            || t.classList.contains('arr-instance-enabled')) {
+            refresh();
+        }
+    });
+    // Instance add/remove fires no input event — observe the lists (persistent by design).
+    ['#sonarrInstancesList', '#radarrInstancesList'].forEach(sel => {
+        const list = document.querySelector(sel);
+        if (!list) return;
+        new MutationObserver(refresh).observe(list, { childList: true, subtree: true });
+    });
+}
+
+/* Gated help: data-gated-by="<checkboxId>[,<id2>...]" elements are hidden
+   unless ALL listed parents are checked. */
+
+let _jeGatedHelpState = {};
+
+function jcGatedHelpParentIds() {
+    const ids = {};
+    document.querySelectorAll('[data-gated-by]').forEach(el => {
+        (el.dataset.gatedBy || '').split(',').map(s => s.trim()).filter(Boolean).forEach(id => {
+            ids[id] = true;
+        });
+    });
+    return Object.keys(ids);
+}
+
+function applyGatedHelp(autoExpandOnRise) {
+    const rose = {};
+    jcGatedHelpParentIds().forEach(id => {
+        const cb = document.getElementById(id);
+        const checked = !!(cb && cb.checked);
+        if (autoExpandOnRise && _jeGatedHelpState[id] === false && checked) rose[id] = true;
+        _jeGatedHelpState[id] = checked;
+    });
+    document.querySelectorAll('[data-gated-by]').forEach(el => {
+        const ids = (el.dataset.gatedBy || '').split(',').map(s => s.trim()).filter(Boolean);
+        const visible = ids.every(id => _jeGatedHelpState[id] === true);
+        el.hidden = !visible;
+        if (visible && autoExpandOnRise && el.tagName === 'DETAILS' && ids.some(id => rose[id])) {
+            el.open = true;
+        }
+    });
+}
+
+function wireGatedHelp() {
+    jcGatedHelpParentIds().forEach(id => {
+        const cb = document.getElementById(id);
+        if (!cb) {
+            console.warn('[JC] gated-help: parent checkbox #' + id + ' not found — help will stay hidden');
+            return;
+        }
+        // Prime with current checked value: prevents a phantom "rise" on first
+        // interaction after loadConfig set state programmatically.
+        _jeGatedHelpState[id] = cb.checked;
+        cb.addEventListener('change', () => applyGatedHelp(true));
+    });
+    applyGatedHelp(false);
+}
+
+/* Collapsible info banners */
+
+let _jcBannerGroups = [];
+
+function findNearestBannerDescWrapper(banner) {
+    const inAncestor = banner.closest('.jc-setting-description[data-desc-for]');
+    if (inAncestor) return inAncestor;
+    let sib = banner.previousElementSibling;
+    while (sib) {
+        if (sib.matches && sib.matches('.jc-setting-description[data-desc-for]')) return sib;
+        const inner = sib.querySelector && sib.querySelector('.jc-setting-description[data-desc-for]');
+        if (inner) return inner;
+        sib = sib.previousElementSibling;
+    }
+    return null;
+}
+
+function syncBannerGroupParent(group) {
+    if (!group.gate) return;
+    const off = !group.gate.checked;
+    group.banners.forEach(b => {
+        b.classList.toggle('jc-banner-parent-off', off);
+        if (off) b.classList.remove('jc-banner-open');
+    });
+    if (group.trigger) {
+        group.trigger.classList.toggle('jc-banner-parent-off', off);
+        if (off) group.trigger.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function syncAllBannerParents() {
+    _jcBannerGroups.forEach(syncBannerGroupParent);
+}
+
+function wireCollapsibleBanners() {
+    const banners = Array.from(document.querySelectorAll('.jc-info-banner-inline, .jc-info-banner-inline-center'));
+    const groups = new Map();
+    banners.forEach((banner, idx) => {
+        banner.classList.add('jc-banner-managed');
+        if (!banner.id) {
+            banner.id = 'jc-banner-' + idx + '-' + Math.random().toString(36).slice(2, 8);
+        }
+        let anchor = null;
+        let descWrapper = null;
+        const explicit = banner.dataset.bannerAnchor;
+        if (explicit === 'legend') {
+            const fs = banner.closest('fieldset');
+            anchor = fs ? fs.querySelector('legend.sectionTitle') : null;
+        } else if (explicit && explicit.charAt(0) === '#') {
+            anchor = document.querySelector(explicit);
+        } else {
+            descWrapper = findNearestBannerDescWrapper(banner);
+            if (descWrapper) {
+                const ref = document.getElementById(descWrapper.dataset.descFor);
+                // Container anchor: trigger attaches as a sibling of the label so
+                // clicks don't forward to the checkbox.
+                anchor = ref ? ref.closest('.checkboxContainer, .inputContainer') : null;
+            }
+            if (!anchor) {
+                const fs = banner.closest('fieldset');
+                anchor = fs ? fs.querySelector('legend.sectionTitle') : null;
+            }
+        }
+        if (!anchor) {
+            // The banner would silently vanish in descriptions-off mode otherwise.
+            console.warn('[JC] banner has no anchor — collapse trigger will not be wired:', banner);
+            return;
+        }
+        let group = groups.get(anchor);
+        if (!group) {
+            group = { anchor: anchor, banners: [], gate: null, trigger: null };
+            groups.set(anchor, group);
+        }
+        group.banners.push(banner);
+        if (!group.gate && banner.dataset.bannerNoGate !== 'true' && descWrapper) {
+            const ref = document.getElementById(descWrapper.dataset.descFor);
+            if (ref && ref.type === 'checkbox') group.gate = ref;
+        }
+    });
+    groups.forEach(group => {
+        if (group.anchor.dataset.jcBannerWired) return;
+        group.anchor.dataset.jcBannerWired = 'true';
+        const trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'jc-banner-trigger';
+        trigger.setAttribute('aria-expanded', 'false');
+        const label = group.banners.length > 1
+            ? 'Show ' + group.banners.length + ' info panels'
+            : 'Show info';
+        trigger.setAttribute('aria-label', label);
+        trigger.title = label;
+        const icon = document.createElement('i');
+        icon.className = 'material-icons';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = 'info';
+        trigger.appendChild(icon);
+        group.anchor.appendChild(trigger);
+        group.trigger = trigger;
+        trigger.addEventListener('click', evt => {
+            evt.preventDefault();
+            if (group.gate && !group.gate.checked) return;
+            const open = !group.banners.some(b => b.classList.contains('jc-banner-open'));
+            group.banners.forEach(b => b.classList.toggle('jc-banner-open', open));
+            trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        if (group.gate) {
+            group.gate.addEventListener('change', () => syncBannerGroupParent(group));
+        }
+        syncBannerGroupParent(group);
+        _jcBannerGroups.push(group);
+    });
+    // Click outside any trigger/banner closes all open banners.
+    document.addEventListener('click', evt => {
+        const t = evt.target;
+        if (t && t.closest && (t.closest('.jc-banner-trigger') || t.closest('.jc-banner-managed'))) return;
+        document.querySelectorAll('.jc-banner-managed.jc-banner-open').forEach(b => b.classList.remove('jc-banner-open'));
+        _jcBannerGroups.forEach(g => {
+            if (g.trigger) g.trigger.setAttribute('aria-expanded', 'false');
+        });
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Shortcut overrides editor                                        */
+/* ------------------------------------------------------------------ */
+
+const defaultShortcuts = [
+    { Name: 'OpenSearch', Key: '/', Label: 'Open Search', Category: 'Global' },
+    { Name: 'GoToHome', Key: 'Shift+H', Label: 'Go to Home', Category: 'Global' },
+    { Name: 'GoToDashboard', Key: 'D', Label: 'Go to Dashboard', Category: 'Global' },
+    { Name: 'QuickConnect', Key: 'Q', Label: 'Quick Connect', Category: 'Global' },
+    { Name: 'PlayRandomItem', Key: 'R', Label: 'Play Random Item', Category: 'Global' },
+    { Name: 'CycleAspectRatio', Key: 'A', Label: 'Cycle Aspect Ratio', Category: 'Player' },
+    { Name: 'ShowPlaybackInfo', Key: 'I', Label: 'Show Playback Info', Category: 'Player' },
+    { Name: 'SubtitleMenu', Key: 'S', Label: 'Subtitle Menu', Category: 'Player' },
+    { Name: 'CycleSubtitleTracks', Key: 'C', Label: 'Cycle Subtitle Tracks', Category: 'Player' },
+    { Name: 'CycleAudioTracks', Key: 'V', Label: 'Cycle Audio Tracks', Category: 'Player' },
+    { Name: 'IncreasePlaybackSpeed', Key: '+', Label: 'Increase Playback Speed', Category: 'Player' },
+    { Name: 'DecreasePlaybackSpeed', Key: '-', Label: 'Decrease Playback Speed', Category: 'Player' },
+    { Name: 'ResetPlaybackSpeed', Key: 'R', Label: 'Reset Playback Speed', Category: 'Player' },
+    { Name: 'BookmarkCurrentTime', Key: 'B', Label: 'Bookmark Current Time', Category: 'Player' },
+    { Name: 'OpenEpisodePreview', Key: 'P', Label: 'Open Episode Preview', Category: 'Player' },
+    { Name: 'SkipIntroOutro', Key: 'O', Label: 'Skip Intro/Outro', Category: 'Player' },
+    { Name: 'FrameStepBack', Key: ',', Label: 'Step Back One Frame', Category: 'Player' },
+    { Name: 'FrameStepForward', Key: '.', Label: 'Step Forward One Frame', Category: 'Player' },
+    { Name: 'JumpToLastPosition', Key: 'Z', Label: 'Jump to Last Position', Category: 'Player' }
+];
+
+let shortcutOverrides = [];
+let _shortcutErrorTimer = null;
+let _shortcutShakeEl = null;
+
+function renderShortcuts(config) {
+    const savedShortcuts = (config && config.Shortcuts && config.Shortcuts.length > 0)
+        ? config.Shortcuts
+        : defaultShortcuts;
+    shortcutOverrides = savedShortcuts
+        .filter(saved => {
+            const def = defaultShortcuts.find(d => d.Name === saved.Name);
+            return !def || saved.Key !== def.Key;
+        })
+        .map(s => ({ Name: s.Name, Key: s.Key, Label: s.Label, Category: s.Category }));
+    renderOverrides();
+    populateAddShortcutDropdown();
+}
+
+function renderOverrides() {
+    const container = document.querySelector('#shortcut-list-container');
+    if (!container) return;
+    if (!shortcutOverrides.length) {
+        container.innerHTML = '<p class="fieldDescription">No overrides configured. All shortcuts are using default values.</p>';
+        return;
+    }
+    container.textContent = '';
+    shortcutOverrides.forEach((override, index) => {
+        const row = document.createElement('div');
+        row.className = 'jc-shortcut-override-row';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'jc-shortcut-override-label';
+        labelEl.textContent = override.Label;
+        const keyInput = document.createElement('input');
+        keyInput.setAttribute('is', 'emby-input');
+        keyInput.type = 'text';
+        keyInput.className = 'emby-input';
+        keyInput.value = override.Key;
+        keyInput.addEventListener('input', () => {
+            let v = keyInput.value;
+            if (/^[a-z]$/.test(v)) {
+                v = v.toUpperCase();
+                keyInput.value = v;
+            }
+            shortcutOverrides[index].Key = v;
+        });
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.setAttribute('is', 'emby-button');
+        removeBtn.className = 'raised button-cancel';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => {
+            shortcutOverrides.splice(index, 1);
+            jcMarkConfigDirty();
+            renderOverrides();
+            populateAddShortcutDropdown();
+        });
+        row.appendChild(labelEl);
+        row.appendChild(keyInput);
+        row.appendChild(removeBtn);
+        container.appendChild(row);
+    });
+}
+
+function populateAddShortcutDropdown() {
+    const select = document.querySelector('#add-shortcut-select');
+    if (!select) return;
+    select.textContent = '';
+    const remaining = defaultShortcuts.filter(def => !shortcutOverrides.some(o => o.Name === def.Name));
+    remaining.forEach(def => {
+        const opt = document.createElement('option');
+        opt.value = def.Name;
+        opt.textContent = def.Label;
+        select.appendChild(opt);
+    });
+    const none = remaining.length === 0;
+    const addBtn = document.querySelector('#add-shortcut-btn');
+    const keyInput = document.querySelector('#add-shortcut-key');
+    if (addBtn) addBtn.disabled = none;
+    if (keyInput) keyInput.disabled = none;
+}
+
+function showValidationError(elementToShake, message) {
+    const comment = document.querySelector('#shortcut-error-comment');
+    if (_shortcutShakeEl) _shortcutShakeEl.classList.remove('shake');
+    if (comment) {
+        comment.textContent = message;
+        comment.style.display = 'block';
+    }
+    if (elementToShake) elementToShake.classList.add('shake');
+    _shortcutShakeEl = elementToShake || null;
+    if (_shortcutErrorTimer) clearTimeout(_shortcutErrorTimer);
+    _shortcutErrorTimer = setTimeout(() => {
+        _shortcutErrorTimer = null;
+        if (comment) {
+            comment.textContent = '';
+            comment.style.display = 'none';
+        }
+        if (_shortcutShakeEl) {
+            _shortcutShakeEl.classList.remove('shake');
+            _shortcutShakeEl = null;
+        }
+    }, 8000);
+}
+
+function wireShortcutsEditor() {
+    const addBtn = document.querySelector('#add-shortcut-btn');
+    const keyInput = document.querySelector('#add-shortcut-key');
+    const select = document.querySelector('#add-shortcut-select');
+    if (!addBtn || !keyInput || !select) return;
+    keyInput.addEventListener('input', () => {
+        const v = keyInput.value;
+        if (/^[a-z]$/.test(v)) keyInput.value = v.toUpperCase();
+    });
+    addBtn.addEventListener('click', () => {
+        const name = select.value;
+        const key = (keyInput.value || '').trim();
+        if (!name || !key) {
+            showValidationError(addBtn, 'Please enter a key to use as an override.');
+            return;
+        }
+        const existingOverride = shortcutOverrides.find(o => o.Key === key);
+        if (existingOverride) {
+            showValidationError(keyInput, "The key '" + key + "' is already assigned to '" + existingOverride.Label + "' as an override.");
+            return;
+        }
+        const conflictingDefault = defaultShortcuts.find(d => d.Key === key && d.Name !== name);
+        if (conflictingDefault) {
+            showValidationError(keyInput, "The key '" + key + "' is already used by '" + conflictingDefault.Label + "'.");
+            return;
+        }
+        const def = defaultShortcuts.find(d => d.Name === name);
+        if (!def) return;
+        shortcutOverrides.push({ Name: def.Name, Key: key, Label: def.Label, Category: def.Category });
+        renderOverrides();
+        populateAddShortcutDropdown();
+        keyInput.value = '';
+        // Parity quirk: no explicit jcMarkConfigDirty() here — typing into the
+        // key input already marked dirty via the form capture listeners.
+    });
+}
+
+function collectShortcuts() {
+    const finalShortcuts = defaultShortcuts.map(def => ({
+        Name: def.Name, Key: def.Key, Label: def.Label, Category: def.Category
+    }));
+    shortcutOverrides.forEach(override => {
+        const idx = finalShortcuts.findIndex(s => s.Name === override.Name);
+        if (idx !== -1) {
+            finalShortcuts[idx] = {
+                Name: override.Name, Key: override.Key, Label: override.Label, Category: override.Category
+            };
+        }
+        // Unmatched overrides are dropped.
+    });
+    return finalShortcuts;
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Maintenance-mode users                                           */
+/* ------------------------------------------------------------------ */
+
+function loadMaintenanceUsers() {
+    const inner = document.querySelector('#jc-mm-users-inner');
+    if (!inner) return Promise.resolve();
+    return ApiClient.getJSON(ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Users')).then(users => {
+        inner.textContent = '';
+        if (!users || !users.length) {
+            inner.textContent = 'No non-admin users found.';
+            return;
+        }
+        let preselect = [];
+        const listEl = document.querySelector('#jc-mm-user-list');
+        try {
+            preselect = JSON.parse((listEl && listEl.dataset.preselect) || '[]');
+        } catch (e) {
+            preselect = [];
+        }
+        if (!Array.isArray(preselect)) preselect = [];
+        const selectAll = preselect.length === 0;
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
+        grid.style.gap = '4px';
+        users.forEach(user => {
+            const id = user.id || user.Id || '';
+            const name = user.username || user.Username || '';
+            const label = document.createElement('label');
+            label.style.display = 'flex';
+            label.style.alignItems = 'center';
+            label.style.gap = '6px';
+            label.style.cursor = 'pointer';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'jc-mm-user-cb';
+            cb.value = id;
+            cb.checked = selectAll || preselect.indexOf(id) !== -1;
+            const avatar = document.createElement('span');
+            avatar.style.width = '26px';
+            avatar.style.height = '26px';
+            avatar.style.borderRadius = '50%';
+            avatar.style.overflow = 'hidden';
+            avatar.style.display = 'inline-flex';
+            avatar.style.alignItems = 'center';
+            avatar.style.justifyContent = 'center';
+            avatar.style.flexShrink = '0';
+            const img = document.createElement('img');
+            img.src = ApiClient.getUrl('/Users/' + id + '/Images/Primary', { width: 26 });
+            img.alt = '';
+            img.width = 26;
+            img.height = 26;
+            img.addEventListener('error', () => {
+                avatar.textContent = (name || '?').charAt(0).toUpperCase();
+            });
+            avatar.appendChild(img);
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = name;
+            label.appendChild(cb);
+            label.appendChild(avatar);
+            label.appendChild(nameSpan);
+            grid.appendChild(label);
+        });
+        inner.appendChild(grid);
+    }).catch(e => {
+        console.warn('[JC] failed to load maintenance-mode users', e);
+        inner.textContent = 'Failed to load users.';
+    });
+}
+
+function setupMaintenanceModeControls() {
+    document.querySelectorAll('input[name="maintenanceModeUsers"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (!radio.checked) return;
+            const listEl = document.querySelector('#jc-mm-user-list');
+            if (!listEl) return;
+            if (radio.value === 'select') {
+                listEl.style.display = '';
+                loadMaintenanceUsers();
+            } else {
+                listEl.style.display = 'none';
+            }
+        });
+    });
+    const selectAllBtn = document.querySelector('#jc-mm-select-all');
+    const deselectAllBtn = document.querySelector('#jc-mm-deselect-all');
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.jc-mm-user-cb').forEach(cb => { cb.checked = true; });
+        });
+    }
+    if (deselectAllBtn) {
+        deselectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.jc-mm-user-cb').forEach(cb => { cb.checked = false; });
+        });
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Branding uploads                                                 */
+/* ------------------------------------------------------------------ */
+
+const BRANDING_SLOTS = [
+    { key: 'iconTransparent', fileName: 'icon-transparent.png' },
+    { key: 'favicon', fileName: 'favicon.ico' },
+    { key: 'bannerLight', fileName: 'banner-light.png' },
+    { key: 'bannerDark', fileName: 'banner-dark.png' },
+    { key: 'touchicon', fileName: 'apple-touch-icon.png' }
+];
+
+let _brandingStatusTimers = {};
+
+function brandingAuthHeaders() {
+    const token = (ApiClient.accessToken && ApiClient.accessToken()) || '';
+    return {
+        // Both headers: Authorization for JF12, X-MediaBrowser-Token for 10.11 back-compat.
+        'Authorization': 'MediaBrowser Token="' + token + '"',
+        'X-MediaBrowser-Token': token
+    };
+}
+
+function setBrandingStatus(slot, text, color) {
+    const statusDiv = document.getElementById(slot.key + 'Status');
+    if (!statusDiv) return;
+    statusDiv.textContent = text;
+    statusDiv.style.color = color || '';
+}
+
+function scheduleBrandingStatusClear(slot, ms) {
+    if (_brandingStatusTimers[slot.key]) clearTimeout(_brandingStatusTimers[slot.key]);
+    _brandingStatusTimers[slot.key] = setTimeout(() => {
+        delete _brandingStatusTimers[slot.key];
+        setBrandingStatus(slot, '');
+    }, ms);
+}
+
+function uploadBrandingImage(slot, file) {
+    if (!file) return;
+    if (!file.type || !file.type.startsWith('image/')) {
+        setBrandingStatus(slot, '✗ Only image files allowed', 'var(--jc-danger)');
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        setBrandingStatus(slot, '✗ File too large (max 10MB)', 'var(--jc-danger)');
+        return;
+    }
+    // Local preview immediately.
+    const preview = document.getElementById(slot.key + 'Preview');
+    const placeholder = document.getElementById(slot.key + 'Placeholder');
+    const dimensions = document.getElementById(slot.key + 'Dimensions');
+    try {
+        const localUrl = URL.createObjectURL(file);
+        if (preview) {
+            preview.src = localUrl;
+            preview.style.display = '';
+        }
+        if (placeholder) placeholder.style.display = 'none';
+        const probe = new Image();
+        probe.onload = () => {
+            if (dimensions) {
+                dimensions.textContent = probe.naturalWidth + ' × ' + probe.naturalHeight + 'px';
+                dimensions.style.display = '';
+            }
+            URL.revokeObjectURL(localUrl);
+        };
+        probe.onerror = () => URL.revokeObjectURL(localUrl);
+        probe.src = localUrl;
+    } catch (e) {
+        console.warn('[JC] branding local preview failed', e);
+    }
+    setBrandingStatus(slot, 'Uploading...', 'var(--jc-warning)');
+    const formData = new FormData();
+    formData.append('file', file, slot.fileName); // renamed to the slot fileName
+    formData.append('fileName', slot.fileName);
+    fetch(ApiClient.getUrl('/JellyfinCanopy/UploadBrandingImage'), {
+        method: 'POST',
+        headers: brandingAuthHeaders(),
+        body: formData
+    }).then(response => {
+        if (response.ok) {
+            setBrandingStatus(slot, '✓ Uploaded', 'var(--jc-success)');
+            refreshBrandingPreview(slot);
+            scheduleBrandingStatusClear(slot, 3000);
+            return;
+        }
+        return response.text().catch(() => '').then(text => {
+            setBrandingStatus(slot, '✗ ' + (text || 'Upload failed'), 'var(--jc-danger)');
+        });
+    }).catch(e => {
+        setBrandingStatus(slot, '✗ ' + ((e && e.message) || 'Upload error'), 'var(--jc-danger)');
+    });
+}
+
+function refreshBrandingPreview(slot) {
+    const preview = document.getElementById(slot.key + 'Preview');
+    const placeholder = document.getElementById(slot.key + 'Placeholder');
+    const deleteBtn = document.getElementById(slot.key + 'Delete');
+    const dimensions = document.getElementById(slot.key + 'Dimensions');
+    const showMissing = () => {
+        if (preview) preview.style.display = 'none';
+        if (placeholder) placeholder.style.display = '';
+        if (deleteBtn) deleteBtn.style.display = 'none';
+        if (dimensions) dimensions.style.display = 'none';
+    };
+    return fetch(ApiClient.getUrl('/JellyfinCanopy/BrandingImage?fileName=' + encodeURIComponent(slot.fileName) + '&t=' + Date.now()), {
+        headers: brandingAuthHeaders()
+    }).then(response => {
+        if (!response.ok) {
+            showMissing();
+            return;
+        }
+        return response.blob().then(blob => {
+            const url = URL.createObjectURL(blob);
+            if (preview) {
+                preview.onload = () => {
+                    if (dimensions) {
+                        dimensions.textContent = preview.naturalWidth + ' × ' + preview.naturalHeight + 'px';
+                        dimensions.style.display = '';
+                    }
+                };
+                preview.src = url;
+                preview.style.display = '';
+            }
+            if (placeholder) placeholder.style.display = 'none';
+            if (deleteBtn) deleteBtn.style.display = 'inline-block';
+        });
+    }).catch(() => showMissing());
+}
+
+function refreshBrandingPreviews() {
+    BRANDING_SLOTS.forEach(slot => {
+        try {
+            refreshBrandingPreview(slot);
+        } catch (e) {
+            console.warn('[JC] branding preview refresh failed', e);
+        }
+    });
+}
+
+function deleteBrandingImage(slot) {
+    setBrandingStatus(slot, 'Deleting...', 'var(--jc-warning)');
+    const formData = new FormData();
+    formData.append('fileName', slot.fileName);
+    fetch(ApiClient.getUrl('/JellyfinCanopy/DeleteBrandingImage'), {
+        method: 'POST',
+        headers: brandingAuthHeaders(),
+        body: formData
+    }).then(response => {
+        if (response.ok) {
+            setBrandingStatus(slot, '✓ Deleted', 'var(--jc-success)');
+            const dimensions = document.getElementById(slot.key + 'Dimensions');
+            if (dimensions) dimensions.style.display = 'none';
+            refreshBrandingPreview(slot);
+            scheduleBrandingStatusClear(slot, 2000);
+            return;
+        }
+        return response.text().catch(() => '').then(text => {
+            setBrandingStatus(slot, '✗ ' + (text || 'Delete failed'), 'var(--jc-danger)');
+        });
+    }).catch(e => {
+        setBrandingStatus(slot, '✗ ' + ((e && e.message) || 'Delete error'), 'var(--jc-danger)');
+    });
+}
+
+function setupBrandingUploads() {
+    BRANDING_SLOTS.forEach(slot => {
+        const input = document.getElementById(slot.key + 'Input');
+        const dropZone = document.getElementById(slot.key + 'DropZone');
+        const statusDiv = document.getElementById(slot.key + 'Status');
+        if (!input || !dropZone || !statusDiv) return; // skip slot if markup missing
+        input.addEventListener('change', () => {
+            if (input.files && input.files[0]) uploadBrandingImage(slot, input.files[0]);
+        });
+        const restoreDropZone = () => {
+            dropZone.style.borderColor = 'color-mix(in srgb, var(--jc-accent) 50%, transparent)';
+            dropZone.style.background = 'rgba(255,255,255,0.05)';
+        };
+        dropZone.addEventListener('dragover', evt => {
+            evt.preventDefault();
+            dropZone.style.borderColor = 'var(--jc-accent)';
+            dropZone.style.background = 'color-mix(in srgb, var(--jc-accent) 10%, transparent)';
+        });
+        dropZone.addEventListener('dragleave', restoreDropZone);
+        dropZone.addEventListener('drop', evt => {
+            evt.preventDefault();
+            restoreDropZone();
+            const file = evt.dataTransfer && evt.dataTransfer.files && evt.dataTransfer.files[0];
+            if (file) uploadBrandingImage(slot, file);
+        });
+        const deleteBtn = document.getElementById(slot.key + 'Delete');
+        if (deleteBtn) deleteBtn.addEventListener('click', () => deleteBrandingImage(slot));
+        refreshBrandingPreview(slot);
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. Permission audit                                                 */
+/* ------------------------------------------------------------------ */
+
+function renderPermissionAudit(container, users) {
+    container.textContent = '';
+    const withIssues = users.filter(u => u.linked && u.issues && u.issues.length > 0);
+    const ok = users.filter(u => u.linked && (!u.issues || u.issues.length === 0));
+    const unlinked = users.filter(u => !u.linked);
+    const allClean = withIssues.length === 0 && unlinked.length === 0;
+
+    const summary = document.createElement('div');
+    summary.className = 'jc-audit-summary';
+    const title = document.createElement('div');
+    title.className = 'jc-audit-summary-title';
+    summary.appendChild(title);
+    if (allClean) {
+        title.textContent = '✅ All ' + ok.length + ' linked user(s) have the required permissions.';
+    } else {
+        title.textContent = 'Audit complete — review the users below.';
+        const chips = document.createElement('div');
+        chips.className = 'jc-audit-summary-chips';
+        const addChip = (kind, icon, text) => {
+            const chip = document.createElement('span');
+            chip.className = 'jc-audit-chip jc-audit-chip-' + kind;
+            const i = document.createElement('i');
+            i.className = 'material-icons';
+            i.setAttribute('aria-hidden', 'true');
+            i.textContent = icon;
+            chip.appendChild(i);
+            chip.appendChild(document.createTextNode(text));
+            chips.appendChild(chip);
+        };
+        if (withIssues.length) addChip('warn', 'warning', withIssues.length + ' with gaps');
+        if (unlinked.length) addChip('unlinked', 'link_off', unlinked.length + ' not linked');
+        if (ok.length) addChip('ok', 'check_circle', ok.length + ' OK');
+        summary.appendChild(chips);
+    }
+    container.appendChild(summary);
+    if (allClean) return;
+
+    const cards = document.createElement('div');
+    cards.className = 'jc-audit-cards';
+    const addCard = (user, kind) => {
+        const card = document.createElement('div');
+        card.className = 'jc-audit-card ' + (kind === 'warn' ? 'jc-audit-card-warn' : 'jc-audit-card-unlinked');
+        const header = document.createElement('div');
+        header.className = 'jc-audit-card-header';
+        const icon = document.createElement('i');
+        icon.className = 'material-icons';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = kind === 'warn' ? 'person' : 'person_off';
+        header.appendChild(icon);
+        const name = document.createElement('span');
+        name.className = 'jc-audit-card-name';
+        name.textContent = user.jellyfinUsername || '';
+        header.appendChild(name);
+        const chip = document.createElement('span');
+        chip.className = 'jc-audit-chip jc-audit-chip-' + (kind === 'warn' ? 'warn' : 'unlinked');
+        chip.textContent = kind === 'warn' ? 'Permissions Missing' : 'Not linked';
+        header.appendChild(chip);
+        card.appendChild(header);
+        if (user.issues && user.issues.length) {
+            const ul = document.createElement('ul');
+            ul.className = 'jc-audit-card-issues';
+            user.issues.forEach(issue => {
+                const li = document.createElement('li');
+                li.textContent = issue;
+                ul.appendChild(li);
+            });
+            card.appendChild(ul);
+        }
+        cards.appendChild(card);
+    };
+    withIssues.forEach(u => addCard(u, 'warn'));
+    unlinked.forEach(u => addCard(u, 'unlinked'));
+    container.appendChild(cards);
+
+    if (ok.length) {
+        const details = document.createElement('details');
+        details.className = 'jc-audit-ok-section';
+        const summaryEl = document.createElement('summary');
+        summaryEl.textContent = 'Show ' + ok.length + ' user(s) with no issues';
+        details.appendChild(summaryEl);
+        const ul = document.createElement('ul');
+        ul.className = 'jc-audit-ok-names';
+        ok.forEach(u => {
+            const li = document.createElement('li');
+            li.textContent = u.jellyfinUsername || '';
+            ul.appendChild(li);
+        });
+        details.appendChild(ul);
+        container.appendChild(details);
+    }
+}
+
+function wirePermissionAudit() {
+    const btn = document.querySelector('#btnPermissionAudit');
+    const result = document.querySelector('#permissionAuditResult');
+    if (!btn || !result) return;
+    // Resilient label setter (span or bare button text).
+    const setLabel = text => {
+        const span = btn.querySelector('span');
+        if (span) span.textContent = text;
+        else btn.textContent = text;
+    };
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        setLabel('Running…');
+        try {
+            const users = await ApiClient.getJSON(ApiClient.getUrl('/JellyfinCanopy/seerr/permission-audit'));
+            renderPermissionAudit(result, Array.isArray(users) ? users : []);
+        } catch (err) {
+            console.error('[JC] Permission ', err);
+            result.textContent = '';
+            const errDiv = document.createElement('div');
+            errDiv.className = 'jc-audit-error';
+            // createElement + textContent: server messages can't inject HTML.
+            errDiv.textContent = 'Audit failed: ' + ((err && err.message) || 'Check server logs.');
+            result.appendChild(errDiv);
+        } finally {
+            btn.disabled = false;
+            setLabel('Run Audit');
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 7. Timing previews                                                  */
+/* ------------------------------------------------------------------ */
+
+let _activePanelPreviewCleanup = null;
+
+function jcReadPreviewMs(input, fallback) {
+    const v = parseInt(input && input.value, 10);
+    if (!isFinite(v) || v < 200) return fallback;
+    return Math.min(v, 120000);
+}
+
+function jcFmtSeconds(ms) {
+    return (ms / 1000).toFixed(1) + 's';
+}
+
+function wireTimingPreviews() {
+    const panelBtn = document.querySelector('#jcTestShortcutsPanel');
+    const toastBtn = document.querySelector('#jcTestToast');
+
+    if (panelBtn && !panelBtn.dataset.jcWired) {
+        panelBtn.dataset.jcWired = 'true';
+        panelBtn.addEventListener('click', () => {
+            // A re-click fully disposes the previous preview (no leaked timers/listeners).
+            if (_activePanelPreviewCleanup) _activePanelPreviewCleanup();
+            const ms = jcReadPreviewMs(document.querySelector('#HelpPanelAutocloseDelay'), 15000);
+            const overlay = document.createElement('div');
+            overlay.className = 'jc-preview-panel-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.setAttribute('aria-labelledby', 'jc-preview-panel-title');
+            const card = document.createElement('div');
+            card.className = 'jc-preview-panel-card';
+            const title = document.createElement('div');
+            title.id = 'jc-preview-panel-title';
+            title.className = 'jc-preview-panel-title';
+            // Static markup only — the single sanctioned innerHTML use in this feature.
+            title.innerHTML = '<i class="material-icons" aria-hidden="true">keyboard</i> Shortcuts Panel preview';
+            const body = document.createElement('div');
+            body.className = 'jc-preview-panel-body';
+            const kbd = document.createElement('kbd');
+            kbd.textContent = '?';
+            const countdown = document.createElement('span');
+            countdown.textContent = jcFmtSeconds(ms);
+            body.appendChild(document.createTextNode('This is how long the real shortcuts/settings panel (opened with the '));
+            body.appendChild(kbd);
+            body.appendChild(document.createTextNode(' key in the main Jellyfin UI) will stay open without interaction. Auto-closes in '));
+            body.appendChild(countdown);
+            body.appendChild(document.createTextNode('.'));
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.setAttribute('is', 'emby-button');
+            closeBtn.className = 'raised';
+            closeBtn.textContent = 'Close now';
+            card.appendChild(title);
+            card.appendChild(body);
+            card.appendChild(closeBtn);
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
             try {
-                document.execCommand('copy');
-                btnText.textContent = 'Copied!';
-                btn.style.color = '#4CAF50';
-                setTimeout(function() {
-                    btnText.textContent = 'Copy';
+                closeBtn.focus();
+            } catch (e) {
+                // focus best-effort
+            }
+            const startedAt = Date.now();
+            let interval = null;
+            let timeout = null;
+            let done = false;
+            const onKeydown = evt => {
+                if (evt.key === 'Escape') {
+                    evt.stopPropagation();
+                    cleanup();
+                }
+            };
+            function cleanup() {
+                if (done) return;
+                done = true;
+                if (interval) clearInterval(interval);
+                if (timeout) clearTimeout(timeout);
+                document.removeEventListener('keydown', onKeydown);
+                overlay.remove();
+                if (_activePanelPreviewCleanup === cleanup) _activePanelPreviewCleanup = null;
+            }
+            _activePanelPreviewCleanup = cleanup;
+            interval = setInterval(() => {
+                const remaining = Math.max(0, ms - (Date.now() - startedAt));
+                countdown.textContent = jcFmtSeconds(remaining);
+            }, 100);
+            timeout = setTimeout(cleanup, ms);
+            document.addEventListener('keydown', onKeydown);
+            overlay.addEventListener('click', evt => {
+                if (evt.target === overlay) cleanup();
+            });
+            closeBtn.addEventListener('click', cleanup);
+        });
+    }
+
+    if (toastBtn && !toastBtn.dataset.jcWired) {
+        toastBtn.dataset.jcWired = 'true';
+        toastBtn.addEventListener('click', () => {
+            document.querySelectorAll('.jc-preview-toast').forEach(prev => {
+                if (prev._jeShowTimer) clearTimeout(prev._jeShowTimer);
+                if (prev._jeHideTimer) clearTimeout(prev._jeHideTimer);
+                if (prev._jeRemoveTimer) clearTimeout(prev._jeRemoveTimer);
+                prev.remove();
+            });
+            const ms = jcReadPreviewMs(document.querySelector('#ToastDuration'), 3000);
+            const toast = document.createElement('div');
+            toast.className = 'jc-preview-toast';
+            toast.setAttribute('role', 'status');
+            toast.setAttribute('aria-live', 'polite');
+            toast.textContent = 'Example toast — disappears in ' + jcFmtSeconds(ms);
+            document.body.appendChild(toast);
+            // Mirrors real JC.toast timing.
+            toast._jeShowTimer = setTimeout(() => toast.classList.add('jc-shown'), 10);
+            toast._jeHideTimer = setTimeout(() => toast.classList.remove('jc-shown'), ms);
+            toast._jeRemoveTimer = setTimeout(() => toast.remove(), ms + 350);
+        });
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 8. Order rows (quality categories + pages order)                    */
+/* ------------------------------------------------------------------ */
+
+let _qualityCatRenderOK = false;
+let _pagesOrderRenderOK = false;
+
+function refreshArrowRows(containerSel, rowClass, upClass, downClass) {
+    const container = document.querySelector(containerSel);
+    if (!container) return;
+    const rows = Array.from(container.querySelectorAll('.' + rowClass));
+    const setDisabled = (btn, disabled) => {
+        if (!btn) return;
+        btn.disabled = disabled;
+        btn.style.opacity = disabled ? '.4' : '';
+        btn.style.cursor = disabled ? 'not-allowed' : '';
+    };
+    rows.forEach((row, idx) => {
+        setDisabled(row.querySelector('.' + upClass), idx === 0);
+        setDisabled(row.querySelector('.' + downClass), idx === rows.length - 1);
+    });
+}
+
+function refreshQualityCatAdminArrows() {
+    refreshArrowRows('#qualityCategoriesAdmin', 'jc-quality-cat-admin-row', 'jc-cat-up', 'jc-cat-down');
+}
+
+function refreshPagesOrderAdminArrows() {
+    refreshArrowRows('#pagesOrderAdmin', 'jc-pages-order-row', 'jc-page-up', 'jc-page-down');
+}
+
+function renderQualityCatOrderAdmin(config) {
+    _qualityCatRenderOK = false;
+    try {
+        const container = document.querySelector('#qualityCategoriesAdmin');
+        if (!container) return; // flag stays false -> save path skips *Order writes
+        const rows = Array.from(container.querySelectorAll('.jc-quality-cat-admin-row'));
+        const orderOf = row => {
+            const saved = parseInt(config ? config[row.dataset.orderKey] : NaN, 10);
+            return isFinite(saved) ? saved : parseInt(row.dataset.defaultOrder, 10);
+        };
+        rows.sort((a, b) => {
+            const diff = orderOf(a) - orderOf(b);
+            if (diff !== 0) return diff;
+            return parseInt(a.dataset.defaultOrder, 10) - parseInt(b.dataset.defaultOrder, 10);
+        });
+        rows.forEach(row => container.appendChild(row));
+        refreshQualityCatAdminArrows();
+        _qualityCatRenderOK = true;
+    } catch (err) {
+        console.error('Jellyfin Canopy: renderQualityCatOrderAdmin failed; will skip *Order save', err);
+    }
+}
+
+function renderPagesOrderAdmin(config) {
+    _pagesOrderRenderOK = false;
+    try {
+        const container = document.querySelector('#pagesOrderAdmin');
+        if (!container) return; // flag stays false -> save path skips PagesOrder write
+        const rows = Array.from(container.querySelectorAll('.jc-pages-order-row'));
+        const csv = String((config && config.PagesOrder) || '');
+        const pos = {};
+        csv.split(',').map(s => s.trim()).filter(Boolean).forEach((id, idx) => {
+            if (!(id in pos)) pos[id] = idx; // unknown CSV ids simply never match a row
+        });
+        const domIndex = new Map();
+        rows.forEach((row, idx) => domIndex.set(row, idx));
+        const sorted = rows.slice().sort((a, b) => {
+            const ai = (a.dataset.pageId in pos) ? pos[a.dataset.pageId] : Infinity;
+            const bi = (b.dataset.pageId in pos) ? pos[b.dataset.pageId] : Infinity;
+            if (ai !== bi) return ai - bi;
+            return domIndex.get(a) - domIndex.get(b); // ids missing from CSV keep default DOM order, last
+        });
+        sorted.forEach(row => container.appendChild(row));
+        refreshPagesOrderAdminArrows();
+        _pagesOrderRenderOK = true;
+    } catch (err) {
+        console.error('Jellyfin Canopy: renderPagesOrderAdmin failed; will skip PagesOrder save', err);
+    }
+}
+
+function renderOrderRows(config) {
+    renderQualityCatOrderAdmin(config);
+    renderPagesOrderAdmin(config);
+}
+
+function wireReorderList(containerSel, rowClass, upClass, downClass, refresh) {
+    // Document-level delegated handler, registered once; survives SPA navigation.
+    document.addEventListener('click', evt => {
+        const target = evt.target;
+        if (!target || !target.closest) return;
+        const btn = target.closest(containerSel + ' .' + upClass + ', ' + containerSel + ' .' + downClass);
+        if (!btn || btn.disabled) return;
+        const row = btn.closest('.' + rowClass);
+        if (!row || !row.parentNode) return;
+        if (btn.classList.contains(upClass)) {
+            const prev = row.previousElementSibling;
+            if (prev && prev.classList.contains(rowClass)) row.parentNode.insertBefore(row, prev);
+        } else {
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains(rowClass)) row.parentNode.insertBefore(next, row);
+        }
+        refresh();
+        jcMarkConfigDirty();
+    });
+}
+
+function wireOrderRowArrows() {
+    wireReorderList('#qualityCategoriesAdmin', 'jc-quality-cat-admin-row', 'jc-cat-up', 'jc-cat-down', refreshQualityCatAdminArrows);
+    wireReorderList('#pagesOrderAdmin', 'jc-pages-order-row', 'jc-page-up', 'jc-page-down', refreshPagesOrderAdminArrows);
+}
+
+/* ------------------------------------------------------------------ */
+/* 9. Blocked users & Seerr user import                                */
+/* ------------------------------------------------------------------ */
+
+let _blockedUsersLoaded = false;
+
+function jcNormalizeUserId(id) {
+    return String(id || '').replace(/-/g, '').toLowerCase();
+}
+
+function updateBlockedUsersCount() {
+    const badge = document.querySelector('#blockedUsersCount');
+    if (!badge) return;
+    const n = document.querySelectorAll('.blockedUserCheckbox:checked').length;
+    badge.textContent = n > 0 ? '(' + n + ' blocked)' : '(none)';
+}
+
+function updateBlockedUsersScrollHint() {
+    const container = document.querySelector('#blockedUsersContainer');
+    const hint = document.querySelector('#blockedUsersScrollHint');
+    if (!container || !hint) return;
+    const overflows = container.scrollHeight > container.clientHeight + 4;
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 4;
+    hint.style.display = (overflows && !atBottom) ? '' : 'none';
+}
+
+function loadBlockedUsersList(blockedIdsString) {
+    const container = document.querySelector('#blockedUsersContainer');
+    if (!container) return Promise.resolve();
+    _blockedUsersLoaded = false;
+    const blocked = new Set(String(blockedIdsString || '')
+        .split(/[,\r\n]+/)
+        .map(jcNormalizeUserId)
+        .filter(Boolean));
+    return ApiClient.getUsers().then(users => {
+        container.textContent = '';
+        users.slice()
+            .sort((a, b) => String(a.Name || '').localeCompare(String(b.Name || '')))
+            .forEach(user => {
+                const normalized = jcNormalizeUserId(user.Id);
+                const label = document.createElement('label');
+                label.className = 'emby-checkbox-label';
+                const cb = document.createElement('input');
+                cb.setAttribute('is', 'emby-checkbox');
+                cb.type = 'checkbox';
+                cb.className = 'blockedUserCheckbox';
+                cb.dataset.userid = normalized;
+                cb.checked = blocked.has(normalized);
+                cb.addEventListener('change', updateBlockedUsersCount);
+                const span = document.createElement('span');
+                span.className = 'checkboxLabel';
+                span.textContent = user.Name || '';
+                label.appendChild(cb);
+                label.appendChild(span);
+                container.appendChild(label);
+            });
+        _blockedUsersLoaded = true;
+        updateBlockedUsersCount();
+        requestAnimationFrame(updateBlockedUsersScrollHint);
+        if (!container.dataset.jcScrollWired) {
+            container.dataset.jcScrollWired = 'true';
+            container.addEventListener('scroll', updateBlockedUsersScrollHint);
+        }
+    }).catch(e => {
+        console.warn('[JC] failed to load users for blocklist', e);
+        container.textContent = 'Could not load users.';
+        _blockedUsersLoaded = false;
+    });
+}
+
+function syncBlockedUsersToHiddenInput() {
+    if (!_blockedUsersLoaded) {
+        // Never wipe the stored blocklist when the list never rendered.
+        console.warn('Jellyfin Canopy: skipping blocklist sync — user list failed to load. Existing config preserved.');
+        return;
+    }
+    const hidden = document.querySelector('#seerrImportBlockedUsers');
+    if (!hidden) return;
+    hidden.value = Array.from(document.querySelectorAll('.blockedUserCheckbox:checked'))
+        .map(cb => cb.dataset.userid)
+        .filter(Boolean)
+        .join(',');
+}
+
+function wireImportSeerrUsers() {
+    const btn = document.querySelector('#btnImportSeerrUsers');
+    if (!btn) return;
+    const result = document.querySelector('#importUsersResult');
+    const setLabel = text => {
+        const span = btn.querySelector('span');
+        if (span) span.textContent = text;
+        else btn.textContent = text;
+    };
+    const renderErrorList = errors => {
+        const ul = document.createElement('ul');
+        ul.style.color = 'var(--jc-danger)';
+        errors.forEach(msg => {
+            const li = document.createElement('li');
+            li.textContent = String(msg);
+            ul.appendChild(li);
+        });
+        return ul;
+    };
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        setLabel('Saving config...');
+        try {
+            // Server must see the current blocklist before importing.
+            // saveConfig never rejects; it reports failure via its return value.
+            const preImportSaved = await saveConfig(new Event('submit'));
+            if (preImportSaved === false) {
+                if (result) {
+                    result.textContent = 'Could not save config. Import was not attempted.';
+                    result.style.color = 'var(--jc-danger)';
+                }
+                return;
+            }
+            setLabel('Importing...');
+            const response = await ApiClient.fetch({
+                // NOTE: missing leading slash preserved verbatim (contract endpoint #22).
+                url: ApiClient.getUrl('JellyfinCanopy/seerr/import-users'),
+                type: 'POST',
+                dataType: 'json'
+            });
+            let payload = response;
+            if (typeof payload === 'string') {
+                try {
+                    payload = JSON.parse(payload);
+                } catch (e) {
+                    payload = {};
+                }
+            }
+            if (payload && payload.data && typeof payload.data === 'object') payload = payload.data;
+            const imported = (payload && payload.usersImported != null) ? payload.usersImported : 0;
+            const total = (payload && payload.totalUsers != null) ? payload.totalUsers : 0;
+            const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
+            if (result) {
+                result.textContent = '';
+                result.style.color = '';
+                const line = document.createElement('div');
+                line.textContent = 'Imported ' + imported + ' new user(s) out of ' + total + ' total.';
+                line.style.color = errors.length ? 'var(--jc-warning)' : 'var(--jc-success)';
+                result.appendChild(line);
+                if (errors.length) result.appendChild(renderErrorList(errors));
+            }
+        } catch (e) {
+            console.warn('[JC] Seerr user import failed', e);
+            if (result) {
+                result.textContent = '';
+                result.style.color = '';
+                const line = document.createElement('div');
+                line.textContent = 'Import failed. Check Seerr configuration and API key permissions.';
+                line.style.color = 'var(--jc-danger)';
+                result.appendChild(line);
+                const errs = (e && e.responseJSON && Array.isArray(e.responseJSON.errors)) ? e.responseJSON.errors : [];
+                if (errs.length) result.appendChild(renderErrorList(errs));
+            }
+        } finally {
+            btn.disabled = false;
+            setLabel('Import Users Now');
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 10. Language options                                                */
+/* ------------------------------------------------------------------ */
+
+function loadLanguageOptions() {
+    const select = document.querySelector('#DefaultLanguage');
+    if (!select) return Promise.resolve();
+    const CUSTOM_DISPLAY_NAMES = {
+        'pr': 'Pirate',
+        'en-GB': 'English (United Kingdom)',
+        'en-US': 'English (United States)',
+        'zh-CN': 'Chinese (Simplified)',
+        'zh-HK': 'Chinese (Hong Kong)',
+        'pt-BR': 'Portuguese (Brazil)'
+    };
+    return Promise.all([
+        ApiClient.getJSON(ApiClient.getUrl('/JellyfinCanopy/locales')),
+        ApiClient.getJSON(ApiClient.getUrl('/Localization/Cultures'))
+    ]).then(results => {
+        const locales = results[0];
+        const cultures = results[1];
+        const codes = (Array.isArray(locales) ? locales : [])
+            .map(l => (typeof l === 'string' ? l : (l && (l.code || l.Code)) || ''))
+            .filter(Boolean);
+        const codeSet = new Set(codes);
+        const cultureByTwoLetter = {};
+        (Array.isArray(cultures) ? cultures : []).forEach(c => {
+            if (c && c.TwoLetterISOLanguageName && !cultureByTwoLetter[c.TwoLetterISOLanguageName]) {
+                cultureByTwoLetter[c.TwoLetterISOLanguageName] = c.DisplayName;
+            }
+        });
+        const displayName = code => {
+            if (CUSTOM_DISPLAY_NAMES[code]) return CUSTOM_DISPLAY_NAMES[code];
+            const direct = cultureByTwoLetter[code];
+            if (direct) return direct;
+            const dash = code.indexOf('-');
+            if (dash > 0) {
+                const base = code.slice(0, dash);
+                const region = code.slice(dash + 1);
+                const baseName = CUSTOM_DISPLAY_NAMES[base] || cultureByTwoLetter[base];
+                // Regional format only when the base code is itself a shipped locale.
+                if (baseName && codeSet.has(base)) return baseName + ' (' + region + ')';
+            }
+            return code;
+        };
+        // Generic 'en' stays the fallback catalog; regional variants are selectable.
+        codes.filter(code => code !== 'en')
+            .map(code => ({ code: code, name: displayName(code) }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .forEach(entry => {
+                const opt = document.createElement('option');
+                opt.value = entry.code;
+                opt.textContent = entry.name;
+                select.appendChild(opt);
+            });
+    }).catch(err => {
+        // Select keeps whatever static options the HTML has.
+        console.warn('Jellyfin Canopy: Failed to load language options:', err);
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 11. Smart client refresh                                            */
+/* ------------------------------------------------------------------ */
+
+function wireClientRefresh() {
+    const btn = document.querySelector('#forceClientRefreshBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const ok = confirm('Refresh all open Canopy clients?\n\nClients will reload at their next safe point. Active or paused playback is never interrupted.');
+        if (!ok) return;
+        const status = document.querySelector('#forceClientRefreshStatus');
+        btn.disabled = true;
+        if (status) status.textContent = 'Sending refresh signal…';
+        try {
+            await ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/client-refresh'),
+                dataType: 'json'
+            });
+            if (status) status.textContent = 'Refresh signal sent. Visible clients will react within their configured check interval; background clients will react when reopened.';
+        } catch (e) {
+            console.error('[JC] client refresh signal failed', e);
+            if (status) status.textContent = 'Could not send the refresh signal. Check the server logs and try again.';
+        } finally {
+            btn.disabled = false;
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 12. Sticky header scroll shadow                                     */
+/* ------------------------------------------------------------------ */
+
+function wireStickyHeader() {
+    const header = document.querySelector('.jc-sticky-header');
+    if (!header) return;
+    // The actual scroller is ambiguous (page wrapper, body, window) — collect ALL
+    // ancestors with computed overflow-y auto|scroll as candidates plus window.
+    const candidates = [];
+    let node = header.parentElement;
+    while (node) {
+        try {
+            const overflowY = getComputedStyle(node).overflowY;
+            if (overflowY === 'auto' || overflowY === 'scroll') candidates.push(node);
+        } catch (e) {
+            // unstylable node — skip
+        }
+        node = node.parentElement;
+    }
+    if (!candidates.length) {
+        console.warn('[JC] sticky-header: no overflow:auto|scroll ancestors found; relying on window scroll only.');
+    }
+    let ticking = false;
+    const readScroll = () => {
+        try {
+            let max = window.scrollY || document.documentElement.scrollTop || 0;
+            candidates.forEach(el => {
+                // Detached nodes freeze at their last value — skip them.
+                if (!el.isConnected) return;
+                if (el.scrollTop > max) max = el.scrollTop;
+            });
+            header.classList.toggle('jc-is-scrolled', max > 4);
+        } catch (e) {
+            console.warn('[JC] sticky-header read failed:', e);
+        } finally {
+            // Reset in finally so a throwing read can't wedge the rAF pipeline.
+            ticking = false;
+        }
+    };
+    const onScroll = () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(readScroll);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    candidates.forEach(el => el.addEventListener('scroll', onScroll, { passive: true }));
+    onScroll(); // initial read at wire time
+}
+
+/* ------------------------------------------------------------------ */
+/* 13. Auto-movie custom quality pickers                               */
+/* ------------------------------------------------------------------ */
+
+let _autoMovieServerListenerAdded = false;
+
+function resetSelectWithMessage(select, value, message) {
+    if (!select) return;
+    select.textContent = '';
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = message;
+    select.appendChild(opt);
+    select.value = value;
+}
+
+function loadAutoMovieRadarrServers(savedConfig) {
+    const serverSelect = document.querySelector('#autoMovieRequestServer');
+    if (!serverSelect) return Promise.resolve();
+    resetSelectWithMessage(serverSelect, '-1', 'Loading...');
+    return ApiClient.getJSON(ApiClient.getUrl('/JellyfinCanopy/seerr/radarr')).then(servers => {
+        resetSelectWithMessage(serverSelect, '-1', 'Select Server...');
+        (Array.isArray(servers) ? servers : []).forEach(server => {
+            if (!server || !isFinite(parseInt(server.id, 10))) return; // numeric ids only
+            const opt = document.createElement('option');
+            opt.value = String(server.id);
+            opt.textContent = server.name || ('Server ' + server.id);
+            serverSelect.appendChild(opt);
+        });
+        if (savedConfig && typeof savedConfig.AutoMovieRequestCustomServerId === 'number'
+            && savedConfig.AutoMovieRequestCustomServerId >= 0) {
+            serverSelect.value = String(savedConfig.AutoMovieRequestCustomServerId);
+            loadAutoMovieServerDetails(savedConfig.AutoMovieRequestCustomServerId, savedConfig);
+        }
+        if (!_autoMovieServerListenerAdded) {
+            _autoMovieServerListenerAdded = true;
+            serverSelect.addEventListener('change', () => {
+                const id = parseInt(serverSelect.value, 10);
+                if (!isNaN(id) && id >= 0) {
+                    loadAutoMovieServerDetails(id);
+                } else {
+                    resetSelectWithMessage(document.querySelector('#autoMovieRequestProfile'), '0', 'Select a server first...');
+                    resetSelectWithMessage(document.querySelector('#autoMovieRequestRootFolder'), '', 'Select a server first...');
+                }
+            });
+        }
+    }).catch(err => {
+        resetSelectWithMessage(serverSelect, '-1', 'Failed to load servers');
+        console.warn('[Auto-Movie-Request] Failed to load Radarr servers:', err);
+    });
+}
+
+function loadAutoMovieServerDetails(serverId, savedConfig) {
+    const profileSelect = document.querySelector('#autoMovieRequestProfile');
+    const folderSelect = document.querySelector('#autoMovieRequestRootFolder');
+    resetSelectWithMessage(profileSelect, '0', 'Loading...');
+    resetSelectWithMessage(folderSelect, '', 'Loading...');
+    return ApiClient.getJSON(ApiClient.getUrl('/JellyfinCanopy/seerr/radarr/' + serverId)).then(details => {
+        resetSelectWithMessage(profileSelect, '0', 'Select Profile...');
+        ((details && details.profiles) || []).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = String(p.id);
+            opt.textContent = p.name || String(p.id);
+            if (profileSelect) profileSelect.appendChild(opt);
+        });
+        resetSelectWithMessage(folderSelect, '', 'Select Folder...');
+        ((details && details.rootFolders) || []).forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f.path || '';
+            opt.textContent = f.path || '';
+            if (folderSelect) folderSelect.appendChild(opt);
+        });
+        if (savedConfig) {
+            if (typeof savedConfig.AutoMovieRequestCustomProfileId === 'number'
+                && savedConfig.AutoMovieRequestCustomProfileId > 0 && profileSelect) {
+                profileSelect.value = String(savedConfig.AutoMovieRequestCustomProfileId);
+            }
+            if (savedConfig.AutoMovieRequestCustomRootFolder && folderSelect) {
+                folderSelect.value = savedConfig.AutoMovieRequestCustomRootFolder;
+            }
+        }
+    }).catch(err => {
+        resetSelectWithMessage(profileSelect, '0', 'Failed to load');
+        resetSelectWithMessage(folderSelect, '', 'Failed to load');
+        console.warn('[Auto-Movie-Request] Failed to load Radarr server details:', err);
+    });
+}
+
+function initAutoMovieQualityMode() {
+    const modeSelect = document.querySelector('#autoMovieRequestQualityMode');
+    const customSettings = document.querySelector('#autoMovieRequestCustomSettings');
+    if (!modeSelect || !customSettings) return;
+    modeSelect.addEventListener('change', () => {
+        const custom = modeSelect.value === 'custom';
+        customSettings.style.display = custom ? 'block' : 'none';
+        if (custom) loadAutoMovieRadarrServers();
+    });
+}
+
+function populateAutoMovieRequestSelects(config) {
+    const customSettings = document.querySelector('#autoMovieRequestCustomSettings');
+    const custom = ((config && config.AutoMovieRequestQualityMode) || 'default') === 'custom';
+    if (customSettings) customSettings.style.display = custom ? 'block' : 'none';
+    if (custom) loadAutoMovieRadarrServers(config);
+}
+
+/* ------------------------------------------------------------------ */
+/* 14. Custom plugin links tester                                      */
+/* ------------------------------------------------------------------ */
+
+function wireCustomPluginLinksTester() {
+    const btn = document.querySelector('#testCustomPluginLinksBtn');
+    const textarea = document.querySelector('#customPluginLinks');
+    if (!btn || !textarea) return;
+    btn.addEventListener('click', () => {
+        const raw = (textarea.value || '').trim();
+        if (!raw) {
+            Dashboard.alert({ title: 'No Links', message: 'Please add some custom plugin links first.' });
+            return;
+        }
+        const validLinks = [];
+        const invalidLines = [];
+        raw.split('\n').forEach((line, idx) => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            const parts = trimmed.split('|').map(p => p.trim());
+            if (parts.length >= 2 && parts[0] && parts[1]) {
+                validLinks.push({ name: parts[0], icon: parts[1] });
+            } else {
+                invalidLines.push('Line ' + (idx + 1) + ': "' + trimmed + '"');
+            }
+        });
+        if (invalidLines.length) {
+            Dashboard.alert({
+                title: 'Invalid Format',
+                message: invalidLines.join('\n') + '\n\nPlease use the format: Configuration Page Name | icon_name'
+            });
+        }
+        if (!validLinks.length) {
+            Dashboard.alert({ title: 'No Valid Links', message: 'No valid links found.' });
+            return;
+        }
+        // Silently no-ops when the client runtime isn't present.
+        if (window.JellyfinCanopy && window.JellyfinCanopy.customPlugins) {
+            window.testCustomPluginLinks = validLinks;
+            window.JellyfinCanopy.customPlugins.refresh();
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* 15. Copy-to-clipboard buttons                                       */
+/* ------------------------------------------------------------------ */
+
+function jcFallbackCopy(text, onSuccess) {
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand('copy');
+        textarea.remove();
+        if (ok) onSuccess();
+        else alert('Failed to copy to clipboard');
+    } catch (e) {
+        alert('Failed to copy to clipboard');
+    }
+}
+
+function wireCopyButtons() {
+    document.querySelectorAll('.jc-copy-html-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const text = btn.dataset.copyText || '';
+            const showCopied = () => {
+                const label = btn.querySelector('.copy-btn-text');
+                if (label) label.textContent = 'Copied!';
+                btn.style.color = 'var(--jc-success)';
+                if (btn._jcCopyTimer) clearTimeout(btn._jcCopyTimer);
+                btn._jcCopyTimer = setTimeout(() => {
+                    btn._jcCopyTimer = null;
+                    if (label) label.textContent = 'Copy';
                     btn.style.color = '';
                 }, 2000);
-            } catch (err) {
-                console.error('Fallback copy failed: ', err);
-                alert('Failed to copy to clipboard');
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showCopied).catch(() => jcFallbackCopy(text, showCopied));
+            } else {
+                jcFallbackCopy(text, showCopied);
             }
-            document.body.removeChild(textarea);
+        });
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* wireWidgets — single entry point, called ONCE by the integrator     */
+/* ------------------------------------------------------------------ */
+
+function wireWidgets() {
+    const wire = (name, fn) => {
+        try {
+            fn();
+        } catch (e) {
+            console.warn('[JC] wireWidgets: ' + name + ' failed', e);
+        }
+    };
+    wire('descriptions-toggle', wireDescriptionsToggle);
+    wire('shortcuts-editor', wireShortcutsEditor);
+    wire('order-row-arrows', wireOrderRowArrows);
+    wire('branding-uploads', setupBrandingUploads);
+    wire('maintenance-mode-controls', setupMaintenanceModeControls);
+    wire('client-refresh', wireClientRefresh);
+    wire('auto-movie-quality-mode', initAutoMovieQualityMode);
+    wire('requests-banner-reactive', wireRequestsBannerReactive);
+    wire('sticky-header', wireStickyHeader);
+    wire('gated-help', wireGatedHelp);
+    wire('reactive-deps', wireReactiveDeps);
+    wire('import-seerr-users', wireImportSeerrUsers);
+    wire('permission-audit', wirePermissionAudit);
+    wire('timing-previews', wireTimingPreviews);
+    wire('collapsible-banners', wireCollapsibleBanners);
+    wire('custom-plugin-links-tester', wireCustomPluginLinksTester);
+    wire('copy-buttons', wireCopyButtons);
+}
+
+/* SECTION: binder + save/load pipeline — owns: configBoundFields,
+   applyConfigToBoundFields, CONFIG_FIELD_OVERRIDES, readBoundFieldsIntoConfig,
+   buildConfigFromForm, saveArrInstances, loadConfig, saveConfig,
+   wireCoreBindings, _jeSaveInFlight, _jcWizardShown.
+   depends: collectShortcuts/renderShortcuts/renderOrderRows/
+   loadMaintenanceUsers/populateAutoMovieRequestSelects/loadBlockedUsersList/
+   syncBlockedUsersToHiddenInput/_qualityCatRenderOK/_pagesOrderRenderOK
+   (widgets), collectInstancesFromDom/renderArrInstances/_arrParseOK +
+   jcNormalizeMaintainerrBaseUrl/jcValidateMaintainerrMappings (connections),
+   checkInstalledPlugins/renderServiceStatusDashboard/renderFeaturesDashboard
+   (dashboards), updateAllDependencies/updateRequestsRequirementsBanner
+   (widgets), jcSyncEssentialsMirrors/jcOpenWizard (view-mode section). */
+
+function configBoundFields() {
+    return Array.from(document.querySelectorAll('[data-config-key]'));
+}
+
+/* Per-field load/save clamps. The exact fallback and clamp semantics are a
+   payload contract; keep numbers and NaN behavior identical. */
+const CONFIG_FIELD_OVERRIDES = {
+    AutoMovieRequestMinutesWatched: {
+        save: function (el) {
+            const minutesValue = parseInt(el.value, 10);
+            return isNaN(minutesValue) || minutesValue < 1 ? 20 : Math.min(minutesValue, 180);
+        }
+    },
+    WatchlistMemoryRetentionDays: {
+        save: function (el) {
+            const retentionDays = parseInt(el.value);
+            return isNaN(retentionDays) || retentionDays < 1 ? 365 : Math.min(retentionDays, 3650);
+        }
+    },
+    SeerrScanDebounceSeconds: {
+        save: function (el) {
+            const seerrScanDebounce = parseInt(el.value);
+            return isNaN(seerrScanDebounce) || seerrScanDebounce < 5 ? 60 : Math.min(seerrScanDebounce, 3600);
+        }
+    },
+    DownloadsPollIntervalSeconds: {
+        load: function (el, v) {
+            el.value = (v !== undefined && v !== null) ? v : 30;
+        },
+        save: function (el) {
+            const pollInterval = parseInt(el.value, 10);
+            return pollInterval >= 30 ? pollInterval : 30;
+        }
+    },
+    DownloadsHistoryWindowDays: {
+        load: function (el, v) {
+            var value = parseInt(v, 10);
+            el.value = isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
+        },
+        save: function (el) {
+            var value = parseInt(el.value, 10);
+            return isNaN(value) ? 7 : Math.min(30, Math.max(1, value));
+        }
+    },
+    ClientRefreshPollSeconds: {
+        load: function (el, v) {
+            el.value = (v !== undefined && v !== null) ? v : 30;
+        },
+        save: function (el) {
+            const value = parseInt(el.value, 10);
+            return isNaN(value) ? 30 : Math.min(3600, Math.max(5, value));
+        }
+    },
+    ClientRefreshIdleSeconds: {
+        load: function (el, v) {
+            el.value = (v !== undefined && v !== null) ? v : 5;
+        },
+        save: function (el) {
+            const value = parseInt(el.value, 10);
+            return isNaN(value) ? 5 : Math.min(300, Math.max(0, value));
+        }
+    },
+    PauseScreenDelaySeconds: {
+        save: function (el) {
+            const v = parseInt(el.value, 10);
+            return isNaN(v) || v < 1 ? 5 : Math.min(v, 60);
+        }
+    },
+    SpoilerBlurIntensity: {
+        save: function (el) {
+            const v = parseInt(el.value, 10);
+            return isNaN(v) || v < 5 ? 40 : Math.min(v, 100);
+        }
+    },
+};
+
+function applyConfigToBoundFields(config) {
+    configBoundFields().forEach(function (el) {
+        const key = el.dataset.configKey;
+        const override = CONFIG_FIELD_OVERRIDES[key];
+        const v = config[key];
+        if (override && override.load) {
+            override.load(el, v);
+        } else if (el.type === 'checkbox') {
+            el.checked = el.dataset.configDefault === 'true' ? v !== false : !!v;
+        } else if ('configFallback' in el.dataset) {
+            el.value = v || el.dataset.configFallback;
+        } else {
+            el.value = v;
+        }
+    });
+}
+
+function readBoundFieldsIntoConfig(config) {
+    configBoundFields().forEach(function (el) {
+        const key = el.dataset.configKey;
+        const override = CONFIG_FIELD_OVERRIDES[key];
+        if (override && override.save) {
+            config[key] = override.save(el);
+        } else if (el.type === 'checkbox') {
+            config[key] = el.checked;
+        } else if ('configInt' in el.dataset) {
+            const parsed = parseInt(el.value, 10);
+            config[key] = 'configFallback' in el.dataset
+                ? (parsed || parseInt(el.dataset.configFallback, 10))
+                : parsed;
+        } else if ('configFallback' in el.dataset) {
+            config[key] = el.value || el.dataset.configFallback;
+        } else {
+            config[key] = el.value;
+        }
+    });
+}
+
+/* ---------------------------------------------------------------------------
+   Form → config assembly. Re-fetch-then-overlay: start from the server's
+   current state so unknown keys survive, then overlay the form.
+   --------------------------------------------------------------------------- */
+async function buildConfigFromForm() {
+    const config = await ApiClient.getPluginConfiguration(pluginId);
+
+    config.Shortcuts = collectShortcuts();
+    readBoundFieldsIntoConfig(config);
+
+    const mmAccounts = !!(document.querySelector('#mmAction_accounts') || {}).checked;
+    const mmRemote = !!(document.querySelector('#mmAction_remote') || {}).checked;
+    config.MaintenanceModeAction = (mmAccounts && mmRemote) ? 'both'
+                                 : mmRemote                 ? 'disable_remote'
+                                 :                            'disable_accounts';
+    const mmUsersMode = (document.querySelector('input[name="maintenanceModeUsers"]:checked') || {}).value || 'all';
+    if (mmUsersMode === 'all') {
+        config.MaintenanceModeAffectedUsers = 'all';
+    } else {
+        const checked = Array.from(document.querySelectorAll('.jc-mm-user-cb:checked')).map(cb => cb.value);
+        config.MaintenanceModeAffectedUsers = JSON.stringify(checked);
+    }
+
+    if (_qualityCatRenderOK) {
+        const adminCatRows = document.querySelectorAll('#qualityCategoriesAdmin .jc-quality-cat-admin-row');
+        adminCatRows.forEach((row, idx) => {
+            const orderKey = row.dataset.orderKey;
+            if (orderKey) config[orderKey] = idx + 1;
+        });
+    }
+    if (_pagesOrderRenderOK) {
+        var pageOrderRows = document.querySelectorAll('#pagesOrderAdmin .jc-pages-order-row');
+        config.PagesOrder = Array.from(pageOrderRows).map(function (r) { return r.dataset.pageId; }).filter(Boolean).join(',');
+    }
+
+    config.EnableTagsLocalStorageFallback = config.TagCacheServerMode
+        ? document.querySelector('#enableTagsLocalStorageFallback').checked
+        : true;
+
+    (function validateSeerrUrls() {
+        const lines = (document.querySelector('#seerrUrls').value || '')
+            .split('\n').map(u => u.trim()).filter(Boolean);
+        const valid = [];
+        const invalid = [];
+        lines.forEach(function (line) {
+            try {
+                const parsed = new URL(line);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') { valid.push(line); return; }
+            } catch (e) { /* fall through to invalid */ }
+            invalid.push(line);
+        });
+        if (invalid.length) {
+            console.warn('Jellyfin Canopy: dropping invalid Seerr URL(s) on save (must start with http:// or https://):', invalid);
+            Dashboard.alert({
+                title: 'Invalid Seerr URL(s)',
+                message: 'These lines were dropped because they do not start with http:// or https://:\n\n' + invalid.join('\n'),
+            });
+        }
+        config.SeerrUrls = valid.join('\n');
+    })();
+
+    (function validateSeerrExternalUrl() {
+        const raw = (document.querySelector('#seerrExternalUrl').value || '').trim();
+        if (raw && !jcIsHttpUrl(raw)) {
+            console.warn('Jellyfin Canopy: dropping invalid Seerr External URL on save:', raw);
+            Dashboard.alert({
+                title: 'Invalid Seerr External URL',
+                message: 'The browser URL must be an absolute http(s) URL without credentials, query, or fragment. It was cleared.',
+            });
+            config.SeerrExternalUrl = '';
+        } else {
+            config.SeerrExternalUrl = raw;
         }
     })();
+
+    config.SeerrApiKey = (document.querySelector('#SeerrApiKey').value || '').replace(/\s/g, '');
+    config.SeerrUrlMappings = (document.querySelector('#seerrUrlMappings').value || '')
+        .split('\n').map(u => u.trim()).filter(Boolean).join('\n');
+
+    (function validateMaintainerrConfig() {
+        const problems = [];
+        const internalRaw = String(config.MaintainerrUrl || '').trim();
+        const internalNorm = jcNormalizeMaintainerrBaseUrl(internalRaw);
+        if (internalRaw && !internalNorm) problems.push('the internal URL');
+        config.MaintainerrUrl = internalNorm;
+        const externalRaw = String(config.MaintainerrExternalUrl || '').trim();
+        const externalNorm = jcNormalizeMaintainerrBaseUrl(externalRaw);
+        if (externalRaw && !externalNorm) problems.push('the browser URL');
+        config.MaintainerrExternalUrl = externalNorm;
+        var mappingResult = jcValidateMaintainerrMappings(String(config.MaintainerrUrlMappings || ''));
+        config.MaintainerrUrlMappings = mappingResult.value;
+        if (mappingResult.issues && mappingResult.issues.length) {
+            problems.push(mappingResult.issues.length + ' mapping validation issue(s)');
+        }
+        if (problems.length) {
+            Dashboard.alert({
+                title: 'Invalid Maintainerr URL configuration',
+                message: 'Dropped ' + problems.join(', ') + '. Maintainerr URLs are limited to 2048 characters and must be HTTP(S) bases without credentials, query, fragment, or traversal. Mappings are limited to 64 KiB and 32 nonempty rows.',
+            });
+        }
+    })();
+
+    (function validateBazarrExternalUrl() {
+        const raw = String(config.BazarrExternalUrl || '').trim();
+        if (raw && !jcIsHttpUrl(raw)) {
+            console.warn('Jellyfin Canopy: dropping invalid Bazarr External URL on save:', raw);
+            Dashboard.alert({
+                title: 'Invalid Bazarr External URL',
+                message: 'The browser URL must be an absolute http(s) URL without credentials, query, or fragment. It was cleared.',
+            });
+            config.BazarrExternalUrl = '';
+        } else {
+            config.BazarrExternalUrl = raw;
+        }
+    })();
+
+    config.TMDB_API_KEY = document.querySelector('#seerr_TMDB_API_KEY').value;
+
+    const onStart = document.querySelector('#autoMovieRequestTriggerOnStart').checked;
+    const onMinutes = document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked;
+    if (onStart && onMinutes)      config.AutoMovieRequestTriggerType = 'Both';
+    else if (onStart)              config.AutoMovieRequestTriggerType = 'OnStart';
+    else if (onMinutes)            config.AutoMovieRequestTriggerType = 'OnMinutesWatched';
+    else                           config.AutoMovieRequestTriggerType = 'OnMinutesWatched';
+
+    var serverVal = parseInt(document.querySelector('#autoMovieRequestServer').value);
+    config.AutoMovieRequestCustomServerId = (!isNaN(serverVal) && serverVal >= 0) ? serverVal : -1;
+    var profileVal = parseInt(document.querySelector('#autoMovieRequestProfile').value);
+    config.AutoMovieRequestCustomProfileId = (!isNaN(profileVal) && profileVal > 0) ? profileVal : 0;
+    config.AutoMovieRequestCustomRootFolder = document.querySelector('#autoMovieRequestRootFolder').value || '';
+
+    syncBlockedUsersToHiddenInput();
+    config.SeerrImportBlockedUsers = document.querySelector('#seerrImportBlockedUsers').value || '';
+
+    var arrIncompleteWarnings = saveArrInstances(config);
+    arrIncompleteWarnings.forEach(function (msg) {
+        Dashboard.alert({ title: '⚠ Incomplete *arr instance', message: msg });
+    });
+
+    if (config.MetadataIconsEnabled) {
+        config.ShowLetterboxdLinkAsText = false;
+        config.ShowArrLinksAsText = false;
+    }
+
+    return config;
+}
+
+/* Writes the instance JSON plus the legacy first-instance mirror fields, but
+   only when the load-time parse succeeded (never clobber over a corrupt
+   read). Returns human-readable warning strings. */
+function saveArrInstances(config) {
+    const warnings = [];
+    [['sonarr', 'Sonarr'], ['radarr', 'Radarr']].forEach(function (pair) {
+        const type = pair[0];
+        const typeName = pair[1];
+        if (!_arrParseOK[type]) return;
+        const collected = collectInstancesFromDom('#' + type + 'InstancesList .arr-instance-card', typeName);
+        buildArrInstanceWarnings(typeName, collected).forEach(function (w) { warnings.push(w); });
+        const instances = collected.instances;
+        if (type === 'sonarr') {
+            config.SonarrInstances = JSON.stringify(instances);
+            if (instances.length > 0) {
+                config.SonarrUrl = instances[0].Url;
+                config.SonarrExternalUrl = instances[0].ExternalUrl || '';
+                config.SonarrApiKey = instances[0].ApiKey;
+                config.SonarrUrlMappings = instances[0].UrlMappings;
+            } else {
+                config.SonarrUrl = '';
+                config.SonarrExternalUrl = '';
+                config.SonarrApiKey = '';
+                config.SonarrUrlMappings = '';
+            }
+        } else {
+            config.RadarrInstances = JSON.stringify(instances);
+            if (instances.length > 0) {
+                config.RadarrUrl = instances[0].Url;
+                config.RadarrExternalUrl = instances[0].ExternalUrl || '';
+                config.RadarrApiKey = instances[0].ApiKey;
+                config.RadarrUrlMappings = instances[0].UrlMappings;
+            } else {
+                config.RadarrUrl = '';
+                config.RadarrExternalUrl = '';
+                config.RadarrApiKey = '';
+                config.RadarrUrlMappings = '';
+            }
+        }
+    });
+    return warnings;
+}
+
+/* ---------------------------------------------------------------------------
+   Hydration. Runs on every pageshow; listener wiring lives in
+   wireCoreBindings (once), keeping this a pure hydration pass.
+   --------------------------------------------------------------------------- */
+let _jcWizardShown = false;
+
+function loadConfig() {
+    Dashboard.showLoadingMsg();
+    checkInstalledPlugins();
+    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        renderShortcuts(config);
+        applyConfigToBoundFields(config);
+
+        const savedAction = config.MaintenanceModeAction || 'disable_accounts';
+        const mmAccounts = document.querySelector('#mmAction_accounts');
+        const mmRemote = document.querySelector('#mmAction_remote');
+        if (mmAccounts) mmAccounts.checked = (savedAction === 'disable_accounts' || savedAction === 'both');
+        if (mmRemote) mmRemote.checked = (savedAction === 'disable_remote' || savedAction === 'both');
+
+        const savedUsers = config.MaintenanceModeAffectedUsers || 'all';
+        const mmUserList = document.querySelector('#jc-mm-user-list');
+        const mmAllRadio = document.querySelector('#mmUsers_all');
+        const mmSelectRadio = document.querySelector('#mmUsers_select');
+        if (savedUsers === 'all') {
+            if (mmAllRadio) mmAllRadio.checked = true;
+            if (mmUserList) mmUserList.style.display = 'none';
+        } else {
+            if (mmSelectRadio) mmSelectRadio.checked = true;
+            if (mmUserList) {
+                mmUserList.style.display = '';
+                mmUserList.dataset.preselect = savedUsers;
+            }
+        }
+        loadMaintenanceUsers();
+
+        const tmdbKey = config.TMDB_API_KEY;
+        const tmdbMain = document.querySelector('#TMDB_API_KEY');
+        const tmdbSeerr = document.querySelector('#seerr_TMDB_API_KEY');
+        if (tmdbMain) tmdbMain.value = tmdbKey;
+        if (tmdbSeerr) tmdbSeerr.value = tmdbKey;
+
+        renderOrderRows(config);
+
+        const tagsFallback = document.querySelector('#enableTagsLocalStorageFallback');
+        if (tagsFallback) tagsFallback.checked = config.EnableTagsLocalStorageFallback === true;
+
+        document.querySelector('#seerrUrls').value = config.SeerrUrls;
+        document.querySelector('#seerrExternalUrl').value = config.SeerrExternalUrl || '';
+        document.querySelector('#SeerrApiKey').value = config.SeerrApiKey;
+        document.querySelector('#seerrUrlMappings').value = config.SeerrUrlMappings || '';
+
+        const triggerType = config.AutoMovieRequestTriggerType || 'OnMinutesWatched';
+        document.querySelector('#autoMovieRequestTriggerOnStart').checked =
+            (triggerType === 'OnStart' || triggerType === 'Both');
+        document.querySelector('#autoMovieRequestTriggerOnMinutesWatched').checked =
+            (triggerType === 'OnMinutesWatched' || triggerType === 'Both');
+        populateAutoMovieRequestSelects(config);
+
+        document.querySelector('#seerrImportBlockedUsers').value = config.SeerrImportBlockedUsers || '';
+        loadBlockedUsersList(config.SeerrImportBlockedUsers || '');
+
+        renderArrInstances(config);
+
+        if (config.MetadataIconsEnabled) {
+            const letterboxd = document.querySelector('#showLetterboxdLinkAsText');
+            const arrText = document.querySelector('#showArrLinksAsText');
+            if (letterboxd) letterboxd.checked = false;
+            if (arrText) arrText.checked = false;
+        }
+
+        const streamsContainer = document.querySelector('#activeStreamsAllUsersContainer');
+        if (streamsContainer) streamsContainer.style.display = config.ActiveStreamsEnabled ? '' : 'none';
+        jcSyncWatchlistRetentionVisibility();
+
+        jcSyncEssentialsMirrors();
+        jcRenderEssentialsServices();
+        renderServiceStatusDashboard();
+        renderFeaturesDashboard();
+        updateAllDependencies();
+        updateRequestsRequirementsBanner();
+
+        if (config.WizardCompleted !== true && !jcWizardLocallyDone() && !_jcWizardShown) {
+            _jcWizardShown = true;
+            jcOpenWizard();
+        }
+
+        Dashboard.hideLoadingMsg();
+    }).catch(function (e) {
+        /* Fail visibly: the old page left the loading overlay up forever. */
+        console.error('[JC] loadConfig failed:', e);
+        try { Dashboard.hideLoadingMsg(); } catch (e2) { /* detached */ }
+        try {
+            Dashboard.alert({
+                title: 'Jellyfin Canopy',
+                message: 'Could not load the plugin configuration. Check the server logs, then reload this page.',
+            });
+        } catch (e3) { console.warn('[JC] load-failure alert failed:', e3); }
+    });
+}
+
+function jcSyncWatchlistRetentionVisibility() {
+    const prevent = document.querySelector('#preventWatchlistReAddition');
+    const retention = document.querySelector('#watchlistMemoryRetentionDays');
+    if (!prevent || !retention) return;
+    const container = retention.closest('.inputContainer');
+    if (container) container.style.display = prevent.checked ? '' : 'none';
+}
+
+/* Cross-field listeners that the old engine re-registered on every pageshow;
+   wired exactly once here. */
+function wireCoreBindings() {
+    const tmdbMain = document.querySelector('#TMDB_API_KEY');
+    const tmdbSeerr = document.querySelector('#seerr_TMDB_API_KEY');
+    if (tmdbMain && tmdbSeerr) {
+        tmdbMain.addEventListener('input', function () { tmdbSeerr.value = tmdbMain.value; });
+        tmdbSeerr.addEventListener('input', function () { tmdbMain.value = tmdbSeerr.value; });
+    }
+    const streamsToggle = document.querySelector('#activeStreamsEnabled');
+    const streamsContainer = document.querySelector('#activeStreamsAllUsersContainer');
+    if (streamsToggle && streamsContainer) {
+        streamsToggle.addEventListener('change', function () {
+            streamsContainer.style.display = streamsToggle.checked ? '' : 'none';
+        });
+    }
+    const prevent = document.querySelector('#preventWatchlistReAddition');
+    if (prevent) prevent.addEventListener('change', jcSyncWatchlistRetentionVisibility);
+}
+
+/* ---------------------------------------------------------------------------
+   Save. Single owner; serialized by the in-flight latch.
+   --------------------------------------------------------------------------- */
+let _jeSaveInFlight = false;
+
+async function saveConfig(e) {
+    e.preventDefault();
+    if (_jeSaveInFlight) return false;
+    _jeSaveInFlight = true;
+    Dashboard.showLoadingMsg();
+    const saveButtons = document.querySelectorAll('.jc-save-dock-btn');
+    saveButtons.forEach(function (btn) { btn.disabled = true; });
+    try {
+        const config = await buildConfigFromForm();
+        const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
+        const result = await ApiClient.updatePluginConfiguration(pluginId, config);
+        try {
+            if (config.MaintenanceModeEnabled) {
+                const affectedIds = config.MaintenanceModeAffectedUsers === 'all'
+                    ? []
+                    : JSON.parse(config.MaintenanceModeAffectedUsers || '[]');
+                await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Enable'),
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        message: config.MaintenanceModeMessage || '',
+                        durationMinutes: 0,
+                        action: config.MaintenanceModeAction || 'disable_accounts',
+                        affectedUserIds: affectedIds,
+                    }),
+                });
+                const mmMsg = config.MaintenanceModeNotificationMessage
+                    || config.MaintenanceModeMessage
+                    || 'Server maintenance is starting. Please finish up and try again later.';
+                try {
+                    await ApiClient.ajax({
+                        type: 'POST',
+                        url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Broadcast'),
+                        contentType: 'application/json',
+                        data: JSON.stringify({ header: 'Server Maintenance', text: mmMsg, timeoutMs: 30000 }),
+                    });
+                } catch (bErr) {
+                    console.warn('[JC] Maintenance broadcast failed (no active sessions?):', bErr);
+                }
+            } else {
+                await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Disable'),
+                });
+            }
+        } catch (mmErr) {
+            console.warn('[JC] Maintenance mode apply failed:', mmErr);
+        }
+        Dashboard.processPluginConfigurationUpdateResult(result);
+        jcClearDirtyIfUnchanged(dirtyRevisionAtSnapshot);
+        return true;
+    } catch (saveErr) {
+        Dashboard.hideLoadingMsg();
+        console.error('[JC] saveConfig failed:', saveErr);
+        try {
+            Dashboard.alert({
+                title: 'Save failed',
+                message: 'Could not save Jellyfin Canopy settings. Check the browser console and server logs, then try again.',
+            });
+        } catch (alertErr) {
+            console.warn('[JC] save-failure alert failed:', alertErr);
+        }
+    } finally {
+        _jeSaveInFlight = false;
+        saveButtons.forEach(function (btn) { btn.disabled = false; });
+    }
+    return false;
+}
+
+/* SECTION: view mode (Essentials/Advanced) + first-run wizard — owns:
+   jcApplyViewMode, jcSyncEssentialsMirrors, jcOpenWizard, wireViewMode,
+   wireWizard. depends: activateTab/jcSyncGroupForTab (nav), exitSearchMode
+   (search, optional), saveConfig (binder), testers' canonical buttons +
+   status indicators, renderArrInstances/arr add buttons, jcDirty owner. */
+
+const VIEW_MODE_KEY = 'jc-settings-view-mode';
+/* Browser fallback for wizard completion while the server-side flag is
+   parked: without it the modal would reopen on every visit. The server
+   flag, once present, dominates (checked in loadConfig). */
+const WIZARD_DONE_KEY = 'jc-wizard-completed';
+
+function jcWizardLocallyDone() {
+    try { return localStorage.getItem(WIZARD_DONE_KEY) === 'true'; } catch (e) { return false; }
+}
+
+/* The six Essentials/wizard mirrors and their canonical bound controls.
+   AutoSkip drives intro+outro together (reads intro). */
+const JC_MIRROR_MAP = [
+    { ess: 'jcEssWatchProgress', wiz: 'jcWizWatchProgress', canonical: ['showWatchProgress'] },
+    { ess: 'jcEssQualityTags',   wiz: 'jcWizQualityTags',   canonical: ['qualityTagsEnabled'] },
+    { ess: 'jcEssDiscovery',     wiz: 'jcWizDiscovery',     canonical: ['discoveryEnabled'] },
+    { ess: 'jcEssElsewhere',     wiz: 'jcWizElsewhere',     canonical: ['elsewhereEnabled'] },
+    { ess: 'jcEssAutoSkip',      wiz: 'jcWizAutoSkip',      canonical: ['autoSkipIntro', 'autoSkipOutro'] },
+    { ess: 'jcEssSpoiler',       wiz: 'jcWizSpoiler',       canonical: ['spoilerBlurEnabled'] },
+];
+
+function jcCanonicalChecked(ids) {
+    const el = document.getElementById(ids[0]);
+    return !!(el && el.checked);
+}
+
+function jcSetCanonical(ids, checked) {
+    ids.forEach(function (id) {
+        const el = document.getElementById(id);
+        /* Disabled canonicals are dependency-gated (missing TMDB key, absent
+           Intro Skipper, ...): mirrors must not write through the gate. */
+        if (!el || el.disabled || el.checked === checked) return;
+        el.checked = checked;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+}
+
+/* Pull canonical values into every mirror (called after each hydration). */
+function jcSyncEssentialsMirrors() {
+    JC_MIRROR_MAP.forEach(function (m) {
+        const first = document.getElementById(m.canonical[0]);
+        const value = jcCanonicalChecked(m.canonical);
+        [m.ess, m.wiz].forEach(function (id) {
+            const mirror = document.getElementById(id);
+            if (!mirror) return;
+            mirror.checked = value;
+            mirror.disabled = !!(first && first.disabled);
+        });
+    });
+}
+
+function jcApplyViewMode(mode) {
+    const essentials = mode === 'essentials';
+    try { document.body.classList.toggle('jc-essentials-mode', essentials); } catch (e) { /* detached */ }
+    const essPanel = document.querySelector('#jcEssentials');
+    if (essPanel) essPanel.hidden = !essentials;
+    const btnEss = document.querySelector('#jcModeEssentials');
+    const btnAdv = document.querySelector('#jcModeAdvanced');
+    if (btnEss) btnEss.setAttribute('aria-selected', essentials ? 'true' : 'false');
+    if (btnAdv) btnAdv.setAttribute('aria-selected', essentials ? 'false' : 'true');
+    const title = document.querySelector('#jcPageTitle');
+    const purpose = document.querySelector('#jcPagePurpose');
+    if (essentials) {
+        if (typeof exitSearchMode === 'function') {
+            try { exitSearchMode(); } catch (e) { /* search not active */ }
+        }
+        if (title) title.textContent = 'The essentials';
+        if (purpose) purpose.textContent = 'The six settings that shape Canopy for everyone. Advanced is one click away.';
+        jcSyncEssentialsMirrors();
+        jcRenderEssentialsServices();
+    } else {
+        /* Restore the active group's header through the nav owner. */
+        let activeTab = 'overview';
+        try {
+            const activeBtn = document.querySelector('.jellyfin-tab-button.active');
+            if (activeBtn && activeBtn.dataset.tab) activeTab = activeBtn.dataset.tab;
+        } catch (e) { /* default */ }
+        if (typeof jcSyncGroupForTab === 'function' && jcSyncGroupForTab) jcSyncGroupForTab(activeTab);
+    }
+}
+
+function jcRenderEssentialsServices() {
+    const list = document.querySelector('#jcEssSvcList');
+    if (!list) return;
+    list.textContent = '';
+    const services = [
+        { key: 'seerr', name: 'Seerr', enabledId: 'seerrEnabled' },
+        { key: 'maintainerr', name: 'Maintainerr', enabledId: 'maintainerrEnabled' },
+    ];
+    services.forEach(function (svc) {
+        const enabled = jcCanonicalChecked([svc.enabledId]);
+        let binding;
+        if (svc.key === 'maintainerr') {
+            const urlInput = document.querySelector('#maintainerrUrl');
+            binding = jcFingerprintConnectionValue(
+                jcNormalizeMaintainerrBaseUrl((urlInput && urlInput.value) || ''));
+        }
+        const cached = enabled ? getPersistedTestResult(svc.key, binding) : null;
+        const item = document.createElement('span');
+        item.className = 'jc-ess-svc-item';
+        const dot = document.createElement('span');
+        dot.className = 'jc-wiz-dot' + (cached && cached.status === 'ok' ? ' jc-ok' : '');
+        const name = document.createElement('b');
+        name.textContent = svc.name;
+        const state = document.createElement('span');
+        state.textContent = !enabled ? 'not set up'
+            : cached && cached.status === 'ok' ? 'connected'
+            : cached ? 'check connection'
+            : 'not tested yet';
+        item.appendChild(dot);
+        item.appendChild(name);
+        item.appendChild(state);
+        list.appendChild(item);
+    });
+    const arrCount = document.querySelectorAll('.arr-instance-card').length;
+    const arrItem = document.createElement('span');
+    arrItem.className = 'jc-ess-svc-item';
+    const arrDot = document.createElement('span');
+    arrDot.className = 'jc-wiz-dot' + (arrCount > 0 ? ' jc-ok' : '');
+    const arrName = document.createElement('b');
+    arrName.textContent = 'Sonarr & Radarr';
+    const arrState = document.createElement('span');
+    arrState.textContent = arrCount > 0 ? arrCount + ' instance(s)' : 'not set up';
+    arrItem.appendChild(arrDot);
+    arrItem.appendChild(arrName);
+    arrItem.appendChild(arrState);
+    list.appendChild(arrItem);
+}
+
+function wireViewMode() {
+    const modeSwitch = document.querySelector('.jc-mode-switch');
+    if (!modeSwitch) return;
+    modeSwitch.hidden = false;
+    let stored = 'advanced';
+    try {
+        if (localStorage.getItem(VIEW_MODE_KEY) === 'essentials') stored = 'essentials';
+    } catch (e) { /* private mode — default advanced */ }
+    jcApplyViewMode(stored);
+    function pick(mode) {
+        jcApplyViewMode(mode);
+        try { localStorage.setItem(VIEW_MODE_KEY, mode); } catch (e) { /* preference won't persist */ }
+    }
+    const btnEss = document.querySelector('#jcModeEssentials');
+    const btnAdv = document.querySelector('#jcModeAdvanced');
+    if (btnEss) btnEss.addEventListener('click', function () { pick('essentials'); });
+    if (btnAdv) btnAdv.addEventListener('click', function () { pick('advanced'); });
+    const goAdvanced = document.querySelector('#jcEssGoAdvanced');
+    if (goAdvanced) goAdvanced.addEventListener('click', function () { pick('advanced'); });
+    const manage = document.querySelector('#jcEssManageConnections');
+    if (manage) {
+        manage.addEventListener('click', function () {
+            pick('advanced');
+            if (typeof activateTab === 'function') activateTab('seerr');
+        });
+    }
+    JC_MIRROR_MAP.forEach(function (m) {
+        const mirror = document.getElementById(m.ess);
+        if (mirror) {
+            mirror.addEventListener('change', function () { jcSetCanonical(m.canonical, mirror.checked); });
+        }
+        m.canonical.forEach(function (id) {
+            const canonical = document.getElementById(id);
+            if (canonical) {
+                canonical.addEventListener('change', function () {
+                    const ess = document.getElementById(m.ess);
+                    const wiz = document.getElementById(m.wiz);
+                    const value = jcCanonicalChecked(m.canonical);
+                    if (ess) ess.checked = value;
+                    if (wiz) wiz.checked = value;
+                });
+            }
+        });
+    });
+}
+
+/* ---------------------------------------------------------------------------
+   Wizard. Never blocks settings: skip/Escape/scrim all mark the flag and
+   close. Recommended path leaves defaults untouched and lands on the
+   (optional) connections step. Connection tests reuse the canonical testers
+   by proxy-click; results are read from the canonical indicators with a
+   bounded, self-disconnecting observer.
+   --------------------------------------------------------------------------- */
+let _jcWizardChoseRecommended = false;
+let _jcWizardPrevFocus = null;
+
+function jcWizGo(step) {
+    const panes = document.querySelectorAll('#jcWizard .jc-wiz-pane');
+    panes.forEach(function (pane) { pane.hidden = pane.dataset.wpane !== String(step); });
+    const nodes = document.querySelectorAll('#jcWizard .jc-wiz-stepnode');
+    nodes.forEach(function (node) {
+        const n = parseInt(node.dataset.wstep, 10);
+        node.classList.toggle('jc-now', n === step);
+        node.classList.toggle('jc-done', n < step);
+    });
+    const back = document.querySelector('#jcWizConnBack');
+    if (back) back.dataset.wgo = _jcWizardChoseRecommended ? '1' : '2';
+    if (step === 4) jcWizRenderSummary();
+    const pane = document.querySelector('#jcWizard .jc-wiz-pane[data-wpane="' + step + '"]');
+    if (pane) {
+        const first = pane.querySelector('button, input');
+        if (first) first.focus();
+    }
+}
+
+function jcWizRenderSummary() {
+    const summary = document.querySelector('#jcWizSummary');
+    if (!summary) return;
+    summary.textContent = '';
+    function line(ok, label, rest) {
+        const row = document.createElement('div');
+        row.className = 'jc-wiz-sumline';
+        const dot = document.createElement('span');
+        dot.className = 'jc-wiz-dot' + (ok ? ' jc-ok' : '');
+        row.appendChild(dot);
+        const text = document.createElement('span');
+        if (label) {
+            const strong = document.createElement('b');
+            strong.textContent = label;
+            text.appendChild(strong);
+            text.appendChild(document.createTextNode(' '));
+        }
+        text.appendChild(document.createTextNode(rest));
+        row.appendChild(text);
+        summary.appendChild(row);
+    }
+    const connected = [];
+    [['jcWizSeerrState', 'Seerr'], ['jcWizMaintState', 'Maintainerr'],
+     ['jcWizSonarrState', 'Sonarr'], ['jcWizRadarrState', 'Radarr']].forEach(function (pair) {
+        const el = document.getElementById(pair[0]);
+        if (el && el.classList.contains('jc-ok')) connected.push(pair[1]);
+    });
+    line(true, 'Experience:', _jcWizardChoseRecommended
+        ? 'recommended Canopy defaults'
+        : 'your choices from step 2');
+    line(connected.length > 0, 'Connections:', connected.length
+        ? connected.join(', ') + ' connected'
+        : 'none yet — add anytime under Connections');
+    line(true, '', 'Users get these as defaults and can personalise their own view from their profile.');
+}
+
+function jcWizObserveIndicator(indicator, stateEl, doneText) {
+    if (!indicator || !stateEl) return;
+    const observer = new MutationObserver(function () {
+        const text = (indicator.textContent || '').trim();
+        if (text === 'check_circle') {
+            stateEl.classList.add('jc-ok');
+            stateEl.textContent = '';
+            const dot = document.createElement('span');
+            dot.className = 'jc-wiz-dot jc-ok';
+            stateEl.appendChild(dot);
+            stateEl.appendChild(document.createTextNode(doneText));
+            observer.disconnect();
+        } else if (text === 'error') {
+            stateEl.classList.remove('jc-ok');
+            stateEl.textContent = 'Connection failed — check the URL and key';
+            observer.disconnect();
+        }
+    });
+    observer.observe(indicator, { childList: true, characterData: true, subtree: true });
+    /* Bounded: give up quietly after 30s so no observer outlives its test. */
+    setTimeout(function () { observer.disconnect(); }, 30000);
+}
+
+function jcWizVal(id) {
+    const el = document.getElementById(id);
+    return ((el && el.value) || '').trim();
+}
+
+function jcWizSetInput(el, value) {
+    if (!el || el.value === value) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function jcWizEnable(id) {
+    const el = document.getElementById(id);
+    if (el && !el.checked && !el.disabled) {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+}
+
+/* Commit wizard connection fields into the canonical controls,
+   NON-destructively: Seerr URLs merge into the multi-URL list, and an arr
+   card is only reused when it is still blank. Called by each Test button and
+   by Finish/Skip-to-done, so typed credentials are never silently dropped. */
+function jcWizCommitSeerr() {
+    const url = jcWizVal('jcWizSeerrUrl');
+    const key = jcWizVal('jcWizSeerrKey');
+    if (!url && !key) return false;
+    const urls = document.querySelector('#seerrUrls');
+    if (url && urls) {
+        const lines = (urls.value || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+        if (lines.indexOf(url) === -1) {
+            lines.push(url);
+            jcWizSetInput(urls, lines.join('\n'));
+        }
+    }
+    if (key) jcWizSetInput(document.querySelector('#SeerrApiKey'), key);
+    if (url) jcWizEnable('seerrEnabled');
+    return true;
+}
+
+function jcWizCommitMaintainerr() {
+    const url = jcWizVal('jcWizMaintUrl');
+    if (!url) return false;
+    jcWizSetInput(document.querySelector('#maintainerrUrl'), url);
+    jcWizEnable('maintainerrEnabled');
+    return true;
+}
+
+function jcWizCommitArr(type) {
+    const url = jcWizVal(type === 'sonarr' ? 'jcWizSonarrUrl' : 'jcWizRadarrUrl');
+    const key = jcWizVal(type === 'sonarr' ? 'jcWizSonarrKey' : 'jcWizRadarrKey');
+    if (!url || !key) return null;
+    const list = document.querySelector(type === 'sonarr' ? '#sonarrInstancesList' : '#radarrInstancesList');
+    if (!list) return null;
+    /* Reuse a card only while it is still blank; existing instances are
+       never overwritten by a wizard relaunch. */
+    let card = null;
+    list.querySelectorAll('.arr-instance-card').forEach(function (candidate) {
+        if (card) return;
+        const u = candidate.querySelector('.arr-instance-url');
+        const k = candidate.querySelector('.arr-instance-apikey');
+        if (u && k && !u.value.trim() && !k.value.trim()) card = candidate;
+    });
+    if (!card) {
+        const addBtn = document.querySelector(type === 'sonarr' ? '#addSonarrInstance' : '#addRadarrInstance');
+        if (addBtn) addBtn.click();
+        const cards = list.querySelectorAll('.arr-instance-card');
+        card = cards[cards.length - 1] || null;
+    }
+    if (!card) return null;
+    jcWizSetInput(card.querySelector('.arr-instance-url'), url);
+    jcWizSetInput(card.querySelector('.arr-instance-apikey'), key);
+    return card;
+}
+
+function jcWizCommitConnections() {
+    jcWizCommitSeerr();
+    jcWizCommitMaintainerr();
+    jcWizCommitArr('sonarr');
+    jcWizCommitArr('radarr');
+}
+
+function jcWizTestSeerr() {
+    if (!jcWizVal('jcWizSeerrUrl')) return;
+    jcWizCommitSeerr();
+    const btn = document.querySelector('#testSeerrBtn');
+    if (btn) btn.click();
+    jcWizObserveIndicator(document.querySelector('#seerrStatusIndicator'),
+        document.getElementById('jcWizSeerrState'), 'Connected');
+}
+
+function jcWizTestMaintainerr() {
+    if (!jcWizVal('jcWizMaintUrl')) return;
+    jcWizCommitMaintainerr();
+    const btn = document.querySelector('#testMaintainerrBtn');
+    if (btn) btn.click();
+    jcWizObserveIndicator(document.querySelector('#maintainerrStatusIndicator'),
+        document.getElementById('jcWizMaintState'), 'Connected');
+}
+
+function jcWizTestArr(type) {
+    const stateEl = document.getElementById(type === 'sonarr' ? 'jcWizSonarrState' : 'jcWizRadarrState');
+    const card = jcWizCommitArr(type);
+    if (!card) {
+        if (stateEl && (jcWizVal(type === 'sonarr' ? 'jcWizSonarrUrl' : 'jcWizRadarrUrl')
+            || jcWizVal(type === 'sonarr' ? 'jcWizSonarrKey' : 'jcWizRadarrKey'))) {
+            stateEl.textContent = 'Enter both a URL and an API key first';
+        }
+        return;
+    }
+    const testBtn = card.querySelector('.arr-instance-test');
+    if (testBtn) testBtn.click();
+    jcWizObserveIndicator(card.querySelector('.arr-instance-status'), stateEl, 'Connected');
+}
+
+async function jcWizPersistCompleted() {
+    /* Browser fallback first (works even while the server flag is parked). */
+    try { localStorage.setItem(WIZARD_DONE_KEY, 'true'); } catch (e) { /* private mode */ }
+    try {
+        const config = await ApiClient.getPluginConfiguration(pluginId);
+        config.WizardCompleted = true;
+        await ApiClient.updatePluginConfiguration(pluginId, config);
+    } catch (e) {
+        /* Fail open: the wizard closes regardless; the local key still
+           prevents it reopening in this browser. */
+        console.warn('[JC] could not persist wizard completion:', e);
+    }
+}
+
+function jcWizSetShellInert(inert) {
+    [document.querySelector('.jc-main'), document.querySelector('#jcSidebar')].forEach(function (el) {
+        if (el) el.inert = inert;
+    });
+}
+
+function jcCloseWizard() {
+    const wizard = document.querySelector('#jcWizard');
+    if (wizard) wizard.hidden = true;
+    jcWizSetShellInert(false);
+    if (_jcWizardPrevFocus && typeof _jcWizardPrevFocus.focus === 'function') {
+        try { _jcWizardPrevFocus.focus(); } catch (e) { /* gone */ }
+    }
+    _jcWizardPrevFocus = null;
+}
+
+/* Skip paths: close and mark complete. No form save happens here, so the
+   completion round-trip races nothing. */
+function jcSkipWizard() {
+    jcCloseWizard();
+    jcWizPersistCompleted();
+}
+
+function jcOpenWizard() {
+    const wizard = document.querySelector('#jcWizard');
+    if (!wizard) return;
+    _jcWizardChoseRecommended = false;
+    _jcWizardPrevFocus = document.activeElement;
+    jcSyncEssentialsMirrors();
+    const eyebrow = document.querySelector('#jcWizConnEyebrow');
+    if (eyebrow) eyebrow.textContent = 'Step 3 of 4 · Optional';
+    const lede = document.querySelector('#jcWizConnLede');
+    if (lede) lede.textContent = 'Canopy works fine without these. Connect what you run — or skip, and add them anytime under Connections.';
+    wizard.hidden = false;
+    jcWizSetShellInert(true);
+    jcWizGo(1);
+}
+
+function wireWizard() {
+    const wizard = document.querySelector('#jcWizard');
+    if (!wizard) return;
+
+    wizard.addEventListener('click', function (event) {
+        const go = event.target.closest('[data-wgo]');
+        if (go) {
+            const step = parseInt(go.dataset.wgo, 10);
+            if (step === 1) _jcWizardChoseRecommended = false;
+            /* Entering Done commits any typed connection fields (idempotent
+               merge), so a later Escape cannot silently drop them. */
+            if (step === 4) jcWizCommitConnections();
+            jcWizGo(step);
+            return;
+        }
+        const conn = event.target.closest('[data-wconn]');
+        if (conn) {
+            const formEl = document.getElementById('jcWizForm-' + conn.dataset.wconn);
+            if (formEl) formEl.classList.toggle('jc-open');
+            return;
+        }
+        const test = event.target.closest('[data-wtest]');
+        if (test) {
+            const kind = test.dataset.wtest;
+            if (kind === 'seerr') jcWizTestSeerr();
+            else if (kind === 'maint') jcWizTestMaintainerr();
+            else jcWizTestArr(kind);
+            return;
+        }
+        if (event.target === wizard) {
+            /* Scrim click = skip: never trap the admin. */
+            jcSkipWizard();
+        }
+    });
+    wizard.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') jcSkipWizard();
+    });
+
+    const recommended = document.querySelector('#jcWizRecommended');
+    if (recommended) {
+        recommended.addEventListener('click', function () {
+            _jcWizardChoseRecommended = true;
+            const eyebrow = document.querySelector('#jcWizConnEyebrow');
+            if (eyebrow) eyebrow.textContent = 'Recommended settings applied · Optional';
+            const lede = document.querySelector('#jcWizConnLede');
+            if (lede) lede.textContent = 'The recommended experience is set. Last step: connect the services you run — each one is optional, and you can skip all of this and add them later.';
+            jcWizGo(3);
+        });
+    }
+    const choose = document.querySelector('#jcWizChoose');
+    if (choose) {
+        choose.addEventListener('click', function () {
+            _jcWizardChoseRecommended = false;
+            jcWizGo(2);
+        });
+    }
+    const skip = document.querySelector('#jcWizSkip');
+    if (skip) skip.addEventListener('click', function () { jcSkipWizard(); });
+
+    /* Experience mirrors write through to the canonical controls. */
+    JC_MIRROR_MAP.forEach(function (m) {
+        const mirror = document.getElementById(m.wiz);
+        if (mirror) {
+            mirror.addEventListener('change', function () { jcSetCanonical(m.canonical, mirror.checked); });
+        }
+    });
+
+    async function finishTo(mode) {
+        jcWizCommitConnections();
+        jcCloseWizard();
+        const dock = document.querySelector('.jc-save-dock');
+        if (dock && dock.classList.contains('jc-dirty')) {
+            /* One canonical write: await the form save, THEN write the
+               completion flag from the post-save server state. Two
+               concurrent read-modify-writes would race and one could
+               silently roll the other back. */
+            await saveConfig(new Event('submit'));
+        }
+        await jcWizPersistCompleted();
+        const modeBtn = document.querySelector(mode === 'essentials' ? '#jcModeEssentials' : '#jcModeAdvanced');
+        if (modeBtn) modeBtn.click();
+    }
+    const openEss = document.querySelector('#jcWizOpenEssentials');
+    if (openEss) openEss.addEventListener('click', function () { finishTo('essentials'); });
+    const openAdv = document.querySelector('#jcWizOpenAdvanced');
+    if (openAdv) openAdv.addEventListener('click', function () { finishTo('advanced'); });
+
+    const relaunch = document.querySelector('#jcRunWizardBtn');
+    if (relaunch) relaunch.addEventListener('click', function () { jcOpenWizard(); });
+}
+
+/* SECTION: init — the single ordered wiring pass. Each subsystem is isolated
+   so one broken wire cannot abort the rest of the page (the old engine died
+   wholesale on the first missing element). Order contracts: nav shell before
+   the session-restored tab activation inside it; widgets (dependency tables,
+   TMDB wrap) before connections' delegated TMDB click; hydration listeners
+   registered last. */
+function jcWire(name, fn) {
+    try {
+        fn();
+    } catch (e) {
+        console.error('[JC] wiring failed for ' + name + ':', e);
+    }
+}
+
+_jeDetectTheme();
+window.addEventListener('load', _jeDetectTheme);
+setTimeout(_jeDetectTheme, 600);
+
+jcWire('nav-shell', wireNavShell);
+jcWire('dirty-state', wireDirtyState);
+jcWire('search', wireSearch);
+jcWire('widgets', wireWidgets);
+jcWire('connections', wireConnections);
+jcWire('connection-lifecycle', wireConnectionLifecycle);
+jcWire('arr-instances', wireArrInstances);
+jcWire('dashboards', wireDashboards);
+jcWire('core-bindings', wireCoreBindings);
+jcWire('view-mode', wireViewMode);
+jcWire('wizard', wireWizard);
+
+if (page) page.addEventListener('pageshow', loadConfig);
+if (form) form.addEventListener('submit', saveConfig);
+})();

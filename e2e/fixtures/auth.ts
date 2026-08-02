@@ -384,6 +384,13 @@ async function attemptLogin(
     password: string,
     consoleErrors?: ConsoleErrors
 ): Promise<LoginAttemptResult> {
+    // The suite models an admin who already finished the config page's
+    // first-run wizard: without this seed the wizard dialog opens over a
+    // fresh profile, marks the shell inert, and every spec that clicks the
+    // real sidebar times out. A wizard-focused spec can clear the key.
+    await page.addInitScript(() => {
+        try { window.localStorage.setItem('jc-wizard-completed', 'true'); } catch { /* private mode */ }
+    });
     await page.goto('/web/', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(
         () => typeof (window as any).ApiClient?.authenticateUserByName === 'function',

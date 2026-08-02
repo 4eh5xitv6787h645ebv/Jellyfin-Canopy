@@ -55,9 +55,140 @@
             </button>
             <div class="jc-nav-scrim" id="jcNavScrim" aria-hidden="true"></div>
 
-            <!-- Settings-app sidebar: brand, search, section nav, page actions. -->
+            <!-- First-run setup wizard: shown when WizardCompleted is false,
+                 relaunchable from Essentials. Mirror controls only — no
+                 data-config-key in here (binder keys must stay unique). -->
+            <div id="jcWizard" class="jc-wizard" hidden role="dialog" aria-modal="true" aria-labelledby="jcWizardTitle">
+                <div class="jc-wiz-card">
+                    <div class="jc-wiz-steps">
+                        <div class="jc-wiz-stepnode jc-now" data-wstep="1"><div class="jc-wiz-node"></div><div class="jc-wiz-steplabel">Welcome</div></div>
+                        <div class="jc-wiz-stepnode" data-wstep="2"><div class="jc-wiz-node"></div><div class="jc-wiz-steplabel">Experience</div></div>
+                        <div class="jc-wiz-stepnode" data-wstep="3"><div class="jc-wiz-node"></div><div class="jc-wiz-steplabel">Connections</div></div>
+                        <div class="jc-wiz-stepnode" data-wstep="4"><div class="jc-wiz-node"></div><div class="jc-wiz-steplabel">Done</div></div>
+                    </div>
+
+                    <div class="jc-wiz-pane" data-wpane="1">
+                        <span class="jc-brand-mark" aria-hidden="true"></span>
+                        <h2 id="jcWizardTitle" class="jc-wiz-title">Welcome to Canopy</h2>
+                        <p class="jc-wiz-lede">Canopy adds watch progress, quality badges, a discovery feed, auto-skip and more to your Jellyfin server. Pick the recommended experience and all that's left is connecting your services &mdash; or take a minute to choose everything yourself. Everything can be changed later.</p>
+                        <div class="jc-wiz-choices">
+                            <button type="button" id="jcWizRecommended" class="jc-wiz-choice jc-hero">
+                                <span><span class="jc-wiz-choice-title">Use recommended settings<span class="jc-wiz-badge">Recommended</span></span>
+                                <span class="jc-wiz-choice-desc">The Canopy experience most servers run. Then just connect Seerr, Maintainerr and Sonarr/Radarr &mdash; each optional, all skippable.</span></span>
+                            </button>
+                            <button type="button" id="jcWizChoose" class="jc-wiz-choice">
+                                <span><span class="jc-wiz-choice-title">Let me choose</span>
+                                <span class="jc-wiz-choice-desc">A short guided walk through the main features, then the same connections step. About a minute.</span></span>
+                            </button>
+                        </div>
+                        <button type="button" id="jcWizSkip" class="jc-wiz-btn-link">Skip setup &mdash; I'll configure everything myself</button>
+                    </div>
+
+                    <div class="jc-wiz-pane" data-wpane="2" hidden>
+                        <div class="jc-wiz-eyebrow">Step 2 of 4</div>
+                        <h2 class="jc-wiz-title">How should Canopy feel?</h2>
+                        <p class="jc-wiz-lede">The six settings people care about most, in plain language. Everything else stays on sensible defaults &mdash; the full catalogue lives in Advanced settings.</p>
+                        <div class="jc-wiz-optgrid">
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">Watch progress on posters</span><span class="jc-wiz-opt-desc">See how far through everyone is, right on the card.</span></span><input id="jcWizWatchProgress" is="emby-checkbox" type="checkbox" aria-label="Watch progress on posters"/></div>
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">Quality badges</span><span class="jc-wiz-opt-desc">4K, HDR and Dolby Vision labels on posters.</span></span><input id="jcWizQualityTags" is="emby-checkbox" type="checkbox" aria-label="Quality badges"/></div>
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">Discovery feed</span><span class="jc-wiz-opt-desc">Trending and recommended rows on the home screen.</span></span><input id="jcWizDiscovery" is="emby-checkbox" type="checkbox" aria-label="Discovery feed"/></div>
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">&ldquo;Where can I stream this?&rdquo;</span><span class="jc-wiz-opt-desc">Show which streaming services also carry a title.</span></span><input id="jcWizElsewhere" is="emby-checkbox" type="checkbox" aria-label="Streaming availability"/></div>
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">Auto-skip intros &amp; credits</span><span class="jc-wiz-opt-desc">Jump past intros automatically when markers exist.</span></span><input id="jcWizAutoSkip" is="emby-checkbox" type="checkbox" aria-label="Auto-skip intros and credits"/></div>
+                            <div class="jc-wiz-opt"><span><span class="jc-wiz-opt-title">Spoiler guard</span><span class="jc-wiz-opt-desc">Blur artwork and titles people haven't seen yet.</span></span><input id="jcWizSpoiler" is="emby-checkbox" type="checkbox" aria-label="Spoiler guard"/></div>
+                        </div>
+                        <div class="jc-wiz-footrow">
+                            <button type="button" class="jc-wiz-btn-quiet" data-wgo="1">Back</button>
+                            <div class="jc-wiz-right"><button type="button" class="jc-wiz-btn-primary" data-wgo="3">Continue</button></div>
+                        </div>
+                    </div>
+
+                    <div class="jc-wiz-pane" data-wpane="3" hidden>
+                        <div class="jc-wiz-eyebrow" id="jcWizConnEyebrow">Step 3 of 4 &middot; Optional</div>
+                        <h2 class="jc-wiz-title">Connect your services</h2>
+                        <p class="jc-wiz-lede" id="jcWizConnLede">Canopy works fine without these. Connect what you run &mdash; or skip, and add them anytime under Connections.</p>
+                        <div class="jc-wiz-connrows">
+                            <div class="jc-wiz-connrow">
+                                <div class="jc-wiz-connhead">
+                                    <span><span class="jc-wiz-connname">Seerr</span><div class="jc-wiz-conndesc">Requests, watchlists and discovery sync.</div></span>
+                                    <span class="jc-wiz-connstate" id="jcWizSeerrState"><span class="jc-wiz-dot"></span>Not connected</span>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wconn="seerr">Connect</button>
+                                </div>
+                                <div class="jc-wiz-connform" id="jcWizForm-seerr">
+                                    <div><label for="jcWizSeerrUrl">Server URL</label><input id="jcWizSeerrUrl" is="emby-input" type="text" placeholder="http://192.168.1.20:5055"/></div>
+                                    <div><label for="jcWizSeerrKey">API key</label><input id="jcWizSeerrKey" is="emby-input" type="password" autocomplete="off" placeholder="Seerr &rarr; Settings &rarr; General"/></div>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wtest="seerr">Test</button>
+                                </div>
+                            </div>
+                            <div class="jc-wiz-connrow">
+                                <div class="jc-wiz-connhead">
+                                    <span><span class="jc-wiz-connname">Maintainerr</span><div class="jc-wiz-conndesc">Shows what's leaving soon and why.</div></span>
+                                    <span class="jc-wiz-connstate" id="jcWizMaintState"><span class="jc-wiz-dot"></span>Not connected</span>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wconn="maint">Connect</button>
+                                </div>
+                                <div class="jc-wiz-connform" id="jcWizForm-maint">
+                                    <div><label for="jcWizMaintUrl">Server URL</label><input id="jcWizMaintUrl" is="emby-input" type="text" placeholder="http://192.168.1.20:6246"/></div>
+                                    <div aria-hidden="true"></div>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wtest="maint">Test</button>
+                                </div>
+                            </div>
+                            <div class="jc-wiz-connrow">
+                                <div class="jc-wiz-connhead">
+                                    <span><span class="jc-wiz-connname">Sonarr</span><div class="jc-wiz-conndesc">Series calendar, release dates and episode data.</div></span>
+                                    <span class="jc-wiz-connstate" id="jcWizSonarrState"><span class="jc-wiz-dot"></span>Not connected</span>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wconn="sonarr">Connect</button>
+                                </div>
+                                <div class="jc-wiz-connform" id="jcWizForm-sonarr">
+                                    <div><label for="jcWizSonarrUrl">Sonarr URL</label><input id="jcWizSonarrUrl" is="emby-input" type="text" placeholder="http://192.168.1.20:8989"/></div>
+                                    <div><label for="jcWizSonarrKey">API key</label><input id="jcWizSonarrKey" is="emby-input" type="password" autocomplete="off" placeholder="Sonarr &rarr; Settings &rarr; General"/></div>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wtest="sonarr">Test</button>
+                                </div>
+                            </div>
+                            <div class="jc-wiz-connrow">
+                                <div class="jc-wiz-connhead">
+                                    <span><span class="jc-wiz-connname">Radarr</span><div class="jc-wiz-conndesc">Movie calendar and release dates.</div></span>
+                                    <span class="jc-wiz-connstate" id="jcWizRadarrState"><span class="jc-wiz-dot"></span>Not connected</span>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wconn="radarr">Connect</button>
+                                </div>
+                                <div class="jc-wiz-connform" id="jcWizForm-radarr">
+                                    <div><label for="jcWizRadarrUrl">Radarr URL</label><input id="jcWizRadarrUrl" is="emby-input" type="text" placeholder="http://192.168.1.20:7878"/></div>
+                                    <div><label for="jcWizRadarrKey">API key</label><input id="jcWizRadarrKey" is="emby-input" type="password" autocomplete="off" placeholder="Radarr &rarr; Settings &rarr; General"/></div>
+                                    <button type="button" class="jc-wiz-btn-quiet" data-wtest="radarr">Test</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="jc-wiz-footrow">
+                            <button type="button" class="jc-wiz-btn-quiet" id="jcWizConnBack" data-wgo="2">Back</button>
+                            <div class="jc-wiz-right">
+                                <button type="button" class="jc-wiz-btn-link" data-wgo="4">Skip for now</button>
+                                <button type="button" class="jc-wiz-btn-primary" data-wgo="4">Finish setup</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="jc-wiz-pane" data-wpane="4" hidden>
+                        <span class="jc-brand-mark" aria-hidden="true"></span>
+                        <h2 class="jc-wiz-title">You're all set</h2>
+                        <div class="jc-wiz-summary" id="jcWizSummary"></div>
+                        <div class="jc-wiz-footrow">
+                            <button type="button" class="jc-wiz-btn-link" data-wgo="1">Run setup again</button>
+                            <div class="jc-wiz-right">
+                                <button type="button" class="jc-wiz-btn-quiet" id="jcWizOpenAdvanced">Open advanced settings</button>
+                                <button type="button" class="jc-wiz-btn-primary" id="jcWizOpenEssentials">Open Essentials</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar: brand, view mode, search, branch rail, section store. -->
             <aside class="jc-sidebar" id="jcSidebar" aria-label="Jellyfin Canopy settings sections">
-                <h2 class="sectionTitle jc-brand-lockup"><img class="jc-brand-mark" src="../JellyfinCanopy/assets/branding/canopy-mark.svg" alt="" width="30" height="26"><span class="jc-brand-name">Jellyfin Canopy</span></h2>
+                <h2 class="sectionTitle jc-brand-lockup"><span class="jc-brand-mark" aria-hidden="true"></span><span class="jc-brand-name">Jellyfin Canopy</span></h2>
+
+                <div class="jc-mode-switch" role="tablist" aria-label="Settings view" hidden>
+                    <button type="button" id="jcModeEssentials" role="tab" aria-selected="false">Essentials</button>
+                    <button type="button" id="jcModeAdvanced" role="tab" aria-selected="true">Advanced</button>
+                </div>
+
                 <div id="settingsSearchContainer">
                     <div>
                         <i class="material-icons jc-search-icon">search</i>
@@ -67,9 +198,6 @@
                     </div>
                 </div>
 
-                <!-- Grouped rail (handoff IA): seven product areas. Each group
-                     activates its first member section; the members render as a
-                     compact segmented control in the page header. -->
                 <div class="jc-tab-bar" role="navigation" aria-label="Product areas">
                     <button type="button" class="jc-group-btn active" data-group="command-center"><i class="material-icons jc-tab-icon" aria-hidden="true">space_dashboard</i>Command Center</button>
                     <button type="button" class="jc-group-btn" data-group="experience"><i class="material-icons jc-tab-icon" aria-hidden="true">auto_awesome</i>Experience</button>
@@ -80,9 +208,6 @@
                     <button type="button" class="jc-group-btn" data-group="system"><i class="material-icons jc-tab-icon" aria-hidden="true">settings_suggest</i>System</button>
                 </div>
 
-                <!-- The per-section buttons keep their .jellyfin-tab-button[data-tab]
-                     contract (page script, search badges, e2e); the shell relocates
-                     them into the active group's segmented control. -->
                 <div class="jc-section-strip-store" hidden>
                 <button class="jellyfin-tab-button active" data-tab="overview" data-group="command-center"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">dashboard</i>Overview</h3></button>
                 <button class="jellyfin-tab-button" data-tab="display" data-group="experience"><h3><i class="material-icons jc-tab-icon" aria-hidden="true">palette</i>Visuals &amp; Metadata</h3></button>
@@ -112,8 +237,6 @@
 
             <div class="jc-main">
 
-            <!-- Page header: the active group's title, purpose line, and its
-                 member sections as a compact segmented control. -->
             <header class="jc-page-header">
                 <div class="jc-page-header-text">
                     <h2 id="jcPageTitle" class="jc-page-title">Command Center</h2>
@@ -133,9 +256,33 @@
                 </div>
             </div>
 
+            <!-- Essentials view: friendly mirror controls over the same config
+                 keys (two-way synced by the engine; no data-config-key here).
+                 Hidden in Advanced mode; the form below stays for the dock. -->
+            <div id="jcEssentials" hidden>
+                <p class="jc-ess-lede">The six settings that shape Canopy for everyone on this server. Everything else runs on recommended defaults &mdash; switch to Advanced whenever you want the full catalogue.</p>
+                <div class="jc-ess-grid">
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">Watch progress on posters</span><div class="jc-ess-desc">See how far through everyone is, right on the card.</div></span><input id="jcEssWatchProgress" is="emby-checkbox" type="checkbox" aria-label="Watch progress on posters"/></div>
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">Quality badges</span><div class="jc-ess-desc">4K, HDR and Dolby Vision labels on posters.</div></span><input id="jcEssQualityTags" is="emby-checkbox" type="checkbox" aria-label="Quality badges"/></div>
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">Discovery feed</span><div class="jc-ess-desc">Trending and recommended rows on the home screen.</div></span><input id="jcEssDiscovery" is="emby-checkbox" type="checkbox" aria-label="Discovery feed"/></div>
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">&ldquo;Where can I stream this?&rdquo;</span><div class="jc-ess-desc">Show which streaming services also carry a title.</div></span><input id="jcEssElsewhere" is="emby-checkbox" type="checkbox" aria-label="Streaming availability"/></div>
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">Auto-skip intros &amp; credits</span><div class="jc-ess-desc">Jump past intros automatically when markers exist.</div></span><input id="jcEssAutoSkip" is="emby-checkbox" type="checkbox" aria-label="Auto-skip intros and credits"/></div>
+                    <div class="jc-ess-card"><span><span class="jc-ess-name">Spoiler guard</span><div class="jc-ess-desc">Blur artwork and titles people haven't seen yet.</div></span><input id="jcEssSpoiler" is="emby-checkbox" type="checkbox" aria-label="Spoiler guard"/></div>
+                </div>
+                <div class="jc-ess-svc">
+                    <div class="jc-ess-svc-head"><span class="jc-ess-title" style="font-size: 1.15em;">Connected services</span><button type="button" class="jc-wiz-btn-link" id="jcEssManageConnections">Manage in Advanced &rarr;</button></div>
+                    <div class="jc-ess-svc-list" id="jcEssSvcList"></div>
+                </div>
+                <div class="jc-ess-note"><b>Looking for more?</b> Subtitles, shortcuts, page order, bookmarks, anime filler warnings, server controls and 200+ other settings live in Advanced. Your Essentials choices carry over &mdash; it's the same configuration, just the full view.</div>
+                <div class="jc-ess-foot">
+                    <button type="button" class="jc-wiz-btn-quiet" id="jcRunWizardBtn">Run setup wizard again</button>
+                    <button type="button" class="jc-wiz-btn-link" id="jcEssGoAdvanced">Switch to Advanced settings</button>
+                </div>
+            </div>
+
             <form id="JellyfinCanopyForm">
 
-                <div id="overview" class="jellyfin-tab-content active">
+<div id="overview" class="jellyfin-tab-content active">
                     <div class="jc-info-banner jc-fieldset-wide jc-overview-intro">
                         <i class="material-icons jc-info-icon">dashboard</i>
                         <div>
@@ -199,7 +346,7 @@
                     </fieldset>
                 </div>
 
-                <div id="display" class="jellyfin-tab-content">
+<div id="display" class="jellyfin-tab-content">
                     <fieldset>
                         <legend class="sectionTitle">UI Preferences</legend>
                         <div class="configSection">
@@ -279,12 +426,12 @@
                                 </div>
                             </div>
                             <div class="jc-setting-description" data-desc-for="qualityTagsEnabled">
-                                <div class="fieldDescription jc-field-desc-sm">This feature is a slightly modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/" target="_blank">BobHasNoSoul</a></div>
+                                <div class="fieldDescription">This feature is a slightly modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/" target="_blank">BobHasNoSoul</a></div>
                             </div>
                             <details id="qualityCategoriesAdminDetails" class="jc-details-section">
                                 <summary>Configure tag categories</summary>
                                 <div id="qualityCategoriesAdmin" class="jc-details-body">
-                                    <div class="fieldDescription jc-field-desc-sm">Pick which categories of quality tags should appear, and the order they stack within the chosen corner. Use the <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
+                                    <div class="fieldDescription">Pick which categories of quality tags should appear, and the order they stack within the chosen corner. Use the <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
                                     <div class="jc-quality-cat-admin-row" data-cat-key="ShowResolutionTag" data-order-key="ResolutionTagOrder" data-default-order="1">
                                         <div class="checkboxContainer"><label><input id="showResolutionTag" data-config-key="ShowResolutionTag" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show resolution (4K, 1080p, ...)</span></label></div>
                                         <button type="button" class="raised raised-mini jc-cat-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
@@ -379,24 +526,24 @@
 
                             <div class="checkboxContainer"><label><input id="disableTagsOnSearchPage" data-config-key="DisableTagsOnSearchPage" is="emby-checkbox" type="checkbox"/><span>Disable Tags on Search Page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="disableTagsOnSearchPage">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Prevents quality/language/genre/rating tags from showing on search results. Recommended for compatibility with <b>Gelato</b> plugin.</div>
+                                <div class="fieldDescription">Prevents quality/language/genre/rating tags from showing on search results. Recommended for compatibility with <b>Gelato</b> plugin.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="tagsHideOnHover" data-config-key="TagsHideOnHover" is="emby-checkbox" type="checkbox"/><span>Hide Tags on Hover</span></label></div>
                             <div class="jc-setting-description" data-desc-for="tagsHideOnHover">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When enabled, tag overlays fade out when users hover over cards. Users can override this in their personal settings.</div>
+                                <div class="fieldDescription">When enabled, tag overlays fade out when users hover over cards. Users can override this in their personal settings.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="tagCacheServerMode" data-config-key="TagCacheServerMode" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Server-Side Tag Cache</span></label></div>
                             <div class="jc-setting-description" data-desc-for="tagCacheServerMode">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Pre-computes tag data on the server and serves it in a single request. Tags load instantly without per-page API calls. Disable to use the legacy per-page batch mode (not recommended).</div>
+                                <div class="fieldDescription">Pre-computes tag data on the server and serves it in a single request. Tags load instantly without per-page API calls. Disable to use the legacy per-page batch mode (not recommended).</div>
                             </div>
 
                             <div id="tagsLocalStorageFallbackContainer" class="checkboxContainer">
                                 <label><input id="enableTagsLocalStorageFallback" is="emby-checkbox" type="checkbox"/><span>Persist Tag Fallback Cache in Browser Storage</span></label>
                             </div>
                             <div class="jc-setting-description" data-desc-for="enableTagsLocalStorageFallback">
-                                <div class="fieldDescription jc-field-desc-sm-font-xl">Available when Server-Side Tag Cache is disabled. Stores fallback tag cache entries in browser localStorage for faster repeat loads.</div>
+                                <div class="fieldDescription-font-xl">Available when Server-Side Tag Cache is disabled. Stores fallback tag cache entries in browser localStorage for faster repeat loads.</div>
                             </div>
 
                             <div id="clientTagCacheControls" style="margin-top:10px;">
@@ -413,7 +560,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="useIcons" data-config-key="UseIcons" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use Icons in UI</span></label></div>
                             <div class="jc-setting-description" data-desc-for="useIcons">
-                                <div class="fieldDescription jc-field-desc-lg">Display icons throughout the UI (toasts, settings panel headers, etc.)</div>
+                                <div class="fieldDescription">Display icons throughout the UI (toasts, settings panel headers, etc.)</div>
                             </div>
 
                             <div class="inputContainer">
@@ -471,7 +618,7 @@
                     </fieldset>
                 </div>
 
-                <div id="playback" class="jellyfin-tab-content">
+<div id="playback" class="jellyfin-tab-content">
                     <fieldset>
                         <legend class="sectionTitle">Playback &amp; Tab Switch</legend>
                         <div class="configSection">
@@ -497,7 +644,7 @@
 
                             <div class="checkboxContainer"><label><input id="pauseScreenEnabled" data-config-key="PauseScreenEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Custom Pause Screen</span></label></div>
                             <div class="jc-setting-description" data-desc-for="pauseScreenEnabled">
-                                <div class="fieldDescription jc-field-desc-sm">This feature is a modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-PauseScreen" target="_blank">BobHasNoSoul</a></div>
+                                <div class="fieldDescription">This feature is a modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-PauseScreen" target="_blank">BobHasNoSoul</a></div>
                             </div>
 
                             <div class="inputContainer">
@@ -601,7 +748,7 @@
                     </fieldset>
                 </div>
 
-                <div id="pages" class="jellyfin-tab-content">
+<div id="pages" class="jellyfin-tab-content">
                     <div class="jc-info-banner jc-fieldset-wide jc-tab-intro">
                         <i class="material-icons jc-info-icon">integration_instructions</i>
                         <div>
@@ -615,7 +762,7 @@
                             <details class="jc-details-section">
                                 <summary>Page order</summary>
                                 <div id="pagesOrderAdmin" class="jc-details-body">
-                                    <div class="fieldDescription jc-field-desc-sm">Set the order the Jellyfin Canopy pages appear in navigation. Use the <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
+                                    <div class="fieldDescription">Set the order the Jellyfin Canopy pages appear in navigation. Use the <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_upward</i> / <i class="material-icons jc-cat-arrow-icon" aria-hidden="true">arrow_downward</i> buttons to reorder.</div>
                                     <div class="jc-quality-cat-admin-row jc-pages-order-row" data-page-id="calendar">
                                         <div class="checkboxContainer"><span>Calendar</span></div>
                                         <button type="button" class="raised raised-mini jc-page-up" aria-label="Move up"><i class="material-icons" aria-hidden="true">arrow_upward</i></button>
@@ -664,7 +811,7 @@
                             </div>
                             <div class="checkboxContainer jc-main-feature"><label><input id="bookmarksEnabled" data-config-key="BookmarksEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Bookmarks Feature</span></label></div>
                             <div class="jc-setting-description" data-desc-for="bookmarksEnabled">
-                                <div class="fieldDescription jc-field-desc-lg">Save custom bookmarks/timestamps while watching videos to quickly jump back to your favorite scenes or moments.</div>
+                                <div class="fieldDescription">Save custom bookmarks/timestamps while watching videos to quickly jump back to your favorite scenes or moments.</div>
                             </div>
                         </div>
                     </fieldset>
@@ -682,7 +829,7 @@
                             </div>
                             <div class="checkboxContainer jc-main-feature"><label><input id="hiddenContentEnabled" data-config-key="HiddenContentEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Hidden Content</span></label></div>
                             <div class="jc-setting-description" data-desc-for="hiddenContentEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Enable or disable the Hidden Content feature server-wide. When disabled, hide buttons, filtering, sidebar navigation, and settings panel options are all removed. User data is preserved and restored when re-enabled.</div>
+                                <div class="fieldDescription">Enable or disable the Hidden Content feature server-wide. When disabled, hide buttons, filtering, sidebar navigation, and settings panel options are all removed. User data is preserved and restored when re-enabled.</div>
                             </div>
 
                             <details class="jc-details-section" data-gated-by="hiddenContentEnabled">
@@ -806,7 +953,7 @@
                                 </div>
                             </div>
                             <div class="checkboxContainer jc-main-feature"><label><input id="animeFillerWarningsEnabled" data-config-key="AnimeFillerWarningsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable anime filler warnings</span></label></div>
-                            <div class="jc-setting-description" data-desc-for="animeFillerWarningsEnabled"><div class="fieldDescription jc-field-desc-xl">Opt-in server-wide master switch. When off, no provider requests are made and no client markers are shown.</div></div>
+                            <div class="jc-setting-description" data-desc-for="animeFillerWarningsEnabled"><div class="fieldDescription">Opt-in server-wide master switch. When off, no provider requests are made and no client markers are shown.</div></div>
                             <details class="jc-details-section" data-gated-by="animeFillerWarningsEnabled">
                                 <summary>Matching and cache settings</summary>
                                 <div class="jc-details-body">
@@ -847,7 +994,7 @@
 
                             <div class="checkboxContainer jc-main-feature"><label><input id="spoilerBlurEnabled" data-config-key="SpoilerBlurEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Spoiler Guard</span></label></div>
                             <div class="jc-setting-description" data-desc-for="spoilerBlurEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Enable or disable Spoiler Guard server-wide. When disabled, no images are blurred and no metadata is stripped, and the settings-panel controls are removed. User opt-in data is preserved and restored when re-enabled.</div>
+                                <div class="fieldDescription">Enable or disable Spoiler Guard server-wide. When disabled, no images are blurred and no metadata is stripped, and the settings-panel controls are removed. User opt-in data is preserved and restored when re-enabled.</div>
                             </div>
 
                             <details class="jc-details-section" data-gated-by="spoilerBlurEnabled">
@@ -1006,23 +1153,23 @@
 
                             <div class="checkboxContainer jc-main-feature"><label><input id="downloadsPageEnabled" data-config-key="DownloadsPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Requests Page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsPageEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds a "Requests" link to the navigation showing active downloads and requests.</div>
+                                <div class="fieldDescription">Adds a "Requests" link to the navigation showing active downloads and requests.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showDownloadsInRequests" data-config-key="ShowDownloadsInRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Downloads in Requests Page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showDownloadsInRequests">
-                                <div class="fieldDescription jc-field-desc-xl">Shows active downloads from Sonarr/Radarr on the Requests page. (Requires *arr links and API keys to be configured)</div>
+                                <div class="fieldDescription">Shows active downloads from Sonarr/Radarr on the Requests page. (Requires *arr links and API keys to be configured)</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="downloadsFilterByUserRequests" data-config-key="DownloadsFilterByUserRequests" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Filter Downloads by User Requests</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsFilterByUserRequests">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, regular users need a positive match to their own source-affine Seerr request. When disabled, eligibility broadens only to that match or a uniquely mapped Jellyfin item the current user may access; it never exposes the server-wide queue.</div>
+                                <div class="fieldDescription">When enabled, regular users need a positive match to their own source-affine Seerr request. When disabled, eligibility broadens only to that match or a uniquely mapped Jellyfin item the current user may access; it never exposes the server-wide queue.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="downloadsPageShowIssues" data-config-key="DownloadsPageShowIssues" is="emby-checkbox" type="checkbox"/><span>Show Seerr Issues Section</span></label></div>
                             <div class="jc-setting-description" data-desc-for="downloadsPageShowIssues">
-                                <div class="fieldDescription jc-field-desc-xl">Shows open/resolved Seerr issues beneath Requests.</div>
+                                <div class="fieldDescription">Shows open/resolved Seerr issues beneath Requests.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="requestApprovalsEnabled" data-config-key="RequestApprovalsEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable In-App Request Approvals</span></label></div>
                             <div class="jc-setting-description" data-desc-for="requestApprovalsEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Shows Approve / Decline buttons on pending Seerr requests in the Requests page. Only users who can approve in Seerr (Jellyfin admins, or Seerr users with the Manage Requests permission) ever see the buttons; the action is proxied to Seerr with the plugin's admin API key.</div>
+                                <div class="fieldDescription">Shows Approve / Decline buttons on pending Seerr requests in the Requests page. Only users who can approve in Seerr (Jellyfin admins, or Seerr users with the Manage Requests permission) ever see the buttons; the action is proxied to Seerr with the plugin's admin API key.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="downloadsPagePollingEnabled" data-config-key="DownloadsPagePollingEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Auto-Refresh</span></label></div>
@@ -1035,7 +1182,7 @@
                                 <input id="downloadsPollIntervalSeconds" data-config-key="DownloadsPollIntervalSeconds" data-config-int="" is="emby-input" type="number" min="30" max="300"/>
                             </div>
                             <div class="jc-setting-description" data-desc-for="downloadsPollIntervalSeconds">
-                                <div class="fieldDescription jc-field-desc-xl">How often to refresh download status automatically. Minimum is 30 seconds and applies only when auto-refresh is enabled.</div>
+                                <div class="fieldDescription">How often to refresh download status automatically. Minimum is 30 seconds and applies only when auto-refresh is enabled.</div>
                             </div>
 
                             <details class="jc-details-section" data-gated-by="downloadsPageEnabled,showDownloadsInRequests">
@@ -1043,32 +1190,32 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="downloadsAllowActiveForRegularUsers" data-config-key="DownloadsAllowActiveForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show active transfers to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsAllowActiveForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-authorized active Sonarr/Radarr transfers. Library access and request ownership are still enforced by the server.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see their server-authorized active Sonarr/Radarr transfers. Library access and request ownership are still enforced by the server.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="downloadsAllowProcessingForRegularUsers" data-config-key="DownloadsAllowProcessingForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show import processing to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsAllowProcessingForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see authorized post-transfer states such as import pending and importing. Transfer completion is kept separate from Jellyfin availability.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see authorized post-transfer states such as import pending and importing. Transfer completion is kept separate from Jellyfin availability.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="downloadsAllowWarningsForRegularUsers" data-config-key="DownloadsAllowWarningsForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show warnings and failures to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsAllowWarningsForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see authorized warning, blocked and failed activity. Browser responses remain sanitized and never include raw release names, paths or upstream payloads.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see authorized warning, blocked and failed activity. Browser responses remain sanitized and never include raw release names, paths or upstream payloads.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="downloadsAllowHistoryForRegularUsers" data-config-key="DownloadsAllowHistoryForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show download history to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsAllowHistoryForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-authorized, bounded Sonarr/Radarr history. Disabled by default; administrators retain diagnostic access.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see their server-authorized, bounded Sonarr/Radarr history. Disabled by default; administrators retain diagnostic access.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="downloadsAllowProvenanceForRegularUsers" data-config-key="DownloadsAllowProvenanceForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show request association to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsAllowProvenanceForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see sanitized provenance labels only when the server has positive association evidence. Ambiguous or unmatched activity remains unknown.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see sanitized provenance labels only when the server has positive association evidence. Ambiguous or unmatched activity remains unknown.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="downloadsDetailedLifecycleForRegularUsers" data-config-key="DownloadsDetailedLifecycleForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show detailed lifecycle states to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="downloadsDetailedLifecycleForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Shows the detailed normalized lifecycle vocabulary to non-admin users. Off uses a smaller presentation while the server still tracks authoritative state.</div>
+                                        <div class="fieldDescription">Shows the detailed normalized lifecycle vocabulary to non-admin users. Off uses a smaller presentation while the server still tracks authoritative state.</div>
                                     </div>
 
                                     <div class="inputContainer">
@@ -1076,7 +1223,7 @@
                                         <input id="downloadsHistoryWindowDays" data-config-key="DownloadsHistoryWindowDays" data-config-int="" data-config-fallback="7" is="emby-input" type="number" min="1" max="30" value="7"/>
                                     </div>
                                     <div class="jc-setting-description" data-desc-for="downloadsHistoryWindowDays">
-                                        <div class="fieldDescription jc-field-desc-xl">Maximum age of Sonarr/Radarr history requested by the server. Allowed range is 1–30 days; the default is 7.</div>
+                                        <div class="fieldDescription">Maximum age of Sonarr/Radarr history requested by the server. Allowed range is 1–30 days; the default is 7.</div>
                                     </div>
                                 </div>
                             </details>
@@ -1086,7 +1233,7 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="requestsAllowSeerrStatusAndHistoryForRegularUsers" data-config-key="RequestsAllowSeerrStatusAndHistoryForRegularUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr request status and history to regular users</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="requestsAllowSeerrStatusAndHistoryForRegularUsers">
-                                        <div class="fieldDescription jc-field-desc-xl">Allows non-admin users to see their server-scoped Seerr request status, history and sanitized download progress embedded in Seerr media responses. When disabled, the server returns empty embedded download relations. Source affinity, ownership, parental limits and library visibility remain server-enforced.</div>
+                                        <div class="fieldDescription">Allows non-admin users to see their server-scoped Seerr request status, history and sanitized download progress embedded in Seerr media responses. When disabled, the server returns empty embedded download relations. Source affinity, ownership, parental limits and library visibility remain server-enforced.</div>
                                     </div>
                                 </div>
                             </details>
@@ -1108,7 +1255,7 @@
 
                             <div class="checkboxContainer jc-main-feature"><label><input id="calendarPageEnabled" data-config-key="CalendarPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Calendar Page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="calendarPageEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds a "Calendar" link to the navigation showing upcoming releases from Sonarr/Radarr.</div>
+                                <div class="fieldDescription">Adds a "Calendar" link to the navigation showing upcoming releases from Sonarr/Radarr.</div>
                             </div>
 
                             <div class="inputContainer">
@@ -1133,7 +1280,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="calendarHighlightFavorites" data-config-key="CalendarHighlightFavorites" is="emby-checkbox" type="checkbox"/><span>Highlight Favorites/Watchlist</span></label></div>
                             <div class="jc-setting-description" data-desc-for="calendarHighlightFavorites">
-                                <div class="fieldDescription jc-field-desc-md">Show a golden border on calendar entries for items in your Jellyfin favorites.</div>
+                                <div class="fieldDescription">Show a golden border on calendar entries for items in your Jellyfin favorites.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="calendarHighlightWatchedSeries" data-config-key="CalendarHighlightWatchedSeries" is="emby-checkbox" type="checkbox"/><span>Highlight Watched Series</span></label></div>
                             <div class="jc-setting-description" data-desc-for="calendarHighlightWatchedSeries">
@@ -1155,7 +1302,7 @@
                     </fieldset>
                 </div>
 
-                <div id="seerr" class="jellyfin-tab-content">
+<div id="seerr" class="jellyfin-tab-content">
                     <fieldset data-dep-setup>
                         <legend class="sectionTitle">Seerr Connection Setup</legend>
                         <div class="configSection">
@@ -1163,7 +1310,7 @@
                                 <label><input id="seerrEnabled" data-config-key="SeerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Seerr integration</span></label>
                             </div>
                             <div class="jc-setting-description" data-desc-for="seerrEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Enables all Seerr-powered features for this server: Seerr search results, request buttons, the Requests page, auto-requests, and user import. Required for any Seerr feature to work.</div>
+                                <div class="fieldDescription">Enables all Seerr-powered features for this server: Seerr search results, request buttons, the Requests page, auto-requests, and user import. Required for any Seerr feature to work.</div>
                             </div>
 
                             <div class="inputContainer">
@@ -1258,27 +1405,27 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="seerrShowSearchResults" data-config-key="SeerrShowSearchResults" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Seerr Results in Search</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrShowSearchResults">
-                                <div class="fieldDescription jc-field-desc-xl">Enhance Jellyfin search by showing results from Seerr.<br/>This allows users to discover and request missing movies and shows directly from Jellyfin.</div>
+                                <div class="fieldDescription">Enhance Jellyfin search by showing results from Seerr.<br/>This allows users to discover and request missing movies and shows directly from Jellyfin.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showCollectionsInSearch" data-config-key="ShowCollectionsInSearch" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Collections in Seerr Results</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showCollectionsInSearch">
-                                <div class="fieldDescription jc-field-desc-xl">Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results with an option to request the entire collection at once.</div>
+                                <div class="fieldDescription">Display TMDB collections (e.g., Harry Potter, Marvel Cinematic Universe) in Seerr search results with an option to request the entire collection at once.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrEnable4kRequests" data-config-key="SeerrEnable4KRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K Requests</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrEnable4kRequests">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, movie request buttons include a dropdown to request a 4K version.</div>
+                                <div class="fieldDescription">When enabled, movie request buttons include a dropdown to request a 4K version.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrEnable4kTvRequests" data-config-key="SeerrEnable4KTvRequests" is="emby-checkbox" type="checkbox"/><span>Enable 4K TV Requests</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrEnable4kTvRequests">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, TV request buttons include a dropdown that opens the season request modal in 4K mode.</div>
+                                <div class="fieldDescription">When enabled, TV request buttons include a dropdown that opens the season request modal in 4K mode.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrShowAdvanced" data-config-key="SeerrShowAdvanced" is="emby-checkbox" type="checkbox"/><span>Show advanced request options</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrShowAdvanced">
-                                <div class="fieldDescription jc-field-desc-xl">Enable this if you want users to be able to choose between Servers, Quality and Paths while requesting. <br/> Note: This will disregard any Override Rules set in Seerr.</div>
+                                <div class="fieldDescription">Enable this if you want users to be able to choose between Servers, Quality and Paths while requesting. <br/> Note: This will disregard any Override Rules set in Seerr.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrShowQuotaInfo" data-config-key="SeerrShowQuotaInfo" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show request quota info</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrShowQuotaInfo">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, request modals display a chip showing the user's request usage and when their next slot frees up. Quota errors get a detailed dialog instead of a vanishing toast.</div>
+                                <div class="fieldDescription">When enabled, request modals display a chip showing the user's request usage and when their next slot frees up. Quota errors get a detailed dialog instead of a vanishing toast.</div>
                             </div>
                         </div>
                     </fieldset>
@@ -1288,19 +1435,19 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="seerrUseMoreInfoModal" data-config-key="SeerrUseMoreInfoModal" is="emby-checkbox" type="checkbox"/><span>Open results in "More Info" modal</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrUseMoreInfoModal">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, clicking a Seerr result title or poster opens an in-app More Info modal.<br/>When disabled, clicking will open the item in Seerr.</div>
+                                <div class="fieldDescription">When enabled, clicking a Seerr result title or poster opens an in-app More Info modal.<br/>When disabled, clicking will open the item in Seerr.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrShowReportButton" data-config-key="SeerrShowReportButton" is="emby-checkbox" type="checkbox"/><span>Show "Report Issue" button on items</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrShowReportButton">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, a small report icon will be added to item action icons allowing users to report playback/content issues to Seerr.</div>
+                                <div class="fieldDescription">When enabled, a small report icon will be added to item action icons allowing users to report playback/content issues to Seerr.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="seerrShowIssueIndicator" data-config-key="SeerrShowIssueIndicator" is="emby-checkbox" type="checkbox"/><span>Show open issue indicator</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrShowIssueIndicator">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, the report issue button turns orange and shows a count badge if the item has open issues in Seerr.</div>
+                                <div class="fieldDescription">When enabled, the report issue button turns orange and shows a count badge if the item has open issues in Seerr.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showElsewhereOnSeerr" data-config-key="ShowElsewhereOnSeerr" is="emby-checkbox" type="checkbox"/><span>Show Streaming Providers on Posters</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showElsewhereOnSeerr">
-                                <div class="fieldDescription jc-field-desc-xl">Displays icons of available streaming services (from your default region) on Seerr Posters.<br/><br/><b>Requires TMDB API Key to be configured in Elsewhere Settings</b></div>
+                                <div class="fieldDescription">Displays icons of available streaming services (from your default region) on Seerr Posters.<br/><br/><b>Requires TMDB API Key to be configured in Elsewhere Settings</b></div>
                             </div>
 
                             <details class="jc-details-section">
@@ -1308,32 +1455,32 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="seerrShowSimilar" data-config-key="SeerrShowSimilar" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show similar items</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowSimilar">
-                                        <div class="fieldDescription jc-field-desc-xl">Displays similar movies/shows from Seerr on item details pages. Limited to 20 items.</div>
+                                        <div class="fieldDescription">Displays similar movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowRecommended" data-config-key="SeerrShowRecommended" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show recommended items</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowRecommended">
-                                        <div class="fieldDescription jc-field-desc-xl">Displays recommended movies/shows from Seerr on item details pages. Limited to 20 items.</div>
+                                        <div class="fieldDescription">Displays recommended movies/shows from Seerr on item details pages. Limited to 20 items.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowRequestMoreOnSeries" data-config-key="SeerrShowRequestMoreOnSeries" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "Request More" button on Series</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowRequestMoreOnSeries">
-                                        <div class="fieldDescription jc-field-desc-xl">Adds a "Request More" button beside the Seasons section heading on Series detail pages when the show has unrequested seasons in Seerr. Lets users request additional seasons without going through the search bar.</div>
+                                        <div class="fieldDescription">Adds a "Request More" button beside the Seasons section heading on Series detail pages when the show has unrequested seasons in Seerr. Lets users request additional seasons without going through the search bar.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrExcludeLibraryItems" data-config-key="SeerrExcludeLibraryItems" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Exclude items already in library</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrExcludeLibraryItems">
-                                        <div class="fieldDescription jc-field-desc-xl">Hide similar/recommended items that already exist in your Jellyfin library from the results.<br/>If disabled, the items that are available link to the media item in the library.</div>
+                                        <div class="fieldDescription">Hide similar/recommended items that already exist in your Jellyfin library from the results.<br/>If disabled, the items that are available link to the media item in the library.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrExcludeBlocklistedItems" data-config-key="SeerrExcludeBlocklistedItems" is="emby-checkbox" type="checkbox"/><span>Exclude blocklisted items</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrExcludeBlocklistedItems">
-                                        <div class="fieldDescription jc-field-desc-xl">When enabled, items marked as blocklisted in Seerr will not appear in similar/recommended suggestions.</div>
+                                        <div class="fieldDescription">When enabled, items marked as blocklisted in Seerr will not appear in similar/recommended suggestions.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrRespectParentalRatings" data-config-key="SeerrRespectParentalRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect parental ratings</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrRespectParentalRatings">
-                                        <div class="fieldDescription jc-field-desc-xl">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Default: on.</div>
+                                        <div class="fieldDescription">Hide Seerr search &amp; discovery results a user could not watch once requested, using that user's own Jellyfin content-rating limit (Maximum Parental Rating) and blocked-unrated settings. Only affects accounts that already have a rating restriction set in Jellyfin; administrators and users with no limit see everything. Default: on.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="seerrRespectBlockedTags" data-config-key="SeerrRespectBlockedTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Respect blocked / allowed tags</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrRespectBlockedTags">
-                                        <div class="fieldDescription jc-field-desc-xl">Also enforce each user's Jellyfin tag-based parental controls (Block items with tags / Allow only items with tags) on Seerr results, details and requests. Titles are matched by their TMDB keywords and genres — keywords are the same strings Jellyfin imports as library Tags, so a tag like "horror" blocks the same content Jellyfin itself would hide once imported (plus the matching genre). Requires "Respect parental ratings" to be on. Default: on.</div>
+                                        <div class="fieldDescription">Also enforce each user's Jellyfin tag-based parental controls (Block items with tags / Allow only items with tags) on Seerr results, details and requests. Titles are matched by their TMDB keywords and genres — keywords are the same strings Jellyfin imports as library Tags, so a tag like "horror" blocks the same content Jellyfin itself would hide once imported (plus the matching genre). Requires "Respect parental ratings" to be on. Default: on.</div>
                                     </div>
                                 </div>
                             </details>
@@ -1343,23 +1490,23 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="seerrShowNetworkDiscovery" data-config-key="SeerrShowNetworkDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Network"</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowNetworkDiscovery">
-                                        <div class="fieldDescription jc-field-desc-md">When viewing a network page (e.g., Netflix, HBO), displays additional content from that network available in Seerr.</div>
+                                        <div class="fieldDescription">When viewing a network page (e.g., Netflix, HBO), displays additional content from that network available in Seerr.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowGenreDiscovery" data-config-key="SeerrShowGenreDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Genre"</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowGenreDiscovery">
-                                        <div class="fieldDescription jc-field-desc-md">When viewing a genre page (e.g., Action, Comedy), displays additional content in that genre from Seerr.</div>
+                                        <div class="fieldDescription">When viewing a genre page (e.g., Action, Comedy), displays additional content in that genre from Seerr.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowTagDiscovery" data-config-key="SeerrShowTagDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More Tag"</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowTagDiscovery">
-                                        <div class="fieldDescription jc-field-desc-md">When viewing a tag page (e.g., cooking, superhero), displays additional content with that keyword from Seerr.</div>
+                                        <div class="fieldDescription">When viewing a tag page (e.g., cooking, superhero), displays additional content with that keyword from Seerr.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowPersonDiscovery" data-config-key="SeerrShowPersonDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "More from Actor"</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowPersonDiscovery">
-                                        <div class="fieldDescription jc-field-desc-md">When viewing an actor/person page, displays their filmography from Seerr including content not in your library.</div>
+                                        <div class="fieldDescription">When viewing an actor/person page, displays their filmography from Seerr including content not in your library.</div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="seerrShowCollectionDiscovery" data-config-key="SeerrShowCollectionDiscovery" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show missing collection movies</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="seerrShowCollectionDiscovery">
-                                        <div class="fieldDescription jc-field-desc-xl">When viewing a collection/BoxSet page, shows movies from the collection that are not yet in your library with request buttons.</div>
+                                        <div class="fieldDescription">When viewing a collection/BoxSet page, shows movies from the collection that are not yet in your library with request buttons.</div>
                                     </div>
                                 </div>
                             </details>
@@ -1374,14 +1521,14 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="autoSeasonRequestEnabled" data-config-key="AutoSeasonRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Automatic Advance Season Requests</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoSeasonRequestEnabled">
-                                        <div class="fieldDescription jc-field-desc-xl">
+                                        <div class="fieldDescription">
                                             Automatically request the next season in Seerr when a user about to finish the current season.
                                             <br/><br/>
                                         </div>
                                     </div>
                                     <div class="checkboxContainer"><label><input id="autoSeasonRequestRequireAllWatched" data-config-key="AutoSeasonRequestRequireAllWatched" is="emby-checkbox" type="checkbox"/><span>Require All Prior Episodes Watched</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoSeasonRequestRequireAllWatched">
-                                        <div class="fieldDescription jc-field-desc-xl">
+                                        <div class="fieldDescription">
                                             Require all episodes before the threshold to be watched. For example, if threshold is 2 and there are 10 episodes, when watching episode 8, all episodes 1-7 must be watched or marked as watched. This prevents accidentally triggering requests by jumping to later episodes. <br/> This might cause requests to not be triggered if users skip episodes.
                                         </div>
                                     </div>
@@ -1409,7 +1556,7 @@
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="autoMovieRequestEnabled" data-config-key="AutoMovieRequestEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Auto Movie Requests</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoMovieRequestEnabled">
-                                        <div class="fieldDescription jc-field-desc-xl">
+                                        <div class="fieldDescription">
                                             Automatically request the next movie in a collection based on configured triggers.
                                             <br/><br/>
                                         <strong>Requirements:</strong> TMDB API key must be configured.
@@ -1419,12 +1566,12 @@
                                     <div style="margin-top:10px;"><strong>Request Triggers:</strong></div>
                                     <div class="checkboxContainer"><label><input id="autoMovieRequestTriggerOnStart" is="emby-checkbox" type="checkbox"/><span>When movie starts</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoMovieRequestTriggerOnStart">
-                                        <div class="fieldDescription jc-field-desc-mt-sm">Trigger an auto-request for the next movie in the collection as soon as a user starts a movie.</div>
+                                        <div class="fieldDescription">Trigger an auto-request for the next movie in the collection as soon as a user starts a movie.</div>
                                     </div>
 
                                     <div class="checkboxContainer"><label><input id="autoMovieRequestTriggerOnMinutesWatched" is="emby-checkbox" type="checkbox"/><span>After X minutes watched</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoMovieRequestTriggerOnMinutesWatched">
-                                        <div class="fieldDescription jc-field-desc-mt-sm">
+                                        <div class="fieldDescription">
                                             Select one or both triggers. If both are selected, the request will be triggered if either condition is met.
                                         </div>
                                     </div>
@@ -1434,14 +1581,14 @@
                                         <input id="autoMovieRequestMinutesWatched" data-config-key="AutoMovieRequestMinutesWatched" data-config-int="" data-config-fallback="20" is="emby-input" type="number" min="1" max="180" value="20" />
                                     </div>
                                         <div class="jc-setting-description" data-desc-for="autoMovieRequestMinutesWatched">
-                                            <div class="fieldDescription jc-field-desc-mt-sm">
+                                            <div class="fieldDescription">
                                                 How many minutes a user should watch before triggering a request? Must be between 1 and 180 minutes.
                                             </div>
                                         </div>
 
                                     <div class="checkboxContainer"><label><input id="autoMovieRequestCheckReleaseDate" data-config-key="AutoMovieRequestCheckReleaseDate" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Only request if released</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoMovieRequestCheckReleaseDate">
-                                        <div class="fieldDescription jc-field-desc-mt-sm">
+                                        <div class="fieldDescription">
                                             When enabled, future releases will be skipped. Only movies that have already been released will be requested.
                                         </div>
                                     </div>
@@ -1453,7 +1600,7 @@
                                         </select>
                                     </div>
                                         <div class="jc-setting-description" data-desc-for="autoMovieRequestQualityMode">
-                                            <div class="fieldDescription jc-field-desc-mt-sm">
+                                            <div class="fieldDescription">
                                             <strong>Default:</strong> Seerr uses its default Radarr server and quality profile.<br/>
                                             <strong>Original:</strong> Uses the same quality profile as the movie being watched (falls back to default if not found).<br/>
                                             <strong>Custom:</strong> Uses the specific Radarr server, quality profile, and root folder selected below. Because those saved IDs are not source-bound, Custom mode sends automatic requests only when exactly one distinct Seerr identity domain is configured; multi-domain configurations fail closed without a request.
@@ -1462,7 +1609,7 @@
 
                                     <div class="checkboxContainer"><label><input id="autoMovieRequestFallbackOn4k" data-config-key="AutoMovieRequestFallbackOn4k" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Use default instead of 4K fallback</span></label></div>
                                     <div class="jc-setting-description" data-desc-for="autoMovieRequestFallbackOn4k">
-                                        <div class="fieldDescription jc-field-desc-lg">
+                                        <div class="fieldDescription">
                                             Only applies when Quality Profile Mode is set to "Original". If the watched movie was requested with a 4K profile, the auto-request will use Seerr's default profile instead. This prevents requests from failing or requiring manual approval for users who don't have 4K request permissions in Seerr. Disable this if all your users have 4K request access and you want to preserve the original 4K profile.
                                         </div>
                                     </div>
@@ -1472,7 +1619,7 @@
                                         <div class="inputContainer"><label class="inputLabel" for="autoMovieRequestProfile">Quality Profile:</label><select id="autoMovieRequestProfile" name="autoMovieRequestProfile" is="emby-select" class="emby-select"></select></div>
                                         <div class="inputContainer"><label class="inputLabel" for="autoMovieRequestRootFolder">Root Folder:</label><select id="autoMovieRequestRootFolder" name="autoMovieRequestRootFolder" is="emby-select" class="emby-select"></select></div>
                                         <div class="jc-setting-description" data-desc-for="autoMovieRequestRootFolder">
-                                            <div class="fieldDescription jc-field-desc-mt-sm">
+                                            <div class="fieldDescription">
                                                 These settings are only used when Quality Profile Mode is set to "Custom". Custom mode requires exactly one distinct configured Seerr identity domain.
                                             </div>
                                             <div class="jc-info-banner-inline">
@@ -1495,7 +1642,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="triggerSeerrScanOnItemAdded" data-config-key="TriggerSeerrScanOnItemAdded" is="emby-checkbox" type="checkbox"/><span>Trigger Seerr recently-added scan when new Jellyfin items are added</span></label></div>
                             <div class="jc-setting-description" data-desc-for="triggerSeerrScanOnItemAdded">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     When Jellyfin reports new library items added, enabling this triggers the "Jellyfin Recently Added Scan" job so that request statuses are immediately updated instead of waiting till next schedule run. Events are debounced, so a bulk import collapses into a single trigger.<br/><br/>
                                     <strong>Tip:</strong> With this enabled, you can set Seerr's recently-added scan Frequency to a much longer interval (60 minutes) to reduce noise.
                                 </div>
@@ -1506,7 +1653,7 @@
                                 <input id="seerrScanDebounceSeconds" data-config-key="SeerrScanDebounceSeconds" data-config-int="" data-config-fallback="60" is="emby-input" type="number" min="5" max="3600" step="1"/>
                             </div>
                             <div class="jc-setting-description" data-desc-for="seerrScanDebounceSeconds">
-                                <div class="fieldDescription jc-field-desc-mt-sm jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Wait this many seconds after the LAST item added before firing the scan. Default 60. Range 5 to 3600.
                                 </div>
                             </div>
@@ -1516,7 +1663,7 @@
                                 <span id="triggerSeerrScanNowStatus" class="material-icons" aria-hidden="true"></span>
                             </div>
                             <div class="jc-setting-description" data-desc-for="triggerSeerrScanNowBtn">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Uses the Seerr URL(s) and API key entered in the Setup section above. Each normalized distinct URL is a separate Seerr identity domain and is triggered once. Comma/newline duplicates and trailing-slash aliases are collapsed; a failure in one domain does not stop the others.
                                 </div>
                             </div>
@@ -1528,7 +1675,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="addRequestedMediaToWatchlist" data-config-key="AddRequestedMediaToWatchlist" is="emby-checkbox" type="checkbox"/><span>Add requested media to Watchlist</span></label></div>
                             <div class="jc-setting-description" data-desc-for="addRequestedMediaToWatchlist">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     When enabled, media requested in any configured Seerr instance will automatically be added to the requesting user's Watchlist when it becomes available in Jellyfin. This includes requests created outside Jellyfin Canopy.<br/><br/>
                                     <strong>Note:</strong> Requires <a class="jc-bold-link" href="https://github.com/ranaldsgift/KefinTweaks" target="_blank">KefinTweaks</a> to be installed to actually view the watchlisted items.
                                     <span class="jc-installed-badge" data-plugin="kefintweaks"><i class="material-icons" aria-hidden="true">check_circle</i>KefinTweaks detected</span>
@@ -1537,7 +1684,7 @@
 
                             <div class="checkboxContainer"><label><input id="syncSeerrWatchlist" data-config-key="SyncSeerrWatchlist" is="emby-checkbox" type="checkbox"/><span>Sync Seerr Watchlist → Jellyfin</span></label></div>
                             <div class="jc-setting-description" data-desc-for="syncSeerrWatchlist">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     When enabled, items from each user's Seerr watchlist will be automatically synced to their Jellyfin watchlist.<br/><br/>
                                     Configure how often the sync should run in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Sync Watchlist from Seerr to Jellyfin".<br/><br/>
                                     <strong>Note:</strong> Requires <a class="jc-bold-link" href="https://github.com/ranaldsgift/KefinTweaks" target="_blank">KefinTweaks</a> to actually render the watchlist UI.
@@ -1547,7 +1694,7 @@
 
                             <div class="checkboxContainer"><label><input id="syncJellyfinWatchlistToSeerr" data-config-key="SyncJellyfinWatchlistToSeerr" is="emby-checkbox" type="checkbox"/><span>Sync Jellyfin Watchlist → Seerr</span></label></div>
                             <div class="jc-setting-description" data-desc-for="syncJellyfinWatchlistToSeerr">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     When enabled, items from a user's Jellyfin watchlist (from <a class="jc-bold-link" href="https://github.com/ranaldsgift/KefinTweaks" target="_blank">KefinTweaks</a>) will be automatically synced to their Seerr watchlist.<br/><br/>
                                     Configure how often the sync should run in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Sync Watchlist from Jellyfin to Seerr".
                                     <span class="jc-installed-badge" data-plugin="kefintweaks"><i class="material-icons" aria-hidden="true">check_circle</i>KefinTweaks detected</span>
@@ -1556,7 +1703,7 @@
 
                             <div class="checkboxContainer"><label><input id="preventWatchlistReAddition" data-config-key="PreventWatchlistReAddition" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Prevent re-adding removed items</span></label></div>
                             <div class="jc-setting-description" data-desc-for="preventWatchlistReAddition">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     When enabled, items will only be added to a user's watchlist once. If a user manually removes an item from their watchlist, it won't be automatically re-added during future sync runs.
                                 </div>
                             </div>
@@ -1566,7 +1713,7 @@
                                 <input id="watchlistMemoryRetentionDays" data-config-key="WatchlistMemoryRetentionDays" data-config-int="" data-config-fallback="365" is="emby-input" type="number" min="1" max="3650" step="1"/>
                             </div>
                             <div class="jc-setting-description" data-desc-for="watchlistMemoryRetentionDays">
-                                <div class="fieldDescription jc-field-desc-mt-sm jc-field-desc-md">
+                                <div class="fieldDescription">
                                     How long to remember that an item was processed before allowing it to be re-added.<br/>After this period, manually removed items (if unwatched) will be automatically re-added to watchlist if they're still in Seerr requests or Seerr watchlist.<br/><br/>
                                     <strong>Examples:</strong>
                                     <ul class="jc-retention-list">
@@ -1585,7 +1732,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="seerrAutoImportUsers" data-config-key="SeerrAutoImportUsers" is="emby-checkbox" type="checkbox"/><span>Auto import Jellyfin users to Seerr</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrAutoImportUsers">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     Automatically import Jellyfin users into Seerr so they can use Seerr Search without needing to visit Seerr directly. Just-in-time lookup searches existing mappings across every configured identity domain; if no mapping exists, the user is imported once into the first configured domain. Manual and scheduled bulk imports first require complete, stable user maps from every domain and exclude users mapped anywhere; only the truly unbound batch is sent to the first canonical configured domain. An incomplete, malformed, or internally ambiguous domain map suppresses the whole import. A user intentionally linked on multiple domains is valid and is simply excluded from import. Import mutations are never fanned out or replayed on another domain after an uncertain response.<br/><br/>
                                     Configure the bulk import frequency in Jellyfin Dashboard &gt; Scheduled Tasks &gt; "Import Jellyfin Users to Seerr".
                                 </div>
@@ -1594,7 +1741,7 @@
                             <details id="blockedUsersDetails" class="jc-details-section">
                                 <summary>Blocked Users <span id="blockedUsersCount">(none)</span></summary>
                                 <div class="jc-details-body">
-                                    <div class="fieldDescription jc-field-desc-md">
+                                    <div class="fieldDescription">
                                         Select users to exclude from Seerr import. Blocked users will never be looked up or imported. No API calls are made for them.
                                     </div>
                                     <div id="blockedUsersContainer" style="max-height: 200px; overflow-y: auto;">
@@ -1614,7 +1761,7 @@
                         <legend class="sectionTitle">Permission Audit</legend>
                         <div class="configSection">
                             <div class="jc-setting-description" data-desc-for="btnPermissionAudit">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Check which users are missing Seerr permissions required for the features you have enabled. Only users linked to a Seerr account are checked.
                                 </div>
                             </div>
@@ -1630,7 +1777,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="seerrDisableCache" data-config-key="SeerrDisableCache" is="emby-checkbox" type="checkbox"/><span>Disable server-side response cache</span></label></div>
                             <div class="jc-setting-description" data-desc-for="seerrDisableCache">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, all Seerr proxy requests bypass the server-side cache and are fetched fresh from Seerr every time. This is useful for testing but will increase load on your Seerr instance. <b>Not recommended for normal use.</b></div>
+                                <div class="fieldDescription">When enabled, all Seerr proxy requests bypass the server-side cache and are fetched fresh from Seerr every time. This is useful for testing but will increase load on your Seerr instance. <b>Not recommended for normal use.</b></div>
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel" for="seerrResponseCacheTtlMinutes">Response Cache TTL (min)</label>
@@ -1657,7 +1804,7 @@
                     </fieldset>
                 </div>
 
-                <div id="maintainerr" class="jellyfin-tab-content">
+<div id="maintainerr" class="jellyfin-tab-content">
                     <div class="jc-info-banner jc-fieldset-wide jc-tab-intro">
                         <i class="material-icons jc-info-icon" aria-hidden="true">cleaning_services</i>
                         <div>
@@ -1686,7 +1833,7 @@
                                 <label><input id="maintainerrEnabled" data-config-key="MaintainerrEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Maintainerr integration</span></label>
                             </div>
                             <div class="jc-setting-description" data-desc-for="maintainerrEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Allows Canopy's server to perform the reviewed, read-only Maintainerr requests. Disabling this is the integration-wide kill switch.</div>
+                                <div class="fieldDescription">Allows Canopy's server to perform the reviewed, read-only Maintainerr requests. Disabling this is the integration-wide kill switch.</div>
                             </div>
 
                             <div class="inputContainer">
@@ -1699,7 +1846,7 @@
                                 </div>
                             </div>
                             <div class="jc-setting-description" data-desc-for="maintainerrUrl">
-                                <div class="fieldDescription jc-field-desc-xl">Server-only base URL used by Jellyfin to reach Maintainerr. Include any reverse-proxy base path. It must be an absolute HTTP(S) URL without credentials, query, or fragment. The connection test sends this value in a small authenticated JSON request to Canopy, never in a URL, header, or browser request to Maintainerr.</div>
+                                <div class="fieldDescription">Server-only base URL used by Jellyfin to reach Maintainerr. Include any reverse-proxy base path. It must be an absolute HTTP(S) URL without credentials, query, or fragment. The connection test sends this value in a small authenticated JSON request to Canopy, never in a URL, header, or browser request to Maintainerr.</div>
                             </div>
 
                             <div class="inputContainer">
@@ -1707,7 +1854,7 @@
                                 <input id="maintainerrExternalUrl" data-config-key="MaintainerrExternalUrl" is="emby-input" name="maintainerrExternalUrl" type="text" inputmode="url" autocomplete="off" maxlength="2048" placeholder="https://maintainerr.example.com"/>
                             </div>
                             <div class="jc-setting-description" data-desc-for="maintainerrExternalUrl">
-                                <div class="fieldDescription jc-field-desc-xl">Admin-only destination for explicit “Open in Maintainerr” links. Leave blank to fall back to the internal URL for administrators. Regular users never receive either URL.</div>
+                                <div class="fieldDescription">Admin-only destination for explicit “Open in Maintainerr” links. Leave blank to fall back to the internal URL for administrators. Regular users never receive either URL.</div>
                             </div>
 
                             <details class="jc-details-section">
@@ -1732,23 +1879,23 @@
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="maintainerrPageEnabled" data-config-key="MaintainerrPageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable the Maintainerr page</span></label></div>
                             <div class="jc-setting-description" data-desc-for="maintainerrPageEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds an administrator-only Maintainerr page to Canopy navigation with bounded, read-only operational summaries.</div>
+                                <div class="fieldDescription">Adds an administrator-only Maintainerr page to Canopy navigation with bounded, read-only operational summaries.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="maintainerrItemStatusEnabled" data-config-key="MaintainerrItemStatusEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show Maintainerr status on item details</span></label></div>
                             <div class="jc-setting-description" data-desc-for="maintainerrItemStatusEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Shows cleanup-protection and manual-management state for visible Movie, Series, Season, and Episode items. Admins may also see safe collection labels and links.</div>
+                                <div class="fieldDescription">Shows cleanup-protection and manual-management state for visible Movie, Series, Season, and Episode items. Admins may also see safe collection labels and links.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="maintainerrItemStatusForUsers" data-config-key="MaintainerrItemStatusForUsers" is="emby-checkbox" type="checkbox"/><span>Allow generic item status for regular users</span></label></div>
                             <div class="jc-setting-description" data-desc-for="maintainerrItemStatusForUsers">
-                                <div class="fieldDescription jc-field-desc-xl">Opt in to exposing only two generic booleans—protected from cleanup and manually managed—to authenticated regular users for items they can already access. Collection names, links, server identity, topology, and diagnostics remain administrator-only.</div>
+                                <div class="fieldDescription">Opt in to exposing only two generic booleans—protected from cleanup and manually managed—to authenticated regular users for items they can already access. Collection names, links, server identity, topology, and diagnostics remain administrator-only.</div>
                             </div>
                         </div>
                     </fieldset>
                 </div>
 
-                <div id="arr" class="jellyfin-tab-content">
+<div id="arr" class="jellyfin-tab-content">
                     <div class="jc-info-banner jc-fieldset-wide jc-tab-intro">
                         <i class="material-icons jc-info-icon">download_for_offline</i>
                         <div>
@@ -1828,7 +1975,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="arrLinksEnabled" data-config-key="ArrLinksEnabled" is="emby-checkbox" type="checkbox"/><span>Enable *arr Links on Detail Pages</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrLinksEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Show Sonarr, Radarr, and Bazarr links of the items on item detail pages for quick access. <strong>Admins only</strong>.<br/>If no URL is configured for a service , links for that service are not shown.</div>
+                                <div class="fieldDescription">Show Sonarr, Radarr, and Bazarr links of the items on item detail pages for quick access. <strong>Admins only</strong>.<br/>If no URL is configured for a service , links for that service are not shown.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showArrLinksAsText" data-config-key="ShowArrLinksAsText" is="emby-checkbox" type="checkbox"/><span>Show links as text</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showArrLinksAsText">
@@ -1836,7 +1983,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="arrLinksShowStatusSingle" data-config-key="ArrLinksShowStatusSingle" is="emby-checkbox" type="checkbox"/><span>Show status badge for single-instance</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrLinksShowStatusSingle">
-                                <div class="fieldDescription jc-field-desc-xl">When off (default), a single matching Sonarr/Radarr instance renders as a plain icon/text.<br/>When on, it also shows the episode count (e.g. 22/41) and a colored left border indicating download status. Multi-instance dropdowns always show this detail.</div>
+                                <div class="fieldDescription">When off (default), a single matching Sonarr/Radarr instance renders as a plain icon/text.<br/>When on, it also shows the episode count (e.g. 22/41) and a colored left border indicating download status. Multi-instance dropdowns always show this detail.</div>
                             </div>
                         </div>
                     </fieldset>
@@ -1846,11 +1993,11 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="arrSearchEnabled" data-config-key="ArrSearchEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Search in the item menu</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrSearchEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds <strong>Search</strong> (automatic) and <strong>Interactive Search</strong> (manual release picker) to the item action menu for movies, series, seasons and episodes, driving the Sonarr/Radarr instances configured above. <strong>Admins only</strong>.<br/>Uses each item's TVDB/TMDB id to find it in the arr — the item must already be tracked there (or use <em>Add to Sonarr/Radarr</em> below).</div>
+                                <div class="fieldDescription">Adds <strong>Search</strong> (automatic) and <strong>Interactive Search</strong> (manual release picker) to the item action menu for movies, series, seasons and episodes, driving the Sonarr/Radarr instances configured above. <strong>Admins only</strong>.<br/>Uses each item's TVDB/TMDB id to find it in the arr — the item must already be tracked there (or use <em>Add to Sonarr/Radarr</em> below).</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="arrSearchManageEnabled" data-config-key="ArrSearchManageEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable management actions (Monitor / Add)</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrSearchManageEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Also adds <strong>Monitor / Unmonitor</strong> and <strong>Add to Sonarr/Radarr</strong> to the menu, so an item can be started and grabbed without opening the arr UI. Turn off to keep search-only and prevent changes to the arr library from Jellyfin.</div>
+                                <div class="fieldDescription">Also adds <strong>Monitor / Unmonitor</strong> and <strong>Add to Sonarr/Radarr</strong> to the menu, so an item can be started and grabbed without opening the arr UI. Turn off to keep search-only and prevent changes to the arr library from Jellyfin.</div>
                             </div>
                         </div>
                     </fieldset>
@@ -1860,7 +2007,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="arrTagsSyncEnabled" data-config-key="ArrTagsSyncEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Tags Sync</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrTagsSyncEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">
+                                <div class="fieldDescription">
                                     Fetches all tags from Radarr and Sonarr instances defined above and adds them as Jellyfin tags.
                                     <br/><br/>
                                 <strong>Note:</strong> Run the sync task from Dashboard &gt; Scheduled Tasks &gt; "Sync Tags from *arr to Jellyfin" and configure how often it should run.
@@ -1875,11 +2022,11 @@
                                 </div>
                             <div class="checkboxContainer"><label><input id="arrTagsClearOldTags" data-config-key="ArrTagsClearOldTags" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Clear old tags before sync</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrTagsClearOldTags">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, removes all existing tags starting with the prefix before adding new ones. This keeps tags in sync with your *arr applications.</div>
+                                <div class="fieldDescription">When enabled, removes all existing tags starting with the prefix before adding new ones. This keeps tags in sync with your *arr applications.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="arrTagsShowAsLinks" data-config-key="ArrTagsShowAsLinks" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show synced tags as links</span></label></div>
                             <div class="jc-setting-description" data-desc-for="arrTagsShowAsLinks">
-                                <div class="fieldDescription jc-field-desc-xl">Displays tags with the configured prefix as clickable links on item detail pages. Helpful if your theme hides tags.</div>
+                                <div class="fieldDescription">Displays tags with the configured prefix as clickable links on item detail pages. Helpful if your theme hides tags.</div>
                             </div>
 
                             <details class="jc-details-section">
@@ -1930,13 +2077,13 @@
                     </fieldset>
                 </div>
 
-                <div id="elsewhere" class="jellyfin-tab-content">
+<div id="elsewhere" class="jellyfin-tab-content">
                     <fieldset>
                         <legend class="sectionTitle">Elsewhere (Streaming Providers)</legend>
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="elsewhereEnabled" data-config-key="ElsewhereEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Elsewhere</span></label></div>
                             <div class="jc-setting-description" data-desc-for="elsewhereEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds an "Elsewhere" panel to item detail pages showing where the title is available on streaming services in the user's region (powered by TMDB watch-provider data).</div>
+                                <div class="fieldDescription">Adds an "Elsewhere" panel to item detail pages showing where the title is available on streaming services in the user's region (powered by TMDB watch-provider data).</div>
                             </div>
 
                             <div class="inputContainer">
@@ -2001,11 +2148,11 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="showReviews" data-config-key="ShowReviews" is="emby-checkbox" type="checkbox"/><span>Show TMDB Reviews</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showReviews">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Requires TMDB API Key to be set</div>
+                                <div class="fieldDescription">Requires TMDB API Key to be set</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="reviewsExpandedByDefault" data-config-key="ReviewsExpandedByDefault" is="emby-checkbox" type="checkbox"/><span>Expand reviews by default</span></label></div>
                             <div class="jc-setting-description" data-desc-for="reviewsExpandedByDefault">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When enabled, the reviews section opens expanded by default for all users (unless they override in their session).</div>
+                                <div class="fieldDescription">When enabled, the reviews section opens expanded by default for all users (unless they override in their session).</div>
                             </div>
                         </div>
                     </fieldset>
@@ -2015,7 +2162,7 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="showReleaseDate" data-config-key="ShowReleaseDates" is="emby-checkbox" type="checkbox"/><span>Show Release/Air Date</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showReleaseDate">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Requires TMDB API Key to be set. Shows a chip on Movie, Series, Season and Episode detail pages with the cinema/digital/physical release date or next/last air date, sourced from TMDB. Uses the Default Region set under Elsewhere above to pick which country's dates to prefer.</div>
+                                <div class="fieldDescription">Requires TMDB API Key to be set. Shows a chip on Movie, Series, Season and Episode detail pages with the cinema/digital/physical release date or next/last air date, sourced from TMDB. Uses the Default Region set under Elsewhere above to pick which country's dates to prefer.</div>
                             </div>
                         </div>
                     </fieldset>
@@ -2029,29 +2176,29 @@
                             </div>
                             <div class="checkboxContainer jc-main-feature"><label><input id="showUserReviews" data-config-key="ShowUserReviews" is="emby-checkbox" type="checkbox"/><span>Enable User Written Reviews</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showUserReviews">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Allows users to write reviews and rate items in the library.</div>
+                                <div class="fieldDescription">Allows users to write reviews and rate items in the library.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="hideReviewsFromHiddenUsers" data-config-key="HideReviewsFromHiddenUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide reviews from hidden users</span></label></div>
                             <div class="jc-setting-description" data-desc-for="hideReviewsFromHiddenUsers">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When enabled, reviews written by Jellyfin users marked as "Hide this user from login screens" are hidden from non-admin viewers. Admins always see all reviews.</div>
+                                <div class="fieldDescription">When enabled, reviews written by Jellyfin users marked as "Hide this user from login screens" are hidden from non-admin viewers. Admins always see all reviews.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="hideReviewsFromDisabledUsers" data-config-key="HideReviewsFromDisabledUsers" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Hide reviews from disabled users</span></label></div>
                             <div class="jc-setting-description" data-desc-for="hideReviewsFromDisabledUsers">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When enabled, reviews written by Jellyfin users marked as "Disable this user" are hidden from non-admin viewers. Admins always see all reviews.</div>
+                                <div class="fieldDescription">When enabled, reviews written by Jellyfin users marked as "Disable this user" are hidden from non-admin viewers. Admins always see all reviews.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showUserRatingOnPosters" data-config-key="ShowUserRatingOnPosters" is="emby-checkbox" type="checkbox"/><span>Show average user rating on poster cards</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showUserRatingOnPosters">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When Rating Tags are enabled, overlay a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip on poster cards showing the average rating from all user reviews.</div>
+                                <div class="fieldDescription">When Rating Tags are enabled, overlay a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip on poster cards showing the average rating from all user reviews.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showUserRatingDash" data-config-key="ShowUserRatingDash" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show "—" on posters for unrated items</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showUserRatingDash">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">When Rating Tags are enabled, a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip appears on every poster. Enable this to show "—" for items the user hasn't rated yet. Disable to hide the chip entirely for unrated items.</div>
+                                <div class="fieldDescription">When Rating Tags are enabled, a <span class="material-symbols-rounded" style="font-size:14px;vertical-align:middle;color:#e91e8c;">person_heart</span> chip appears on every poster. Enable this to show "—" for items the user hasn't rated yet. Disable to hide the chip entirely for unrated items.</div>
                             </div>
                         </div>
                     </fieldset>
                 </div>
 
-                <div id="discovery" class="jellyfin-tab-content">
+<div id="discovery" class="jellyfin-tab-content">
                     <fieldset data-dep-setup>
                         <legend class="sectionTitle">Discovery &amp; Trending</legend>
                         <div class="configSection">
@@ -2059,7 +2206,7 @@
                                 <label><input id="discoveryEnabled" data-config-key="DiscoveryEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable Discovery &amp; Trending</span></label>
                             </div>
                             <div class="jc-setting-description" data-desc-for="discoveryEnabled">
-                                <div class="fieldDescription jc-field-desc-xl">Adds a customizable Discovery / Trending feed (Trending, Popular, Upcoming, Top Rated, by genre, and more) as rows of cards, with availability badges and inline request buttons. <b>Requires a Seerr connection (configured on the Seerr tab).</b></div>
+                                <div class="fieldDescription">Adds a customizable Discovery / Trending feed (Trending, Popular, Upcoming, Top Rated, by genre, and more) as rows of cards, with availability badges and inline request buttons. <b>Requires a Seerr connection (configured on the Seerr tab).</b></div>
                             </div>
                             <div class="checkboxContainer"><label><input id="discoveryLibraryTab" data-config-key="DiscoveryLibraryTab" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Show in the Movies &amp; TV library menu</span></label></div>
                             <div class="jc-setting-description" data-desc-for="discoveryLibraryTab">
@@ -2071,7 +2218,7 @@
                         <legend class="sectionTitle">Default rows</legend>
                         <div class="configSection">
                             <div class="jc-setting-description">
-                                <div class="fieldDescription jc-field-desc-xl">Which shelves appear by default. Each user can add, remove and reorder rows for themselves — these are the out-of-the-box defaults.</div>
+                                <div class="fieldDescription">Which shelves appear by default. Each user can add, remove and reorder rows for themselves — these are the out-of-the-box defaults.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="discoveryRowTrending" data-config-key="DiscoveryRowTrending" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Trending This Week</span></label></div>
                             <div class="checkboxContainer"><label><input id="discoveryRowPopular" data-config-key="DiscoveryRowPopular" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Popular</span></label></div>
@@ -2083,13 +2230,13 @@
                     </fieldset>
                 </div>
 
-                <div id="extras" class="jellyfin-tab-content">
+<div id="extras" class="jellyfin-tab-content">
                     <fieldset>
                         <legend class="sectionTitle">UI Tweaks</legend>
                         <div class="configSection">
                             <div class="checkboxContainer"><label><input id="coloredRatingsEnabled" data-config-key="ColoredRatingsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Ratings Backgrounds</span></label></div>
                             <div class="jc-setting-description" data-desc-for="coloredRatingsEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Applies color-coded backgrounds to media ratings.
                                     <details class="jc-screenshot-details">
                                 <summary class="jc-screenshot-summary">View Screenshot</summary>
@@ -2102,7 +2249,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="themeSelectorEnabled" data-config-key="ThemeSelectorEnabled" is="emby-checkbox" type="checkbox"/><span>Theme Selector (Jellyfish)</span></label></div>
                             <div class="jc-setting-description" data-desc-for="themeSelectorEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Adds a theme selector to quickly switch between Jellyfish color themes.
                                     <details class="jc-screenshot-details">
                                 <summary class="jc-screenshot-summary">View Screenshot</summary>
@@ -2120,7 +2267,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="coloredActivityIconsEnabled" data-config-key="ColoredActivityIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Colored Dashboard Icons</span></label></div>
                             <div class="jc-setting-description" data-desc-for="coloredActivityIconsEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Replaces Dashboard Activity Icons with Material Design icons and background color.
                                     <details class="jc-screenshot-details">
                                 <summary class="jc-screenshot-summary">View Screenshot</summary>
@@ -2132,7 +2279,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="loginImageEnabled" data-config-key="EnableLoginImage" is="emby-checkbox" type="checkbox"/><span>Profile Picture on Login</span></label></div>
                             <div class="jc-setting-description" data-desc-for="loginImageEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Displays the user's profile picture on the manual login screen instead of the name. When a user is selected, their avatar appears above the password field.
                                     <details class="jc-screenshot-details">
                                 <summary class="jc-screenshot-summary">View Screenshot</summary>
@@ -2144,7 +2291,7 @@
                             </div>
                             <div class="checkboxContainer"><label><input id="pluginIconsEnabled" data-config-key="PluginIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Custom Plugin Menu Icons</span></label></div>
                             <div class="jc-setting-description" data-desc-for="pluginIconsEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Replaces default plugin folder icons with custom icons on the Dashboard sidebar.
                                     <details class="jc-screenshot-details">
                                 <summary class="jc-screenshot-summary">View Screenshot</summary>
@@ -2165,7 +2312,7 @@
 
                             <div class="checkboxContainer jc-main-feature"><label><input id="activeStreamsEnabled" data-config-key="ActiveStreamsEnabled" is="emby-checkbox" type="checkbox"/><span>Active Streams Header Widget</span></label></div>
                             <div class="jc-setting-description" data-desc-for="activeStreamsEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Adds a live stream counter to the header. Click it to open a panel showing who is currently playing, what they're watching, playback state, progress, and transcoding details.<br/>By default the widget is only visible to admin accounts.
                                 </div>
                             </div>
@@ -2178,15 +2325,15 @@
                         <div class="configSection">
                             <div class="checkboxContainer jc-main-feature"><label><input id="letterboxdEnabled" data-config-key="LetterboxdEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Letterboxd Links</span></label></div>
                             <div class="jc-setting-description" data-desc-for="letterboxdEnabled">
-                                <div class="fieldDescription jc-field-desc-md">Adds Letterboxd links to movie and person details pages.</div>
+                                <div class="fieldDescription">Adds Letterboxd links to movie and person details pages.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="showLetterboxdLinkAsText" data-config-key="ShowLetterboxdLinkAsText" is="emby-checkbox" type="checkbox"/><span>Show link as text</span></label></div>
                             <div class="jc-setting-description" data-desc-for="showLetterboxdLinkAsText">
-                                <div class="fieldDescription jc-field-desc-xl">When enabled, shows "Letterboxd" as text instead of the Letterboxd icon.</div>
+                                <div class="fieldDescription">When enabled, shows "Letterboxd" as text instead of the Letterboxd icon.</div>
                             </div>
                             <div class="checkboxContainer"><label><input id="metadataIconsEnabled" data-config-key="MetadataIconsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Metadata Icons (Druidblack)</span></label></div>
                             <div class="jc-setting-description" data-desc-for="metadataIconsEnabled">
-                                <div class="fieldDescription jc-field-desc-md">
+                                <div class="fieldDescription">
                                     Shows metadata icons instead of text. From <a class="sectionTitle" href="https://github.com/Druidblack/jellyfin-icon-metadata" target="_blank">Druidblack/jellyfin-icon-metadata</a>.<br/>
                                     When enabled, links from the plugin will also use icons instead of text (Letterboxd, *arr Links).
                                 </div>
@@ -2197,13 +2344,13 @@
                                 <textarea id="customPluginLinks" data-config-key="CustomPluginLinks" data-config-fallback="" class="emby-textarea emby-input" rows="3" placeholder="Page Name | icon_name"></textarea>
                             </div>
                                 <div class="jc-setting-description" data-desc-for="customPluginLinks">
-                                    <div class="fieldDescription jc-field-desc-mt-sm">
+                                    <div class="fieldDescription">
                                     <strong>Format:</strong> <code>Configuration Page Name | Material Icon Name</code><br/>
                                     <strong>Important:</strong> Use the exact name that appears in the configuration page URL (e.g., "Jellyfin%20Tweaks" becomes "Jellyfin Tweaks")<br/>
                                     <br/>
                                     <a class="sectionTitle" href="https://fonts.google.com/icons?icon.set=Material+Icons" target="_blank">Browse Material Icons</a>
                                     </div>
-                                    <div class="fieldDescription jc-field-desc-mt-sm">
+                                    <div class="fieldDescription">
                                         Use "Test Links" to preview your custom plugin links in the sidebar.<br/>Test links will appear immediately and disappear on page refresh.
                                     </div>
                                 </div>
@@ -2320,7 +2467,7 @@
                     </fieldset>
                 </div>
 
-                <div id="admin" class="jellyfin-tab-content">
+<div id="admin" class="jellyfin-tab-content">
 
                     <fieldset class="jc-fieldset-wide">
                         <legend class="sectionTitle">Maintenance Mode</legend>
@@ -2481,7 +2628,7 @@
 
                 </div>
 
-                <div id="keyboard" class="jellyfin-tab-content">
+<div id="keyboard" class="jellyfin-tab-content">
                     <fieldset>
                         <legend class="sectionTitle">Keyboard Config</legend>
                         <div class="configSection">
@@ -2523,7 +2670,7 @@
                     </fieldset>
                 </div>
 
-                <div id="docs" class="jellyfin-tab-content">
+<div id="docs" class="jellyfin-tab-content">
                     <div class="jc-docs-header">
                         <span class="jc-docs-title">
                             <i class="material-icons jc-legend-icon" aria-hidden="true">menu_book</i>
@@ -2543,6 +2690,7 @@
                             sandbox="allow-scripts allow-same-origin"></iframe>
                 </div>
 
+
                 <div class="jc-apply-hint">
                     Settings require a page refresh to take effect. Clear browser cache if changes persist.
                 </div>
@@ -2557,6 +2705,7 @@
             </div>
         </div>
     </div>
+
 <script>
     (function () {
         // Bootstrap for the externalized config-page script (Configuration/config-page.js,

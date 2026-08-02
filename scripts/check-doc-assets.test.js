@@ -52,8 +52,11 @@ test('live repository assets are referenced, non-animated, and within ratcheted 
         largestBytes: 2941758,
     });
     assert.deepEqual(result.metrics.repository, {
+        // Bytes moved by the Verdant redesign: the six regenerated admin
+        // theme screenshot baselines compress ~100 KB smaller than the old
+        // cyan design's captures. File count unchanged.
         files: 57,
-        bytes: 27741236,
+        bytes: 27640156,
         largestBytes: 2941758,
     });
 });
