@@ -31,13 +31,13 @@
         "totalLines": 40432
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 31800,
+        "cleanRuns": 4,
+        "minimumCoveredLines": 31799,
         "maximumCoveredLines": 31800
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The combined #586 actor boundary and #523 concurrency primitive preserve the immutable authenticated actor boundary while adding exact-byte SHA-256 validators, bounded RFC entity-tag parsing, conditional GET result wiring, identity content coding through host compression, and deterministic PlatformFilterOrder slots for JSON result serialization and concurrency evaluation. Three clean Coverlet runs on the identical 2026-08-03 source and 40,432-line scope each passed all 2,784 server tests and reproduced exactly 31,800 covered lines. Relative to the reviewed #599/#586 baseline of 31,689/40,320 (78.594%), the combined tree adds 112 instrumented lines and raises the observed high-water by 111 covered lines to 31,800/40,432 (78.651%). Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), it adds 184 instrumented lines and 181 covered lines. The exact observed envelope needs no instrumentation tolerance, so the new floor is 31,800/40,432 (78.651%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The combined #586 actor boundary and #523 concurrency primitive preserve the immutable authenticated actor boundary while adding exact-byte SHA-256 validators, bounded RFC entity-tag parsing, conditional GET result wiring, identity content coding through host compression, and deterministic PlatformFilterOrder slots for JSON result serialization and concurrency evaluation. Four clean Coverlet runs on the identical 2026-08-03 source and 40,432-line scope each passed all 2,784 server tests: three local runs measured 31,800 covered lines, while GitHub Actions run 30760600381 measured 31,799. Relative to the reviewed #599/#586 baseline of 31,689/40,320 (78.594%), the combined tree adds 112 instrumented lines and raises the observed high-water by 111 covered lines to 31,800/40,432 (78.651%). Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), it adds 184 instrumented lines and 181 covered lines. The exact one-line 31,799-31,800 instrumentation envelope therefore sets a 31,800 high-water with a one-line tolerance and a floor of 31,799/40,432 (78.648%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
