@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
@@ -38,6 +39,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         // fully-qualified MediaBrowser.Controller.Entities.BaseItem in a signature
         // couples the kernel just as hard as an import does, and carries no using line.
         private static readonly Regex HostReference = new(@"\bMediaBrowser\b", RegexOptions.Compiled);
+        private static readonly Regex PositiveProjectionConstruction = new(
+            @"\bnew\s+(?:(?:global::)?[A-Za-z_]\w*\.)*HostAccessibleItem\s*\(",
+            RegexOptions.Compiled);
+        private static readonly Regex PositiveAccessMint = new(
+            @"\bHostItemAccessResult\s*\.\s*Accessible\s*\(",
+            RegexOptions.Compiled);
 
         /// <summary>
         /// The only kernel files permitted to mention the host, each with its reason.
@@ -109,6 +116,63 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     }
                 }
             }
+        }
+
+        [Fact]
+        public void UserScopedItemSeamAcceptsOnlyServerOwnedIdentifiersAndReturnsAMinimalProjection()
+        {
+            var method = typeof(IHostLibrary).GetMethod(nameof(IHostLibrary.FindAccessible));
+            Assert.NotNull(method);
+            Assert.Equal(
+                new[] { typeof(Guid), typeof(Guid) },
+                method!.GetParameters().Select(parameter => parameter.ParameterType));
+            Assert.Equal(typeof(HostItemAccessResult), method.ReturnType);
+
+            Assert.Equal(
+                new[] { "Id", "Kind", "ProviderReferences", "SeriesId" },
+                typeof(HostAccessibleItem)
+                    .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                    .Select(property => property.Name)
+                    .OrderBy(name => name, StringComparer.Ordinal));
+
+            Assert.DoesNotContain(
+                typeof(HostAccessibleItem).GetConstructors(BindingFlags.Instance | BindingFlags.Public),
+                constructor => constructor.GetParameters().Length > 0);
+            Assert.DoesNotContain(
+                typeof(HostItemAccessResult).GetConstructors(BindingFlags.Instance | BindingFlags.Public),
+                constructor => constructor.GetParameters().Length > 0);
+            Assert.Null(typeof(HostItemAccessResult).GetMethod(
+                "Accessible",
+                BindingFlags.Public | BindingFlags.Static));
+        }
+
+        [Fact]
+        public void OnlyTheJellyfinAdapterCanConstructOrMintPositiveItemAccess()
+        {
+            var offenders = ProductionSourceFiles()
+                .Where(file => Path.GetFileName(file) != "JellyfinPlatformHost.cs")
+                .Where(file =>
+                {
+                    var code = CodeOnly(File.ReadAllText(file));
+                    return PositiveProjectionConstruction.IsMatch(code)
+                        || PositiveAccessMint.IsMatch(code);
+                })
+                .Select(file => Path.GetRelativePath(ProductionSourceRoot(), file))
+                .OrderBy(file => file, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(
+                offenders.Count == 0,
+                "Only JellyfinPlatformHost may construct a positive item projection or mint "
+                + "positive item-access state; route every authorization decision through "
+                + "IHostLibrary.FindAccessible. Offenders: " + string.Join(", ", offenders));
+
+            Assert.Matches(
+                PositiveProjectionConstruction,
+                "var item = new HostAccessibleItem(id, kind, seriesId, providers);");
+            Assert.Matches(
+                PositiveAccessMint,
+                "return HostItemAccessResult.Accessible(item);");
         }
 
         [Fact]
@@ -246,8 +310,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                             && !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
+        /// <summary>Every production source file in the plugin assembly.</summary>
+        private static IEnumerable<string> ProductionSourceFiles()
+            => Directory.EnumerateFiles(ProductionSourceRoot(), "*.cs", SearchOption.AllDirectories)
+                .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                            && !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+
         private static string KernelSourceRoot([CallerFilePath] string sourceFile = "")
             => Path.GetFullPath(Path.Combine(
                 Path.GetDirectoryName(sourceFile)!, "..", "..", "Jellyfin.Plugin.JellyfinCanopy", "Platform"));
+
+        private static string ProductionSourceRoot([CallerFilePath] string sourceFile = "")
+            => Path.GetFullPath(Path.Combine(
+                Path.GetDirectoryName(sourceFile)!, "..", "..", "Jellyfin.Plugin.JellyfinCanopy"));
     }
 }

@@ -1,14 +1,23 @@
 using System;
+using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Querying;
+using Episode = MediaBrowser.Controller.Entities.TV.Episode;
+using Movie = MediaBrowser.Controller.Entities.Movies.Movie;
+using Series = MediaBrowser.Controller.Entities.TV.Series;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
 {
@@ -53,30 +62,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
                 id => userManager.GetUserById(id),
                 () => userManager.GetUsers(),
                 id => libraryManager.GetItemById(id),
+                (userId, itemId) => FindAccessibleItem(
+                    id => userManager.GetUserById(id),
+                    libraryManager,
+                    userId,
+                    itemId),
                 () => sessionManager.Sessions,
                 () => pluginManager.Plugins)
         {
         }
 
         /// <summary>
-        /// Test seam (Tests has InternalsVisibleTo): the host reduced to the five reads
+        /// Test seam (Tests has InternalsVisibleTo): the host reduced to the six reads
         /// the kernel actually performs, so every mapping below can be verified without
         /// standing up Jellyfin.
         /// </summary>
         /// <param name="findUser">Resolves a user by id, or <c>null</c>.</param>
         /// <param name="allUsers">Enumerates every user.</param>
         /// <param name="findItem">Resolves a library item by id, or <c>null</c>.</param>
+        /// <param name="findAccessibleItem">Re-authorizes and resolves one item for a current user id.</param>
         /// <param name="activeSessions">Enumerates active sessions.</param>
         /// <param name="installedPlugins">Enumerates installed plugins.</param>
         internal JellyfinPlatformHost(
             Func<Guid, User?> findUser,
             Func<IEnumerable<User>> allUsers,
             Func<Guid, BaseItem?> findItem,
+            Func<Guid, Guid, BaseItem?> findAccessibleItem,
             Func<IEnumerable<SessionInfo>> activeSessions,
             Func<IEnumerable<LocalPlugin>> installedPlugins)
         {
             Users = new HostUsers(findUser, allUsers);
-            Library = new HostLibrary(findItem);
+            Library = new HostLibrary(findItem, findAccessibleItem);
             Sessions = new HostSessions(activeSessions);
             Plugins = new HostPlugins(installedPlugins);
         }
@@ -92,6 +108,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
 
         /// <inheritdoc />
         public IHostPlugins Plugins { get; }
+
+        /// <summary>
+        /// Performs the authoritative user/item lookup in one Jellyfin query. The user is
+        /// deliberately resolved from its id inside every call: a prior actor snapshot is
+        /// not authority after that user has been deleted.
+        /// </summary>
+        internal static BaseItem? FindAccessibleItem(
+            Func<Guid, User?> findUser,
+            ILibraryManager libraryManager,
+            Guid userId,
+            Guid itemId)
+        {
+            if (userId == Guid.Empty || itemId == Guid.Empty)
+            {
+                return null;
+            }
+
+            var user = findUser(userId);
+            if (user is null)
+            {
+                return null;
+            }
+
+            // Jellyfin skips its top-parent projection when ItemIds is populated before
+            // ConfigureUserAccess. Reuse the same safe-order owner as IItemLookupService,
+            // then ask for a two-row sentinel so an incomplete prefix can never authorize.
+            var query = UserAccessQuery.BuildItemIds(libraryManager, user, new[] { itemId });
+            query.Limit = 2;
+            query.DtoOptions = new DtoOptions(false)
+            {
+                Fields = new[] { ItemFields.ProviderIds },
+                EnableImages = false,
+                EnableUserData = false,
+            };
+
+            var matches = libraryManager.GetItemList(query);
+            return matches.Count == 1 && matches[0].Id == itemId
+                ? matches[0]
+                : null;
+        }
 
         private sealed class HostUsers : IHostUsers
         {
@@ -120,14 +176,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
 
         private sealed class HostLibrary : IHostLibrary
         {
-            private readonly Func<Guid, BaseItem?> _find;
+            private const int MaxSourceProviderReferences = 32;
+            private const int MaxProviderValueBytes = 128;
 
-            public HostLibrary(Func<Guid, BaseItem?> find) => _find = find;
+            private static readonly string[] AllowedProviders = { "Tmdb", "Tvdb", "Imdb" };
+            private readonly Func<Guid, BaseItem?> _find;
+            private readonly Func<Guid, Guid, BaseItem?> _findAccessible;
+
+            public HostLibrary(
+                Func<Guid, BaseItem?> find,
+                Func<Guid, Guid, BaseItem?> findAccessible)
+            {
+                _find = find;
+                _findAccessible = findAccessible;
+            }
 
             public HostItem? Find(Guid id)
             {
                 var item = _find(id);
                 return item is null ? null : Map(item);
+            }
+
+            public HostItemAccessResult FindAccessible(Guid userId, Guid itemId)
+            {
+                var item = _findAccessible(userId, itemId);
+                return item is null
+                    ? HostItemAccessResult.NotAccessible
+                    : HostItemAccessResult.Accessible(MapAccessible(item));
             }
 
             public IReadOnlyList<HostItem> ChildrenOf(Guid id)
@@ -148,6 +223,66 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
                 item.Name ?? string.Empty,
                 item.GetType().Name,
                 item.ParentId == Guid.Empty ? null : item.ParentId);
+
+            private static HostAccessibleItem MapAccessible(BaseItem item) => new HostAccessibleItem(
+                item.Id,
+                MapKind(item),
+                SeriesId(item),
+                ProviderReferences(item));
+
+            private static HostItemKind MapKind(BaseItem item) => ItemLookupService.GetItemKind(item) switch
+            {
+                ItemLookupKind.Movie => HostItemKind.Movie,
+                ItemLookupKind.Series => HostItemKind.Series,
+                ItemLookupKind.Episode => HostItemKind.Episode,
+                _ => HostItemKind.Other,
+            };
+
+            private static Guid? SeriesId(BaseItem item) => item switch
+            {
+                Episode episode when episode.SeriesId != Guid.Empty => episode.SeriesId,
+                Season season when season.SeriesId != Guid.Empty => season.SeriesId,
+                _ => null,
+            };
+
+            private static ImmutableArray<HostProviderReference> ProviderReferences(BaseItem item)
+            {
+                var source = item.ProviderIds;
+                if (source is null || source.Count == 0 || source.Count > MaxSourceProviderReferences)
+                {
+                    return ImmutableArray<HostProviderReference>.Empty;
+                }
+
+                var references = ImmutableArray.CreateBuilder<HostProviderReference>(AllowedProviders.Length);
+                foreach (var provider in AllowedProviders)
+                {
+                    var values = source
+                        .Where(pair => string.Equals(pair.Key, provider, StringComparison.OrdinalIgnoreCase))
+                        .Select(pair => pair.Value)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    if (values.Count == 1 && IsSafeProviderValue(values[0]))
+                    {
+                        references.Add(new HostProviderReference(provider, values[0]));
+                    }
+                }
+
+                return references.ToImmutable();
+            }
+
+            private static bool IsSafeProviderValue(string? value)
+            {
+                if (string.IsNullOrWhiteSpace(value)
+                    || value.Length > MaxProviderValueBytes
+                    || Encoding.UTF8.GetByteCount(value) > MaxProviderValueBytes)
+                {
+                    return false;
+                }
+
+                return value.All(character => !char.IsControl(character)
+                    && !char.IsWhiteSpace(character)
+                    && !char.IsSurrogate(character));
+            }
         }
 
         private sealed class HostSessions : IHostSessions

@@ -59,8 +59,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting
     /// <summary>Library items, as the kernel needs them.</summary>
     public interface IHostLibrary
     {
-        /// <summary>The item with <paramref name="id"/>, or <c>null</c> if there is none.</summary>
+        /// <summary>
+        /// The item with <paramref name="id"/>, or <c>null</c> if there is none.
+        /// This unscoped inventory read is never an authorization decision. Platform
+        /// catalog resolution and action admission must use <see cref="FindAccessible"/>.
+        /// </summary>
         HostItem? Find(Guid id);
+
+        /// <summary>
+        /// Resolves one item through the current host access policy for the current user.
+        /// Missing users and items, deleted content, and every access denial collapse to
+        /// <see cref="HostItemAccessResult.NotAccessible"/> so the kernel cannot infer why
+        /// the item was unavailable.
+        /// </summary>
+        /// <param name="userId">Authenticated acting-user id. Never caller-selected metadata.</param>
+        /// <param name="itemId">Jellyfin item id. All other item facts come from the host.</param>
+        HostItemAccessResult FindAccessible(Guid userId, Guid itemId);
 
         /// <summary>
         /// The direct children of <paramref name="id"/>, empty when it has none or does

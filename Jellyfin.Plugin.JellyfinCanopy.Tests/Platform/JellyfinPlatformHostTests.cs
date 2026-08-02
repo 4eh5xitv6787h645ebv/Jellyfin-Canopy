@@ -39,11 +39,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Func<Guid, User?>? findUser = null,
             Func<IEnumerable<User>>? allUsers = null,
             Func<Guid, BaseItem?>? findItem = null,
+            Func<Guid, Guid, BaseItem?>? findAccessibleItem = null,
             Func<IEnumerable<SessionInfo>>? sessions = null,
             Func<IEnumerable<LocalPlugin>>? plugins = null) => new(
                 findUser ?? (_ => null),
                 allUsers ?? Array.Empty<User>,
                 findItem ?? (_ => null),
+                findAccessibleItem ?? ((_, _) => null),
                 sessions ?? Array.Empty<SessionInfo>,
                 plugins ?? Array.Empty<LocalPlugin>);
 

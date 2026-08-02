@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31221,
-        "totalLines": 39804
+        "coveredLines": 31298,
+        "totalLines": 39890
       },
       "observations": {
-        "cleanRuns": 10,
-        "minimumCoveredLines": 31219,
-        "maximumCoveredLines": 31221
+        "cleanRuns": 3,
+        "minimumCoveredLines": 31297,
+        "maximumCoveredLines": 31298
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The #521 v1 wire-format change adds strict platform JSON/media-type handling, canonical UTC timestamp and GUID serialization, safe request binding, response formatting, and focused regression coverage. Ten clean Coverlet runs on the identical 2026-08-02 source and 39,804-line scope each passed all 2,666 server tests: one observed 31,219 covered lines, seven observed 31,220, and two observed 31,221. Preserved local reports identify the one-line local variance as the valid concurrent cleanup ordering at ImageBlurService.cs:740; CI supplied the lower edge. Relative to the reviewed #93 main baseline of 31,019/39,687 (78.159%), the reviewed implementation adds 117 instrumented lines and 202 covered high-water lines while increasing the high-water to 31,221/39,804 (78.437%) and the enforced floor to 31,219/39,804 (78.432%). The two-line allowance is exactly the observed same-head, fixed-scope instrumentation envelope; the 31,221 high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The #587 user-scoped item-access seam adds a fail-closed Jellyfin query, a bounded host-neutral projection, adapter-only positive authorization state, and focused authorization and architecture coverage. Three clean Coverlet runs on the identical 2026-08-03 source and 39,890-line scope each passed all 2,682 server tests: two observed 31,297 covered lines and one observed 31,298. Relative to the reviewed #521 baseline of 31,221/39,804 (78.437%), the reviewed implementation adds 86 instrumented lines and 77 covered high-water lines while increasing the high-water to 31,298/39,890 (78.461%) and the enforced floor to 31,297/39,890 (78.458%). The one-line allowance is exactly the observed same-head, fixed-scope instrumentation envelope; the 31,298 high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
