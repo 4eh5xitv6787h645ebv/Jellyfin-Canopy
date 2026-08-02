@@ -206,14 +206,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         {
             try
             {
-                var gate = await ResolveGateAsync(caller).ConfigureAwait(false);
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var gate = await ResolveGateAsync(
+                    caller,
+                    requireAuthoritativePolicy: false,
+                    integration).ConfigureAwait(false);
                 if (gate is null)
                 {
                     return false;
                 }
 
                 var normalized = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
-                return await IsTitleBlockedAsync(normalized, tmdbId, gate.Value).ConfigureAwait(false);
+                return await IsTitleBlockedAsync(
+                    normalized,
+                    tmdbId,
+                    gate.Value).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Seerr parental request gate failed for {MediaType}/{TmdbId}; blocking.", mediaType, tmdbId);
+                return true;
+            }
+        }
+
+        public async Task<bool> IsBlockedAsync(
+            string mediaType,
+            int tmdbId,
+            SeerrCaller caller,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var gate = await ResolveGateAsync(
+                    caller,
+                    requireAuthoritativePolicy: true,
+                    integration).ConfigureAwait(false);
+                if (gate is null)
+                {
+                    return false;
+                }
+
+                var normalized = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+                return await IsTitleBlockedAsync(
+                    normalized,
+                    tmdbId,
+                    gate.Value,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -255,9 +299,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         // ── Gate resolution (shared fast paths) ───────────────────────────────
-        private async Task<GateContext?> ResolveGateAsync(SeerrCaller caller)
+        private async Task<GateContext?> ResolveGateAsync(
+            SeerrCaller caller,
+            bool requireAuthoritativePolicy = false,
+            SeerrIntegrationPolicy.SeerrIntegrationSnapshot? capturedIntegration = null)
         {
-            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            var integration = capturedIntegration
+                ?? SeerrIntegrationPolicy.Capture(_configProvider);
             var config = integration.Configuration;
             if (!integration.IsActive
                 || config == null
@@ -272,8 +320,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return null;
             }
 
-            if (!TryGetPolicy(caller.JellyfinUserId, config, out var policy))
+            if (!TryGetPolicy(
+                caller.JellyfinUserId,
+                config,
+                requireAuthoritativePolicy,
+                out var policy))
             {
+                if (requireAuthoritativePolicy)
+                {
+                    throw new InvalidOperationException(
+                        "The current Jellyfin user and parental policy could not be resolved.");
+                }
+
                 return null;
             }
 
@@ -328,7 +386,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return Convert.ToHexString(SHA256.HashData(identityMaterial));
         }
 
-        private bool TryGetPolicy(string? jellyfinUserId, PluginConfiguration config, out PolicySnapshot policy)
+        private bool TryGetPolicy(
+            string? jellyfinUserId,
+            PluginConfiguration config,
+            bool requireAuthoritativePolicy,
+            out PolicySnapshot policy)
         {
             policy = default;
             if (string.IsNullOrEmpty(jellyfinUserId) || !Guid.TryParse(jellyfinUserId, out var userGuid))
@@ -348,6 +410,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             try
             {
                 var dtoPolicy = _userManager.GetUserDto(user, string.Empty)?.Policy;
+                if (dtoPolicy == null && requireAuthoritativePolicy)
+                {
+                    return false;
+                }
+
                 if (dtoPolicy?.BlockUnratedItems is { Length: > 0 } blocked)
                 {
                     blockUnrated = blocked;
@@ -374,6 +441,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "Could not read parental policy lists for user {UserId}; treating as none.", jellyfinUserId);
+                if (requireAuthoritativePolicy)
+                {
+                    return false;
+                }
             }
 
             policy = new PolicySnapshot(user.MaxParentalRatingScore, user.MaxParentalRatingSubScore, blockUnrated, blockedTags, allowedTags);
@@ -407,7 +478,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return !IsAllowed(signature, mediaType, gate.Policy);
         }
 
-        private async Task<bool> IsTitleBlockedAsync(string mediaType, int tmdbId, GateContext gate)
+        private async Task<bool> IsTitleBlockedAsync(
+            string mediaType,
+            int tmdbId,
+            GateContext gate,
+            CancellationToken cancellationToken = default)
         {
             if (tmdbId <= 0)
             {
@@ -419,10 +494,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return true;
             }
 
-            using var cts = new CancellationTokenSource(PerFetchTimeout);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(PerFetchTimeout);
             var signature = await GetSignatureAsync(
                 CacheKey(mediaType, tmdbId, gate.Region), mediaType, tmdbId, gate,
                 needTags: gate.Policy.HasTagRules, cts.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (signature is null || !IsCurrentConfiguration(gate))
             {
                 return true; // fetch failed, stale generation, or unverifiable -> fail closed

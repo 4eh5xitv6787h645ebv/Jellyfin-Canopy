@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
@@ -43,6 +44,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// title cannot be verified. Never throws.
         /// </summary>
         Task<bool> IsBlockedAsync(string mediaType, int tmdbId, SeerrCaller caller);
+
+        /// <summary>
+        /// Cancellation-aware request gate used by exact mutation owners. The
+        /// compatibility default keeps existing test doubles source-compatible;
+        /// production overrides it and cancels the caller's bounded wait.
+        /// </summary>
+        async Task<bool> IsBlockedAsync(
+            string mediaType,
+            int tmdbId,
+            SeerrCaller caller,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var blocked = await IsBlockedAsync(mediaType, tmdbId, caller).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return blocked;
+        }
 
         /// <summary>
         /// True when the raw-TMDB passthrough (<c>/tmdb/{**apiPath}</c>) must deny

@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 34405,
-        "totalLines": 43519
+        "coveredLines": 34744,
+        "totalLines": 43927
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 34404,
-        "maximumCoveredLines": 34405
+        "minimumCoveredLines": 34742,
+        "maximumCoveredLines": 34744
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The rebased #591 tree retains main's installed Hidden Content and Spoiler Guard Platform owners and adapters, then adds the transport-neutral first-party invocation coordinator, server-private prepared contexts, named typed owner ports, cancellation-aware actor/operation admission, Android-compatible body-carried idempotency, series-ancestry binding, and cancellation checks after synchronous host seams. Three clean Coverlet runs on the identical 2026-08-03 combined source and 43,519-line scope each passed all 3,008 server tests and measured 34,405, 34,404, and 34,404 covered lines. Relative to the reviewed main high-water of 33,607/42,607 (78.877%), #591 adds 912 instrumented lines and raises the observed high-water by 798 covered lines to 34,405/43,519 (79.057%). The one-line observed instrumentation envelope sets a one-line tolerance and a 34,404-line floor. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The rebased combined #591 and #595 tree retains the transport-neutral first-party invocation coordinator and existing Hidden Content and Spoiler Guard owners, then adds the narrow exact installed-item Seerr request owner with typed identity, permission, source-affinity, parental, cancellation, feature, idempotency, final host reauthorization, configuration fencing, and Spoiler-intent durability boundaries without adding a generic route or catalog entry. Three clean Coverlet runs on the identical 2026-08-03 source and 43,927-line scope each passed all 3,054 server tests and measured 34,744, 34,742, and 34,743 covered lines. Relative to the reviewed #591 main high-water of 34,405/43,519 (79.057%), #595 adds 408 instrumented lines and raises the observed high-water by 339 covered lines to 34,744/43,927 (79.095%). The exact two-line 34,742-34,744 instrumentation envelope sets a 34,744 high-water with a two-line tolerance and a floor of 34,742/43,927 (79.090%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

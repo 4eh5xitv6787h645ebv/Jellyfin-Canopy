@@ -19,10 +19,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
     public sealed class StubPolicyUserManager : IUserManager
     {
         private readonly IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> _users;
+        private readonly IReadOnlySet<Guid> _unavailablePolicies;
 
-        public StubPolicyUserManager(IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> users)
+        public StubPolicyUserManager(
+            IReadOnlyDictionary<Guid, (User User, UserPolicy Policy)> users,
+            IReadOnlySet<Guid>? unavailablePolicies = null)
         {
             _users = users;
+            _unavailablePolicies = unavailablePolicies ?? new HashSet<Guid>();
         }
 
         /// <summary>Single-user convenience.</summary>
@@ -42,11 +46,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
         // so each caller's own BlockUnratedItems is applied — never a shared one.
         public UserDto GetUserDto(User user, string? remoteEndPoint = null)
         {
-            foreach (var entry in _users.Values)
+            foreach (var entry in _users)
             {
-                if (ReferenceEquals(entry.User, user))
+                if (ReferenceEquals(entry.Value.User, user))
                 {
-                    return new UserDto { Policy = entry.Policy };
+                    return _unavailablePolicies.Contains(entry.Key)
+                        ? null!
+                        : new UserDto { Policy = entry.Value.Policy };
                 }
             }
 
