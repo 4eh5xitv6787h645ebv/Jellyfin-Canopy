@@ -5332,6 +5332,135 @@
                 _jeValidateInstanceMappings('radarr', 'validateRadarrMappingsBtn', 'radarrMappingsValidationResult', 'Radarr');
             });
         }
+
+        // ==================== Connected-service auto-discovery ====================
+        // One admin click POSTs /JellyfinCanopy/services/discover (elevated,
+        // credential-free, bounded server-side probe of well-known candidate
+        // hosts). Results only ever fill fields that are currently EMPTY — a
+        // discovered service is reported but never overwrites or duplicates an
+        // existing entry (a well-known alias and an already-configured IP can be
+        // the same physical instance, which the client cannot prove) — and
+        // nothing is persisted until the admin presses Save.
+        var _jcDetectInFlight = null;
+        function _jcDiscoverServices() {
+            if (_jcDetectInFlight) return _jcDetectInFlight;
+            _jcDetectInFlight = ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/services/discover'),
+                dataType: 'json'
+            }).then(function(result) {
+                _jcDetectInFlight = null;
+                return (result && result.services) || [];
+            }, function(err) {
+                _jcDetectInFlight = null;
+                throw err;
+            });
+            return _jcDetectInFlight;
+        }
+
+        function _jcShowDetectResult(resultId, lines) {
+            var el = document.getElementById(resultId);
+            if (!el) return;
+            // textContent sink: discovery lines carry service ids and
+            // server-validated URLs, but they must never become markup.
+            el.textContent = lines.join('\n');
+            el.style.whiteSpace = 'pre-line';
+            el.style.display = 'block';
+        }
+
+        function _jcBindDetectButton(btnId, resultId, applyFn) {
+            var btn = document.getElementById(btnId);
+            if (!btn) return;
+            btn.addEventListener('click', function() {
+                var original = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'Scanning…';
+                _jcDiscoverServices().then(function(services) {
+                    _jcShowDetectResult(resultId, applyFn(services));
+                }, function(err) {
+                    console.error('[JC] service discovery failed:', err);
+                    _jcShowDetectResult(resultId, ['Discovery failed — check the Jellyfin server log.']);
+                }).then(function() {
+                    btn.disabled = false;
+                    btn.textContent = original;
+                });
+            });
+        }
+
+        // Fills a single-URL input only when it is empty; otherwise reports the
+        // find and leaves the admin's value untouched.
+        function _jcFillIfEmpty(inputId, hit, label, lines) {
+            var input = document.getElementById(inputId);
+            if (!input || !hit) return;
+            if ((input.value || '').trim()) {
+                lines.push('Found ' + label + ' at ' + hit.url + ' — existing URL left unchanged.');
+                return;
+            }
+            input.value = hit.url;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            lines.push('Found ' + label + ' at ' + hit.url + ' — filled in; press Save to keep it.');
+        }
+
+        function _jcApplyArrDiscovery(services) {
+            var lines = [];
+            [['sonarr', 'Sonarr', '#sonarrInstancesList'], ['radarr', 'Radarr', '#radarrInstancesList']].forEach(function(def) {
+                var type = def[0], label = def[1], listSelector = def[2];
+                var hits = services.filter(function(s) { return s.service === type; });
+                if (!hits.length) return;
+                if (document.querySelectorAll(listSelector + ' .arr-instance-card').length) {
+                    hits.forEach(function(s) {
+                        lines.push('Found ' + label + ' at ' + s.url + ' — you already have ' + label + ' instance(s); add it manually if it is a different server.');
+                    });
+                    return;
+                }
+                hits.forEach(function(s) {
+                    document.querySelector(listSelector).appendChild(
+                        createInstanceCard(type, { Name: '', Url: s.url, ExternalUrl: '', ApiKey: '', UrlMappings: '' }, true)
+                    );
+                    lines.push('Found ' + label + ' at ' + s.url + ' — added an instance; paste its API key and press Save.');
+                });
+            });
+            var bazarrHit = services.filter(function(s) { return s.service === 'bazarr'; })[0];
+            _jcFillIfEmpty('bazarrUrl', bazarrHit, 'Bazarr', lines);
+            if (!lines.length) lines.push('No new Sonarr, Radarr, or Bazarr services found.');
+            updateAllDependencies();
+            return lines;
+        }
+
+        function _jcApplySeerrDiscovery(services) {
+            var lines = [];
+            var textarea = document.getElementById('seerrUrls');
+            var hit = services.filter(function(s) { return s.service === 'seerr'; })[0];
+            if (textarea && hit) {
+                if ((textarea.value || '').trim()) {
+                    // Each Seerr URL is a separate identity domain and aliases of
+                    // the same instance must not be listed twice, so never append
+                    // to a non-empty list automatically.
+                    lines.push('Found Seerr at ' + hit.url + ' — you already have Seerr URL(s); add it manually if it is a different instance.');
+                } else {
+                    textarea.value = hit.url;
+                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                    lines.push('Found Seerr at ' + hit.url + ' — filled in; set the API key and press Save.');
+                }
+            }
+            if (!lines.length) lines.push('No new Seerr instance found.');
+            updateAllDependencies();
+            return lines;
+        }
+
+        function _jcApplyMaintainerrDiscovery(services) {
+            var lines = [];
+            var hit = services.filter(function(s) { return s.service === 'maintainerr'; })[0];
+            _jcFillIfEmpty('maintainerrUrl', hit, 'Maintainerr', lines);
+            if (!lines.length) lines.push('No new Maintainerr instance found.');
+            updateAllDependencies();
+            return lines;
+        }
+
+        _jcBindDetectButton('detectArrServicesBtn', 'arrDetectResult', _jcApplyArrDiscovery);
+        _jcBindDetectButton('detectSeerrBtn', 'seerrDetectResult', _jcApplySeerrDiscovery);
+        _jcBindDetectButton('detectMaintainerrBtn', 'maintainerrDetectResult', _jcApplyMaintainerrDiscovery);
+        // ==================== End connected-service auto-discovery ====================
         // Safety-net wrapper used by the three mapping-validate buttons.
         // Mirrors the .catch + button-reset handler inside _jeValidateInstanceMappings
         // so Bazarr/Seerr direct callers get the same treatment. Without this,

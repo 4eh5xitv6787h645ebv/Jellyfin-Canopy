@@ -67,9 +67,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             new("sonarr", 8989, new[] { "sonarr" }, null, "sonarr"),
             new("radarr", 7878, new[] { "radarr" }, null, "radarr"),
             new("bazarr", 6767, new[] { "bazarr" }, null, "bazarr"),
-            // Jellyseerr/Overseerr/Seerr all serve GET /api/v1/status without
-            // authentication; any flavour satisfies the plugin's Seerr integration.
-            new("seerr", 5055, new[] { "jellyseerr", "overseerr", "seerr" }, "/api/v1/status", "seerr"),
+            // Seerr (current name) plus its legacy Jellyseerr/Overseerr hostnames
+            // all serve GET /api/v1/status without authentication; any flavour
+            // satisfies the plugin's Seerr integration. "seerr" first so the
+            // current product name wins when aliases resolve to one container.
+            new("seerr", 5055, new[] { "seerr", "jellyseerr", "overseerr" }, "/api/v1/status", "seerr"),
             // Maintainerr's unauthenticated status route (the same one the
             // Maintainerr integration's capability audit uses).
             new("maintainerr", 6246, new[] { "maintainerr" }, "/api/app/status", "maintainerr"),

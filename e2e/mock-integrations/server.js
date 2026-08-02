@@ -228,9 +228,10 @@ async function handleSeerr(request, response) {
     if (url.pathname === '/__e2e/state') {
         return json(response, 200, { fixture: readFixtureState(), requestCount: requests.length });
     }
-    if (!requireSeerrKey(request, response)) return;
-
+    // Like real Jellyseerr/Overseerr, the status route is unauthenticated —
+    // service auto-discovery identifies Seerr by it without any credential.
     if (url.pathname === '/api/v1/status') return json(response, 200, { version: '2.7.3-e2e', initialized: true });
+    if (!requireSeerrKey(request, response)) return;
     if (url.pathname === '/api/v1/settings/public') {
         return json(response, 200, { movie4kEnabled: true, series4kEnabled: true });
     }
@@ -366,8 +367,20 @@ async function handleTmdb(request, response) {
     return json(response, 404, { status_message: `unhandled hermetic TMDB route ${request.method} ${url.pathname}` });
 }
 
+// Minimal anonymous landing page: the real arr web UIs (and their login pages)
+// title themselves with the product name, which is how service auto-discovery
+// identifies them without a credential.
+function arrLandingPage(response, productName) {
+    return typedText(
+        response,
+        200,
+        `<!doctype html><html><head><title>${productName}</title></head><body>${productName} hermetic E2E fixture</body></html>`,
+        'text/html; charset=utf-8');
+}
+
 async function handleRadarr(request, response) {
     const url = new URL(request.url, 'http://mock-integrations:7878');
+    if (url.pathname === '/' && request.method === 'GET') return arrLandingPage(response, 'Radarr');
     if (request.headers['x-api-key'] !== 'jc-e2e-arr') return json(response, 401, { message: 'invalid hermetic arr key' });
     if (url.pathname === '/api/v3/system/status' && request.method === 'GET') {
         return json(response, 200, {
@@ -900,8 +913,24 @@ function serve(handler, request, response) {
     });
 }
 
+// Title-page-only Sonarr/Bazarr fixtures: no Canopy server integration calls
+// them, but service auto-discovery must be able to identify them anonymously.
+async function handleSonarr(request, response) {
+    const url = new URL(request.url, 'http://mock-integrations:8989');
+    if (url.pathname === '/' && request.method === 'GET') return arrLandingPage(response, 'Sonarr');
+    return json(response, 404, { message: `unhandled hermetic Sonarr route ${request.method} ${url.pathname}` });
+}
+
+async function handleBazarr(request, response) {
+    const url = new URL(request.url, 'http://mock-integrations:6767');
+    if (url.pathname === '/' && request.method === 'GET') return arrLandingPage(response, 'Bazarr');
+    return json(response, 404, { message: `unhandled hermetic Bazarr route ${request.method} ${url.pathname}` });
+}
+
 const seerrServer = http.createServer((request, response) => serve(handleSeerr, request, response));
 const radarrServer = http.createServer((request, response) => serve(handleRadarr, request, response));
+const sonarrServer = http.createServer((request, response) => serve(handleSonarr, request, response));
+const bazarrServer = http.createServer((request, response) => serve(handleBazarr, request, response));
 const maintainerrServer = http.createServer((request, response) => serve(handleMaintainerr, request, response));
 const tmdbServer = https.createServer({
     key: fs.readFileSync(`${CERT_DIR}/server-key.pem`),
@@ -910,11 +939,13 @@ const tmdbServer = https.createServer({
 
 seerrServer.listen(5055, '0.0.0.0');
 radarrServer.listen(7878, '0.0.0.0');
+sonarrServer.listen(8989, '0.0.0.0');
+bazarrServer.listen(6767, '0.0.0.0');
 maintainerrServer.listen(6246, '0.0.0.0');
 tmdbServer.listen(443, '0.0.0.0');
 
 function shutdown() {
-    for (const server of [seerrServer, radarrServer, maintainerrServer, tmdbServer]) server.close();
+    for (const server of [seerrServer, radarrServer, sonarrServer, bazarrServer, maintainerrServer, tmdbServer]) server.close();
 }
 process.once('SIGTERM', shutdown);
 process.once('SIGINT', shutdown);
