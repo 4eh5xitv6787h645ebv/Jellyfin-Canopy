@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31689,
-        "totalLines": 40320
+        "coveredLines": 31187,
+        "totalLines": 39885
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 31688,
-        "maximumCoveredLines": 31689
+        "cleanRuns": 3,
+        "minimumCoveredLines": 31186,
+        "maximumCoveredLines": 31187
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The #586 first-party actor boundary adds an immutable authenticated actor, fresh authoritative Jellyfin user and administrator resolution, bounded non-authoritative client/device attribution, fail-closed claim validation, and focused boundary, MVC-wire, architecture, and filter-order coverage. Four clean Coverlet observations on the identical 2026-08-03 source and 40,320-line scope each passed all 2,755 server tests: three local runs measured 31,688 covered lines, while GitHub Actions run 30759339499 measured 31,689. Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), the reviewed implementation adds 72 instrumented lines and raises the observed high-water by 70 covered lines to 31,689/40,320 (78.594%). The exact one-line 31,688-31,689 instrumentation envelope therefore sets a 31,689 high-water with a one-line tolerance and a floor of 31,688/40,320 (78.591%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The connected-service auto-discovery change adds ServiceDiscoveryService (bounded candidate building, SSRF-guarded credential-free probing, single-flight), its admin-only controller, and the guarded Discovery named client. Three clean Coverlet runs on the identical 2026-08-02 source and 39,885-line scope each passed all 2,660 server tests: the official full-gate coverage entry point observed 31,187 covered lines and two subsequent identical-scope runs observed 31,186. Relative to the prior reviewed baseline of 31,019/39,687 (78.159%), the reviewed implementation adds 198 instrumented lines and 168 covered high-water lines while increasing the high-water to 31,187/39,885 (78.192%) and the enforced floor to 31,186/39,885 (78.190%). The one-line allowance is exactly the same-head fixed-scope instrumentation envelope tracked in #575; the measured high-water is retained and broader regressions still fail. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
