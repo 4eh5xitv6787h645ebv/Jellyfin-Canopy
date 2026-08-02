@@ -37,7 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         }
 
         /// <inheritdoc />
-        public int Order => int.MinValue + 2;
+        public int Order => PlatformFilterOrder.RequestLifecycle;
 
         /// <inheritdoc />
         public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)

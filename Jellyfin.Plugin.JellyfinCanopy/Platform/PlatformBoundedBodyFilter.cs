@@ -11,11 +11,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// Enforces <see cref="PlatformRequestBounds"/> on every Platform v1 request body.
     ///
     /// <para>
-    /// <b>Why a resource filter, and why <see cref="Order"/> is <see cref="int.MinValue"/>.</b>
+    /// <b>Why a resource filter, and why <see cref="Order"/> is near <see cref="int.MinValue"/>.</b>
     /// Resource filters run after authorization but <i>before</i> model binding, which is
     /// the only window where a body can be refused without first deserializing it —
     /// deserializing to find out whether it was too big to deserialize is the cost this
-    /// exists to avoid. The same placement the existing
+    /// exists to avoid. Actor and media-type checks occupy the two earlier deterministic
+    /// resource-filter slots, so no body byte is acquired before they pass. The same
+    /// placement the existing
     /// <c>PersistedPayloadLimitAttribute</c> uses, for the same reason.
     /// </para>
     /// <para>
@@ -35,7 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private const int CopyBufferBytes = 81_920;
 
         /// <inheritdoc />
-        public int Order => int.MinValue;
+        public int Order => PlatformFilterOrder.BoundedBody;
 
         /// <inheritdoc />
         public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
