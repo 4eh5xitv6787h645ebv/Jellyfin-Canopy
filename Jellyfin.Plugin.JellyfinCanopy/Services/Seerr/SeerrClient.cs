@@ -159,6 +159,88 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return false;
         }
 
+        // ── Administrator-scoped settings read ───────────────────────────────
+
+        /// <summary>
+        /// Reads one administrator-scoped Seerr settings collection with the
+        /// configured API key alone — deliberately without resolving or
+        /// impersonating a Seerr user, because the data is server configuration
+        /// rather than user-local state and an unlinked Jellyfin administrator
+        /// must still be able to import it. Shares <see cref="GetStatusActiveAsync"/>'s
+        /// policy capture, revalidation, dispatch fence and failover, and its
+        /// paths are outside the response cache's allowlist so key-bearing
+        /// bodies are never cached.
+        /// </summary>
+        public async Task<string?> GetAdminSettingsJsonAsync(
+            SeerrAdminSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
+            {
+                return null;
+            }
+
+            // Fixed enum → fixed path: no caller-supplied path ever reaches the
+            // upstream URL.
+            var path = settings switch
+            {
+                SeerrAdminSettings.Sonarr => "/api/v1/settings/sonarr",
+                SeerrAdminSettings.Radarr => "/api/v1/settings/radarr",
+                _ => null,
+            };
+            if (path == null)
+            {
+                return null;
+            }
+
+            var apiKey = integration.ApiKey;
+            SeerrDispatchFence dispatchFence = integration.CreateDispatchFence(_configProvider);
+            var httpClient = SeerrHttpHelper.CreateClient(_httpClientFactory);
+            httpClient.Timeout = TimeSpan.FromSeconds(15);
+
+            foreach (var url in integration.Urls)
+            {
+                // Revalidate before every failover dispatch so retained snapshot
+                // credentials are never used after an administrator disables or
+                // replaces the integration.
+                if (!integration.IsCurrent(_configProvider))
+                {
+                    return null;
+                }
+
+                var requestUri = $"{url}{path}";
+                try
+                {
+                    using var request = SeerrHttpHelper.BuildRequest(HttpMethod.Get, requestUri, apiKey);
+                    var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                        httpClient,
+                        request,
+                        requestUri,
+                        dispatchFence,
+                        cancellationToken).ConfigureAwait(false);
+                    if (error == null && json != null)
+                    {
+                        return integration.IsCurrent(_configProvider) ? json : null;
+                    }
+
+                    _logger.LogWarning(
+                        $"Seerr {settings} settings read failed at {url}: code={error?.Code} status={error?.HttpStatus}.");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        $"Seerr {settings} settings read threw at {url} ({ex.GetType().Name}); trying the next configured URL.");
+                }
+            }
+
+            return null;
+        }
+
         // ── 4K capability ────────────────────────────────────────────────────
 
         public async Task<Seerr4kCapability> GetSeerr4kCapabilityAsync(string jellyfinUserId, bool isAdmin = false)

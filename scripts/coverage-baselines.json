@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 31689,
-        "totalLines": 40320
+        "coveredLines": 31999,
+        "totalLines": 40678
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 31688,
-        "maximumCoveredLines": 31689
+        "minimumCoveredLines": 31997,
+        "maximumCoveredLines": 31999
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The #586 first-party actor boundary adds an immutable authenticated actor, fresh authoritative Jellyfin user and administrator resolution, bounded non-authoritative client/device attribution, fail-closed claim validation, and focused boundary, MVC-wire, architecture, and filter-order coverage. Four clean Coverlet observations on the identical 2026-08-03 source and 40,320-line scope each passed all 2,755 server tests: three local runs measured 31,688 covered lines, while GitHub Actions run 30759339499 measured 31,689. Relative to the reviewed #522 baseline of 31,619/40,248 (78.560%), the reviewed implementation adds 72 instrumented lines and raises the observed high-water by 70 covered lines to 31,689/40,320 (78.594%). The exact one-line 31,688-31,689 instrumentation envelope therefore sets a 31,689 high-water with a one-line tolerance and a floor of 31,688/40,320 (78.591%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The connected-service auto-discovery change adds ServiceDiscoveryService (bounded candidate building, SSRF-guarded credential-free probing confined to the candidate origin across redirects, resolved-address dedup under its own bounded budget, single-flight, and the Seerr arr-settings import projection), its admin-only controller, the guarded Discovery named client, and the administrator-scoped SeerrClient.GetAdminSettingsJsonAsync read. Rebased onto the reviewed main baseline of 31,689/40,320 (78.594%), four clean Coverlet runs on the identical 2026-08-03 source and 40,678-line scope each passed all 2,794 server tests, observing 31,997, 31,998, 31,997 and 31,999 covered lines. The two-line envelope is timing-dependent cancellation-branch coverage inside the bounded concurrent scan, not a source or test difference. The branch adds 358 instrumented lines and 309 covered high-water lines; the high-water is 31,999/40,678 (78.664%) and the enforced floor 31,997/40,678 (78.659%), above main's 78.594%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

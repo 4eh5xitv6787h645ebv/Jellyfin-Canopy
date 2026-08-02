@@ -56,7 +56,11 @@ link to Maintainerr when you need to perform an action in Maintainerr's own UI.
 Open **Dashboard → Plugins → Jellyfin Canopy → Maintainerr**.
 
 1. Enable **Maintainerr integration**.
-2. Enter the **Internal URL** that the Jellyfin server can reach.
+2. Enter the **Internal URL** that the Jellyfin server can reach, or press
+   **Detect Maintainerr** and then **Use this URL** on the row it finds (e.g.
+   `http://maintainerr:6246`). Detection sends no credentials and never
+   rewrites a URL you already entered (see
+   [Getting started](getting-started.md#detect-services-automatically)).
 3. Optionally enter an **External URL** that an administrator's browser can
    reach.
 4. If you use different Jellyfin access URLs, optionally add URL mappings using
