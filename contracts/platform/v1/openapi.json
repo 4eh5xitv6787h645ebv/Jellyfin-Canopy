@@ -349,7 +349,7 @@
         "name": "Idempotency-Key",
         "in": "header",
         "required": true,
-        "description": "Required on Platform mutation routes. One case-sensitive value identifies a retry together with the authenticated acting user and operation. Reusing it with the same semantic payload replays the stored semantic outcome; reusing it with different semantics conflicts. Current v1 routes are reads, so none references this component yet.",
+        "description": "Reusable header carrier for future Platform mutation routes. One case-sensitive value identifies a retry together with the authenticated acting user and operation. The native actions/invoke route deliberately uses the same bounded value in its JSON body and forbids this header, so that route does not reference this component.",
         "schema": {
           "type": "string",
           "minLength": 1,
@@ -518,7 +518,6 @@
           "ContributionKinds": {
             "type": "array",
             "maxItems": 16,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "maxLength": 32
@@ -528,7 +527,6 @@
           "FieldKinds": {
             "type": "array",
             "maxItems": 16,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "maxLength": 32
@@ -538,7 +536,6 @@
           "InputModes": {
             "type": "array",
             "maxItems": 16,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "maxLength": 32
@@ -548,7 +545,6 @@
           "Accessibility": {
             "type": "array",
             "maxItems": 16,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "maxLength": 32

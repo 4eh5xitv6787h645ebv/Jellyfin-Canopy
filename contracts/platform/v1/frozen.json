@@ -6,6 +6,15 @@
     ],
     "/JellyfinCanopy/Platform/v1/negotiate": [
       "get"
+    ],
+    "/JellyfinCanopy/Platform/v1/surfaces/item-detail/resolve": [
+      "post"
+    ],
+    "/JellyfinCanopy/Platform/v1/actions/prepare": [
+      "post"
+    ],
+    "/JellyfinCanopy/Platform/v1/actions/invoke": [
+      "post"
     ]
   },
   "schemas": {
@@ -32,6 +41,182 @@
         "HostProtocolMaximum": "integer",
         "HostProtocolMinimum": "integer",
         "Protocol": "integer|null"
+      }
+    },
+    "PlatformItemReference": {
+      "required": [
+        "Id"
+      ],
+      "propertyTypes": {
+        "Id": "string"
+      }
+    },
+    "PlatformNativeClientCapabilities": {
+      "required": [
+        "Accessibility",
+        "ContributionKinds",
+        "FieldKinds",
+        "InputModes",
+        "Locale"
+      ],
+      "propertyTypes": {
+        "Accessibility": "array",
+        "ContributionKinds": "array",
+        "FieldKinds": "array",
+        "InputModes": "array",
+        "Locale": "string"
+      }
+    },
+    "PlatformItemDetailResolveRequest": {
+      "required": [
+        "Client",
+        "Item",
+        "Protocol",
+        "SurfaceSchema"
+      ],
+      "propertyTypes": {
+        "Client": "#/components/schemas/PlatformNativeClientCapabilities",
+        "Item": "#/components/schemas/PlatformItemReference",
+        "Protocol": "integer",
+        "SurfaceSchema": "integer"
+      }
+    },
+    "PlatformItemDetailResolveResponse": {
+      "required": [
+        "CatalogRevision",
+        "Contributions"
+      ],
+      "propertyTypes": {
+        "CatalogRevision": "string",
+        "Contributions": "array"
+      }
+    },
+    "PlatformNativeContribution": {
+      "required": [
+        "Id",
+        "Kind",
+        "Label"
+      ],
+      "propertyTypes": {
+        "Description": "string",
+        "Enabled": "boolean",
+        "Id": "string",
+        "Kind": "string",
+        "Label": "string",
+        "PrepareHandle": "string",
+        "SemanticIcon": "string",
+        "Tone": "string"
+      }
+    },
+    "PlatformActionPrepareRequest": {
+      "required": [
+        "PrepareHandle"
+      ],
+      "propertyTypes": {
+        "PrepareHandle": "string"
+      }
+    },
+    "PlatformActionPrepareResponse": {
+      "required": [
+        "CancelLabel",
+        "Capability",
+        "ExpiresAtUtc",
+        "Fields",
+        "SubmitLabel",
+        "Title"
+      ],
+      "propertyTypes": {
+        "CancelLabel": "string",
+        "Capability": "string",
+        "ExpiresAtUtc": "string",
+        "Fields": "array",
+        "SubmitLabel": "string",
+        "Title": "string"
+      }
+    },
+    "PlatformNativeField": {
+      "required": [
+        "DefaultOptionIds",
+        "Id",
+        "Kind",
+        "Label",
+        "Options",
+        "Required"
+      ],
+      "propertyTypes": {
+        "DefaultChecked": "boolean",
+        "DefaultOptionIds": "array",
+        "Description": "string",
+        "Id": "string",
+        "Kind": "string",
+        "Label": "string",
+        "MaximumSelections": "integer",
+        "MinimumSelections": "integer",
+        "Options": "array",
+        "Required": "boolean"
+      }
+    },
+    "PlatformNativeOption": {
+      "required": [
+        "Disabled",
+        "Id",
+        "Label"
+      ],
+      "propertyTypes": {
+        "Description": "string",
+        "Disabled": "boolean",
+        "Id": "string",
+        "Label": "string"
+      }
+    },
+    "PlatformActionInvokeRequest": {
+      "required": [
+        "Answers",
+        "Capability",
+        "IdempotencyKey"
+      ],
+      "propertyTypes": {
+        "Answers": "array",
+        "Capability": "string",
+        "IdempotencyKey": "string"
+      }
+    },
+    "PlatformActionAnswer": {
+      "required": [
+        "FieldId"
+      ],
+      "propertyTypes": {
+        "BooleanValue": "boolean",
+        "FieldId": "string",
+        "OptionIds": "array"
+      }
+    },
+    "PlatformActionInvokeResponse": {
+      "required": [
+        "Outcome"
+      ],
+      "propertyTypes": {
+        "Message": "#/components/schemas/PlatformNativeMessage",
+        "Outcome": "string",
+        "Refresh": "#/components/schemas/PlatformNativeRefresh"
+      }
+    },
+    "PlatformNativeMessage": {
+      "required": [
+        "Text"
+      ],
+      "propertyTypes": {
+        "Text": "string",
+        "Tone": "string"
+      }
+    },
+    "PlatformNativeRefresh": {
+      "required": [
+        "Targets"
+      ],
+      "propertyTypes": {
+        "CatalogRevision": "string",
+        "Targets": "array"
       }
     },
     "PlatformError": {

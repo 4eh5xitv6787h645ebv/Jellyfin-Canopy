@@ -116,15 +116,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     continue;
                 }
 
-                if (!await StatesRemainCurrentAsync(
-                        final.Actor,
-                        final.Item,
-                        candidates,
-                        finalConfiguration.Configuration,
-                        cancellationToken).ConfigureAwait(false))
+                var finalCandidates = await ComposeAsync(
+                    final.Actor,
+                    final.Item,
+                    request.Client,
+                    finalConfiguration.Configuration!,
+                    cancellationToken).ConfigureAwait(false);
+                if (!candidates.SequenceEqual(finalCandidates))
                 {
                     continue;
                 }
+
+                candidates = finalCandidates;
 
                 var revision = _revisions.Create(SemanticProjection(
                     final.Actor,
@@ -374,70 +377,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
 
             return candidates.ToImmutable();
-        }
-
-        private async Task<bool> StatesRemainCurrentAsync(
-            PlatformActor actor,
-            HostAccessibleItem item,
-            ImmutableArray<Candidate> candidates,
-            PluginConfiguration? configuration,
-            CancellationToken cancellationToken)
-        {
-            if (configuration is null)
-            {
-                return false;
-            }
-
-            SeerrItemRequestPresentation? seerr = null;
-            foreach (var candidate in candidates)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var state = candidate.State;
-                if (state is null)
-                {
-                    continue;
-                }
-
-                switch (state.Family)
-                {
-                    case PlatformNativePreparedFamily.SpoilerGuard:
-                        if (!configuration.SpoilerBlurEnabled
-                            || !TryReadSpoiler(actor, item, out var spoiler)
-                            || spoiler.OverridesRevision != state.ResourceRevision
-                            || spoiler.Enabled != state.CurrentBoolean)
-                        {
-                            return false;
-                        }
-
-                        break;
-                    case PlatformNativePreparedFamily.HiddenContent:
-                        if (!configuration.HiddenContentEnabled
-                            || !TryReadHiddenScope(actor, item, state.HiddenScope, out var hidden)
-                            || hidden.ItemsRevision != state.ResourceRevision
-                            || hidden.Hidden != state.CurrentBoolean
-                            || !hidden.HiddenContentEnabled)
-                        {
-                            return false;
-                        }
-
-                        break;
-                    case PlatformNativePreparedFamily.Seerr:
-                        seerr ??= await _seerr.ResolveItemRequestPresentationAsync(
-                            actor,
-                            item,
-                            cancellationToken).ConfigureAwait(false);
-                        if (!MatchesSeerrPresentation(state, seerr))
-                        {
-                            return false;
-                        }
-
-                        break;
-                    default:
-                        return false;
-                }
-            }
-
-            return true;
         }
 
         private async Task<bool> StateRemainsCurrentAsync(

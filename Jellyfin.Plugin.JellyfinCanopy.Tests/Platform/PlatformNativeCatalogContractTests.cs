@@ -142,6 +142,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                         true,
                         [new PlatformNativeOption("global", "Everywhere")],
                         "global"),
+                    PlatformNativeField.MultiSelect(
+                        "targets",
+                        "Targets",
+                        null,
+                        required: false,
+                        [
+                            new PlatformNativeOption("continue_watching", "Continue Watching"),
+                            new PlatformNativeOption("next_up", "Next Up"),
+                        ],
+                        ["continue_watching"],
+                        minimumSelections: 0,
+                        maximumSelections: 2),
                 ]);
 
             using var document = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(
@@ -151,12 +163,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal("opaque-invoke-capability", root.GetProperty("Capability").GetString());
             Assert.Equal("2026-08-03T00:00:00.0000000+00:00", root.GetProperty("ExpiresAtUtc").GetString());
             var fields = root.GetProperty("Fields");
-            Assert.Equal(3, fields.GetArrayLength());
+            Assert.Equal(4, fields.GetArrayLength());
             Assert.Equal("confirmation", fields[0].GetProperty("Kind").GetString());
             Assert.Equal("boolean", fields[1].GetProperty("Kind").GetString());
             Assert.Equal("single_select", fields[2].GetProperty("Kind").GetString());
             Assert.Equal("global", fields[2].GetProperty("DefaultOptionIds")[0].GetString());
             Assert.False(fields[2].TryGetProperty("DefaultChecked", out _));
+            Assert.Equal("multi_select", fields[3].GetProperty("Kind").GetString());
+            Assert.Equal(0, fields[3].GetProperty("MinimumSelections").GetInt32());
+            Assert.Equal(2, fields[3].GetProperty("MaximumSelections").GetInt32());
+        }
+
+        [Fact]
+        public void ResolveResponseContributionBoundHasAnExactNegativeBoundary()
+        {
+            var allowed = Enumerable.Range(0, PlatformNativeCatalogBounds.MaximumContributions)
+                .Select(index => PlatformNativeContribution.Status($"status-{index}", $"Status {index}", "neutral"))
+                .ToImmutableArray();
+            _ = new PlatformItemDetailResolveResponse("revision-allowed", allowed);
+
+            Assert.Throws<ArgumentException>(() => new PlatformItemDetailResolveResponse(
+                "revision-rejected",
+                allowed.Add(PlatformNativeContribution.Status("status-extra", "Status extra", "neutral"))));
         }
 
         private static PlatformItemDetailResolveRequest ParseResolve(string json)
