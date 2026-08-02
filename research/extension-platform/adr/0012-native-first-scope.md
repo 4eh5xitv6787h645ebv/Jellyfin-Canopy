@@ -1,8 +1,10 @@
 # ADR-0012 — Native-first scope for v1
 
-Status: **accepted** (2026-07-28) · Owner: programme · Supersedes the implicit
-assumption in [`v1-capability-freeze.md`](../v1-capability-freeze.md) that all
-twelve milestones would run
+Status: **accepted** (2026-07-28); pilot clarification tracked by
+[#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583) ·
+Owner: programme · Supersedes the implicit assumption in
+[`v1-capability-freeze.md`](../v1-capability-freeze.md) that all twelve
+milestones would run
 
 ## Context
 
@@ -35,6 +37,37 @@ extracting the reusable primitives with no kernel at all (D).
 registry, EP-04's provider SDK, EP-05's state and event platform, EP-07's web
 contributions, and all of EP-09 through EP-12.
 
+The first-party pilot has exactly three named product families: **Spoiler
+Guard, Hidden Content and Seerr**. Hidden Content takes the previously unclaimed
+bookmarks/selected-user-data slot; it does not create a fourth slot or widen the
+three-family budget.
+
+The active work inside EP-02, EP-06 and EP-08 is correspondingly narrower than
+the original roadmap-parent checklists:
+
+- **EP-02 pilot:** authoritative first-party client actors, opaque-action
+  authority and replay controls, invocation-time Jellyfin access checks, bounds,
+  redacted audit and immediate invalidation of first-party catalogs/actions.
+  Third-party grants, manifest approvals, service credentials, provider actors
+  and event-subscription revocation remain deferred with EP-03 through EP-05.
+- **EP-06 pilot:** authenticated negotiation, filtered catalogs, native surface
+  resolution and opaque actions over the three named Canopy owning services.
+  The gateway has no dependency on EP-03, EP-04 or EP-05 and needs no server
+  plugin or browser consumer to prove this first-party pilot.
+- **EP-08 pilot:** the first-party Android TV fork and the independent headless
+  fixture negotiate and exercise the bounded native-safe item-detail
+  action/status, confirmation and form subset. Catalog revision/ETag, action
+  results, bounded refresh hints and refetch provide invalidation. They are not
+  an event transport and do not satisfy C5.
+
+These are **native-first pilot gates**, not declarations that every unchecked
+criterion on parent issues
+[#41](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/41),
+[#46](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/46) or
+[#47](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/47) is
+complete. A parent stays open unless its live exit gate is formally re-scoped or
+all of its original criteria have evidence.
+
 ## Rationale
 
 **The platform's marginal value is highest where Canopy cannot reach at all.**
@@ -66,10 +99,10 @@ by rewriting. C is a subset of B, which is a prefix of A.
 
 ## What this gives up, stated plainly
 
-Third-party extensibility, a public SDK, and the conformance kit. An external
-developer cannot build against this scope — that is the point, not an oversight.
-The contracts are **internal-facing but versioned**, so going public later is
-additive work rather than a redesign.
+Third-party extensibility, C5 event streaming, a public SDK, and the conformance
+kit. An external developer cannot build against this scope — that is the point,
+not an oversight. The contracts are **internal-facing but versioned**, so going
+public later is additive work rather than a redesign.
 
 ## Consequences
 
@@ -78,6 +111,11 @@ additive work rather than a redesign.
   costs nothing externally, which materially lowers **R-09**.
 - EP-06 must extract capability families to owning services anyway, so the
   no-duplication rule (**R-08**) still applies in full.
+- Hidden Content replaces the unclaimed selected-user-data/bookmarks reference
+  candidate. The product-family count remains three; adding another family
+  still requires a new EP-00-level decision.
+- C5 remains deferred. Native invalidation in the pilot is cache-aware refetch,
+  not an event stream, reconnect buffer or `resync-required` implementation.
 - **A new risk: single-consumer bias.** With one adopter the protocol may end up
   shaped around one client's needs and prove awkward for the next. Mitigation: the
   headless fixture from EP-00.3 stays green alongside the real client, so every
@@ -100,5 +138,5 @@ additive work rather than a redesign.
   than its size suggests — `ArrUrlGuard`, `BoundedTtlCache`, `UserAccessQuery` and
   `AtomicFile` are nearly reuse-ready, so a fortnight would deliver most of the
   practical reuse. Rejected because it cannot deliver anything a *client*
-  consumes — no descriptors, no actions, no events — and so is not a path to the
-  Android TV work at all.
+  consumes — no descriptors or actions — and so is not a path to the Android TV
+  work at all.

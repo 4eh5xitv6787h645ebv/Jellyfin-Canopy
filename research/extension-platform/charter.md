@@ -5,6 +5,15 @@ Roadmap board: [Jellyfin Elevate Extension Platform](https://github.com/users/4e
 Status: **proposed** — this is EP-00 output, not a shipped contract. Nothing here
 is implemented, and no other milestone may treat it as available.
 
+The original full-program model below remains as historical evidence. Accepted
+[ADR-0012](adr/0012-native-first-scope.md), with its pilot clarification tracked by
+[#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583), narrows
+active v1 delivery to the native-first pilot frozen in
+[`v1-capability-freeze.md`](v1-capability-freeze.md): Android TV plus the
+headless fixture, exactly Spoiler Guard, Hidden Content and Seerr, and bounded
+EP-02/EP-06/EP-08 subsets. Registry/provider, C5 events, web, public SDK and
+broader third-party work below are deferred, not pilot acceptance criteria.
+
 ---
 
 ## 0. Naming, before anything else
@@ -64,10 +73,12 @@ capabilities Canopy already has a versioned, authorized, documented boundary, so
 that a second party can use them without depending on Canopy's internals and
 without Canopy losing the ability to change those internals.*
 
-## 2. Consumers
+## 2. Original full-program consumer model
 
 The platform serves exactly four consumer classes. Anything that is not one of
-these is out of scope for v1.
+these is out of scope for the full programme. Under the native-first decision,
+only Android TV and the headless native fixture are active pilot consumers; the
+other classes remain recorded here for later work.
 
 | Class | What it is | How it reaches the platform | Proven reachable? |
 |---|---|---|---|
@@ -88,7 +99,9 @@ the asymmetry for every other client. See the
 
 **Canopy owns** the kernel, the protocol, the schemas, the registry, the web
 adapter, the reference SDKs and the conformance kit. **Canopy does not own** the
-extensions, and does not become responsible for their behaviour.
+extensions, and does not become responsible for their behaviour. Ownership of
+the deferred pieces is retained here; it does not put them into the native-first
+pilot.
 
 The boundary is drawn at three specific places:
 
@@ -107,13 +120,13 @@ The boundary is drawn at three specific places:
    works only on the web client is documented as web-only, not as "the platform
    supports it".
 
-## 4. What v1 is
+## 4. Original full-program v1 model
 
 A **capability-scoped, versioned HTTP boundary** over Canopy's existing owning
 services, plus an in-process JSON ABI for server plugins, plus a declarative web
 contribution surface rendered by Canopy's own adapter.
 
-Concretely, v1 delivers:
+The original full-program design delivers:
 
 - one versioned route family, `/JellyfinCanopy/Platform/v1`
   ([ADR-0001](adr/0001-route-prefix-and-namespace.md))
@@ -132,7 +145,9 @@ Concretely, v1 delivers:
 - a documented compatibility and deprecation policy
   ([ADR-0010](adr/0010-deprecation-and-support-policy.md))
 
-The frozen list of capabilities is [`v1-capability-freeze.md`](v1-capability-freeze.md).
+The authoritative active scope is
+[`v1-capability-freeze.md`](v1-capability-freeze.md); where this historical model
+is broader, the freeze and ADR-0012 control.
 
 ## 5. What v1 is explicitly not
 
@@ -238,7 +253,11 @@ exception: a platform adapter calls the owner, it never grows a second copy.
 
 ## 8. Success metrics
 
-Measured at the EP-11 gate, not asserted:
+The native-first EP-02/EP-06/EP-08 pilot gates are defined in the
+[capability freeze](v1-capability-freeze.md#native-first-pilot-gates). Passing
+them does not close a broader parent issue whose live checklist is still unmet.
+The original EP-11 full-program metrics remain below as deferred evidence, not
+pilot acceptance criteria.
 
 1. **Independence** — at least three independently packaged consumers (one
    server plugin, one web contribution, one headless/native) complete a real

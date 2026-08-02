@@ -3,9 +3,23 @@
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
 Roadmap board: [Jellyfin Elevate Extension Platform](https://github.com/users/4eh5xitv6787h645ebv/projects/3)
 
-> **Scope decided 2026-07-28:** v1 is **native-first** — EP-01, EP-02, EP-06 and
-> EP-08 only. See [ADR-0012](adr/0012-native-first-scope.md). Everything else is
+> **Scope decided 2026-07-28; clarification tracked by
+> [#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583):** v1 is
+> **native-first** — EP-01 plus the first-party pilot subsets of EP-02, EP-06 and
+> EP-08. Its three product families are exactly **Spoiler Guard, Hidden Content
+> and Seerr**; Hidden Content replaces the unclaimed bookmarks/selected-user-data
+> candidate. See [ADR-0012](adr/0012-native-first-scope.md). Everything else is
 > deferred, not cancelled.
+
+The pilot uses catalog revision/ETag, action-result refresh hints and refetch;
+it does **not** implement C5 events. EP-03 through EP-05, EP-07, EP-09 through
+EP-12, third-party grants/providers, service credentials, public SDKs and the
+broader native surface language remain deferred.
+
+The original EP-02, EP-06 and EP-08 parents retain their broader full-program
+checklists. The exact pilot gates and deferred rows are recorded once in
+[`v1-capability-freeze.md`](v1-capability-freeze.md#native-first-pilot-gates);
+passing a pilot gate does not silently close its parent.
 
 **Nothing described here is implemented.** This directory is the decision record
 for EP-00, the research milestone that has to be finished before any platform
