@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Authorization;
@@ -150,6 +152,123 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             // Handled, so the host's default error page cannot replace the envelope with
             // a different shape.
             Assert.True(context.ExceptionHandled);
+        }
+
+        [Fact]
+        public async Task CallerCancellationIsHandledWithoutAWriteOrServerFaultLog()
+        {
+            var logger = new RecordingLogger();
+            using var caller = new CancellationTokenSource();
+            using var deadline = new CancellationTokenSource();
+            var http = new DefaultHttpContext();
+            http.Items[PlatformRequestLifecycleState.ItemKey] = new PlatformRequestLifecycleState(caller.Token, deadline.Token);
+            caller.Cancel();
+            var context = new ExceptionContext(
+                new ActionContext(http, new RouteData(), new ControllerActionDescriptor()),
+                new List<IFilterMetadata>())
+            {
+                Exception = new OperationCanceledException(),
+            };
+
+            await new PlatformRequestFilter(logger).OnExceptionAsync(context);
+
+            Assert.True(context.ExceptionHandled);
+            Assert.IsType<EmptyResult>(context.Result);
+            Assert.Empty(http.Response.Headers);
+            Assert.Empty(logger.Entries);
+        }
+
+        [Fact]
+        public async Task CallerCancellationDuringActionPublishesNoDeferredCorrelationHeader()
+        {
+            var logger = new RecordingLogger();
+            using var caller = new CancellationTokenSource();
+            using var deadline = new CancellationTokenSource();
+            var http = new DefaultHttpContext();
+            http.Items[PlatformRequestLifecycleState.ItemKey] = new PlatformRequestLifecycleState(caller.Token, deadline.Token);
+            var context = ActionContext(http);
+
+            await new PlatformRequestFilter(logger).OnActionExecutionAsync(context, () =>
+            {
+                caller.Cancel();
+                return Task.FromResult(new ActionExecutedContext(context, new List<IFilterMetadata>(), new object())
+                {
+                    Result = new EmptyResult(),
+                });
+            });
+
+            Assert.Empty(http.Response.Headers);
+            Assert.Empty(logger.Entries);
+        }
+
+        [Fact]
+        public async Task DeadlineCancellationUsesTimeoutWithoutAFalseServerFaultLog()
+        {
+            var logger = new RecordingLogger();
+            using var caller = new CancellationTokenSource();
+            using var deadline = new CancellationTokenSource();
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(caller.Token, deadline.Token);
+            var http = new DefaultHttpContext { RequestAborted = linked.Token };
+            http.Items[PlatformRequestLifecycleState.ItemKey] = new PlatformRequestLifecycleState(caller.Token, deadline.Token);
+            deadline.Cancel();
+            var context = new ExceptionContext(
+                new ActionContext(http, new RouteData(), new ControllerActionDescriptor()),
+                new List<IFilterMetadata>())
+            {
+                Exception = new OperationCanceledException(),
+            };
+
+            await new PlatformRequestFilter(logger).OnExceptionAsync(context);
+
+            var result = Assert.IsType<ObjectResult>(context.Result);
+            Assert.Equal(504, result.StatusCode);
+            Assert.Equal(PlatformErrorCode.Timeout, Assert.IsType<PlatformError>(result.Value).Code);
+            Assert.Equal(caller.Token, http.RequestAborted);
+            Assert.DoesNotContain(logger.Entries, entry => entry.Level == LogLevel.Error);
+        }
+
+        [Fact]
+        public async Task UnrelatedCancellationRemainsAnInternalErrorAndIsLogged()
+        {
+            var logger = new RecordingLogger();
+            using var caller = new CancellationTokenSource();
+            using var deadline = new CancellationTokenSource();
+            var http = new DefaultHttpContext();
+            http.Items[PlatformRequestLifecycleState.ItemKey] = new PlatformRequestLifecycleState(caller.Token, deadline.Token);
+            var context = new ExceptionContext(
+                new ActionContext(http, new RouteData(), new ControllerActionDescriptor()),
+                new List<IFilterMetadata>())
+            {
+                Exception = new OperationCanceledException("not a Platform token"),
+            };
+
+            await new PlatformRequestFilter(logger).OnExceptionAsync(context);
+
+            var result = Assert.IsType<ObjectResult>(context.Result);
+            Assert.Equal(PlatformErrorCode.InternalError, Assert.IsType<PlatformError>(result.Value).Code);
+            Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Error);
+        }
+
+        [Fact]
+        public async Task StartedResponseGenericFailureLogsButAttemptsNoReplacementWrite()
+        {
+            var logger = new RecordingLogger();
+            var http = new DefaultHttpContext();
+            http.Features.Set<IHttpResponseFeature>(new StartedResponseFeature());
+            Assert.True(http.Response.HasStarted);
+            var context = new ExceptionContext(
+                new ActionContext(http, new RouteData(), new ControllerActionDescriptor()),
+                new List<IFilterMetadata>())
+            {
+                Exception = new InvalidOperationException("after response start"),
+            };
+
+            await new PlatformRequestFilter(logger).OnExceptionAsync(context);
+
+            Assert.True(context.ExceptionHandled);
+            Assert.IsType<EmptyResult>(context.Result);
+            Assert.Contains(logger.Entries, entry => entry.Level == LogLevel.Error);
+            Assert.Empty(http.Response.Headers);
         }
 
         [Fact]

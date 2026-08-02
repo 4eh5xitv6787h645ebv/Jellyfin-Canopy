@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 {
     /// <summary>Routes Platform results through the pinned Platform JSON serializer.</summary>
-    public sealed class PlatformJsonResultFilter : IAsyncResultFilter
+    public sealed class PlatformJsonResultFilter : IAsyncAlwaysRunResultFilter
     {
         /// <inheritdoc />
         public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)

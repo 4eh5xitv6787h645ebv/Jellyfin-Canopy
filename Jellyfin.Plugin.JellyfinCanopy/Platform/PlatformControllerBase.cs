@@ -40,6 +40,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [TypeFilter(typeof(PlatformJsonResultFilter))]
     [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = int.MinValue)]
     [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = int.MinValue + 1)]
+    [TypeFilter(typeof(PlatformRequestLifecycleFilter), Order = int.MinValue + 2)]
     public abstract class PlatformControllerBase : ControllerBase
     {
         /// <summary>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Logging;
@@ -42,17 +43,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ArgumentNullException.ThrowIfNull(context);
             ArgumentNullException.ThrowIfNull(next);
 
-            var correlationId = PlatformCorrelation.For(context.HttpContext);
+            if (IsCallerCancelled(context.HttpContext))
+            {
+                RestoreCallerToken(context.HttpContext);
+                context.Result = new Microsoft.AspNetCore.Mvc.EmptyResult();
+                return;
+            }
 
-            // Set before the action runs: once the response has started, headers are no
-            // longer writable, and a streaming action would otherwise silently lose it.
-            context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = correlationId;
+            var correlationId = PlatformCorrelation.For(context.HttpContext);
 
             // ApiController's automatic model-state filter normally emits ProblemDetails.
             // This filter is ordered ahead of it so malformed JSON and unknown enum values
             // stay inside the one Platform error contract without exposing serializer text.
             if (!context.ModelState.IsValid)
             {
+                RestoreCallerToken(context.HttpContext);
                 var field = context.ModelState
                     .Where(entry => entry.Value?.Errors.Count > 0)
                     .Select(entry => NormalizeField(entry.Key))
@@ -64,6 +69,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         ? "The request body is invalid."
                         : $"The request field '{field}' is invalid.",
                     correlationId);
+                context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = correlationId;
                 return;
             }
 
@@ -76,6 +82,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }))
             {
                 await next().ConfigureAwait(false);
+            }
+
+            // Platform v1 is deliberately non-streaming. Publishing after action
+            // execution means a caller cancellation never receives a synthetic write,
+            // while ordinary result serialization has not started yet.
+            if (!IsCallerCancelled(context.HttpContext) && !context.HttpContext.Response.HasStarted)
+            {
+                context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = correlationId;
             }
         }
 
@@ -101,7 +115,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         {
             ArgumentNullException.ThrowIfNull(context);
 
+            if (context.Exception is OperationCanceledException
+                && PlatformRequestLifecycleState.TryGet(context.HttpContext, out var lifecycle))
+            {
+                // Caller cancellation wins when both tokens race. A disconnected caller
+                // gets no attempted write and no synthetic server-fault log.
+                if (lifecycle.CallerToken.IsCancellationRequested)
+                {
+                    context.HttpContext.RequestAborted = lifecycle.CallerToken;
+                    lifecycle.StopDeadline();
+                    context.Result = new Microsoft.AspNetCore.Mvc.EmptyResult();
+                    context.ExceptionHandled = true;
+                    return Task.CompletedTask;
+                }
+
+                if (lifecycle.DeadlineToken.IsCancellationRequested)
+                {
+                    context.HttpContext.RequestAborted = lifecycle.CallerToken;
+                    lifecycle.StopDeadline();
+                    if (context.HttpContext.Response.HasStarted)
+                    {
+                        context.Result = new Microsoft.AspNetCore.Mvc.EmptyResult();
+                        context.ExceptionHandled = true;
+                        return Task.CompletedTask;
+                    }
+
+                    var timeoutCorrelationId = PlatformCorrelation.For(context.HttpContext);
+                    context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = timeoutCorrelationId;
+                    context.Result = PlatformResults.Error(
+                        PlatformErrorCode.Timeout,
+                        "The request exceeded the Platform v1 deadline.",
+                        timeoutCorrelationId);
+                    context.ExceptionHandled = true;
+                    return Task.CompletedTask;
+                }
+            }
+
             var correlationId = PlatformCorrelation.For(context.HttpContext);
+            RestoreCallerToken(context.HttpContext);
+            if (!context.HttpContext.Response.HasStarted)
+            {
+                context.HttpContext.Response.Headers[PlatformCorrelation.HeaderName] = correlationId;
+            }
 
             // The detail goes HERE and only here. The caller gets a fixed message and the
             // id; everything that would help an attacker - type, message, stack, paths -
@@ -110,6 +165,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 context.Exception,
                 "Unhandled Platform v1 failure. CorrelationId={CorrelationId}",
                 correlationId);
+
+            if (context.HttpContext.Response.HasStarted)
+            {
+                context.Result = new Microsoft.AspNetCore.Mvc.EmptyResult();
+                context.ExceptionHandled = true;
+                return Task.CompletedTask;
+            }
 
             context.Result = PlatformResults.Error(
                 PlatformErrorCode.InternalError,
@@ -122,5 +184,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
             return Task.CompletedTask;
         }
+
+        private static void RestoreCallerToken(Microsoft.AspNetCore.Http.HttpContext context)
+        {
+            if (PlatformRequestLifecycleState.TryGet(context, out var lifecycle))
+            {
+                context.RequestAborted = lifecycle.CallerToken;
+                lifecycle.StopDeadline();
+            }
+        }
+
+        private static bool IsCallerCancelled(Microsoft.AspNetCore.Http.HttpContext context) =>
+            PlatformRequestLifecycleState.TryGet(context, out var lifecycle)
+            && lifecycle.CallerToken.IsCancellationRequested;
     }
 }

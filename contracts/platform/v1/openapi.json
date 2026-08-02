@@ -29,6 +29,9 @@
                 }
               }
             }
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
           }
         }
       }
@@ -79,6 +82,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
           }
         }
       }
@@ -91,6 +97,20 @@
         "in": "header",
         "name": "Authorization",
         "description": "Jellyfin's own scheme: `Authorization: MediaBrowser Token=\"<token>\"`. EP-00 verified that the 10.x `?api_key=` query parameter has been removed in Jellyfin 12, while `?apikey=` and `?ApiKey=` still work; the platform documents only the header because a credential in a query string lands in logs and referrers."
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Required on Platform mutation routes. One case-sensitive value identifies a retry together with the authenticated acting user and operation. Reusing it with the same semantic payload replays the stored semantic outcome; reusing it with different semantics conflicts. Current v1 routes are reads, so none references this component yet.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._~-]+$"
+        }
       }
     },
     "responses": {
@@ -112,6 +132,36 @@
       },
       "UnsupportedMediaType": {
         "description": "The authenticated request carries a body with a missing or non-JSON Content-Type.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "Timeout": {
+        "description": "Model binding or action execution exceeded the fixed 30-second Platform v1 deadline. The deadline is cooperative and excludes bounded body acquisition and result serialization.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "A mutation key was reused with different semantics, or a prior execution is indeterminate. Returned as non-retryable 409 conflict.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "IdempotencyAtCapacity": {
+        "description": "The bounded process-local idempotency store or follower budget cannot admit work. Rejected before mutation execution as retryable 429 rate_limited.",
         "content": {
           "application/json": {
             "schema": {

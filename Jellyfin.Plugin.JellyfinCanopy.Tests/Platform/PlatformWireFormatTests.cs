@@ -223,6 +223,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Contains(typeof(PlatformJsonMediaTypeFilter), filters);
             Assert.Contains(typeof(PlatformJsonResultFilter), filters);
+            Assert.IsAssignableFrom<IAsyncAlwaysRunResultFilter>(new PlatformJsonResultFilter());
         }
 
         [Fact]
@@ -235,6 +236,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             using var provider = services.BuildServiceProvider();
             var options = provider.GetRequiredService<IOptions<MvcOptions>>().Value;
             var formatter = Assert.IsType<PlatformJsonInputFormatter>(options.InputFormatters[0]);
+
+            var idempotencyRegistration = Assert.Single(
+                services,
+                descriptor => descriptor.ServiceType == typeof(PlatformIdempotencyStore));
+            Assert.Equal(ServiceLifetime.Singleton, idempotencyRegistration.Lifetime);
 
             Assert.True(CanRead(formatter, typeof(TestController)));
             Assert.False(CanRead(formatter, typeof(LegacyController)));
@@ -274,6 +280,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(
                 "2026-08-02T04:05:06.0000000+00:00",
                 json.RootElement.GetProperty("At").GetString());
+        }
+
+        [Fact]
+        public async Task AlwaysRunJsonFilterKeepsAuthorizationResultsBare()
+        {
+            var http = new DefaultHttpContext();
+            var action = new ActionContext(http, new RouteData(), new ActionDescriptor());
+            var challenge = new ChallengeResult();
+            var context = new ResultExecutingContext(
+                action,
+                new List<IFilterMetadata>(),
+                challenge,
+                new object());
+
+            await new PlatformJsonResultFilter().OnResultExecutionAsync(context, () =>
+                Task.FromResult(new ResultExecutedContext(action, new List<IFilterMetadata>(), context.Result, new object())));
+
+            Assert.Same(challenge, context.Result);
         }
 
         private static async Task<(ResourceExecutingContext Context, bool Continued)> RunMediaTypeFilterAsync(string? contentType)

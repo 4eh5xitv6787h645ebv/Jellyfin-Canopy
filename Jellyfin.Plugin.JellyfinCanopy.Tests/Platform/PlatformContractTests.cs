@@ -220,6 +220,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(PlatformConstants.ProtocolMaximum, fixture.ProtocolMaximum);
         }
 
+        [Fact]
+        public void IdempotencyHeaderContractMatchesTheSharedParserBounds()
+        {
+            var parameter = Spec.RootElement.GetProperty("components").GetProperty("parameters")
+                .GetProperty("IdempotencyKey");
+            var schema = parameter.GetProperty("schema");
+
+            Assert.Equal(PlatformIdempotencyKey.HeaderName, parameter.GetProperty("name").GetString());
+            Assert.Equal("header", parameter.GetProperty("in").GetString());
+            Assert.True(parameter.GetProperty("required").GetBoolean());
+            Assert.Equal(1, schema.GetProperty("minLength").GetInt32());
+            Assert.Equal(PlatformIdempotencyKey.MaximumLength, schema.GetProperty("maxLength").GetInt32());
+            Assert.Equal("^[A-Za-z0-9._~-]+$", schema.GetProperty("pattern").GetString());
+
+            Assert.True(PlatformIdempotencyKey.TryParse(new string('a', schema.GetProperty("maxLength").GetInt32()), out _));
+            Assert.False(PlatformIdempotencyKey.TryParse(new string('a', schema.GetProperty("maxLength").GetInt32() + 1), out _));
+        }
+
+        [Fact]
+        public void EveryPlatformOperationDocumentsTheKernelTimeoutResponse()
+        {
+            var timeout = Spec.RootElement.GetProperty("components").GetProperty("responses")
+                .GetProperty("Timeout");
+            Assert.Equal(
+                "#/components/schemas/PlatformError",
+                timeout.GetProperty("content").GetProperty("application/json")
+                    .GetProperty("schema").GetProperty("$ref").GetString());
+
+            Assert.All(SpecOperations(), operation => Assert.Equal(
+                "#/components/responses/Timeout",
+                operation.Operation.GetProperty("responses").GetProperty("504").GetProperty("$ref").GetString()));
+        }
+
+        [Theory]
+        [InlineData("IdempotencyConflict")]
+        [InlineData("IdempotencyAtCapacity")]
+        public void FutureIdempotencyErrorsReuseThePlatformEnvelope(string responseName)
+        {
+            var response = Spec.RootElement.GetProperty("components").GetProperty("responses")
+                .GetProperty(responseName);
+
+            Assert.Equal(
+                "#/components/schemas/PlatformError",
+                response.GetProperty("content").GetProperty("application/json")
+                    .GetProperty("schema").GetProperty("$ref").GetString());
+        }
+
         [Theory]
         [InlineData("discovery.200.json", typeof(PlatformDiscoveryResponse))]
         [InlineData("negotiate.200.compatible.json", typeof(PlatformNegotiationResponse))]

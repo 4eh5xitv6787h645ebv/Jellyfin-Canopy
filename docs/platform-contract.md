@@ -110,6 +110,52 @@ One gap to be aware of: a request at or above **30,000,000 bytes** is rejected b
 Jellyfin itself before Canopy sees it, and surfaces as an opaque `500` rather than a
 `413`. The platform covers everything below that; it cannot cover the ceiling.
 
+## Request lifecycle
+
+After a bounded request body has been accepted, Platform v1 gives model binding and
+action execution a **30-second** deadline. `HttpContext.RequestAborted` is a linked token
+during that interval, so provider calls observe both a caller disconnect and the kernel
+deadline through the ordinary cancellation path. Result serialization is outside the
+deadline and remains cancelable by the caller; this is what lets a selected timeout
+envelope be written after the deadline token has fired.
+
+A deadline returns `504` with code `timeout`. A caller disconnect wins if both signals
+race: Canopy attempts no response write and does not log it as a server fault. Cancellation
+is cooperative — a provider that ignores its token cannot be killed safely, and Canopy
+does not abandon it on a background task. Platform v1 actions must therefore return
+bounded, non-streaming results and must not write directly to the response.
+
+## Idempotent mutations
+
+Platform v1 ships the bounded idempotency kernel before adding mutation routes. Every
+future mutation will require exactly one `Idempotency-Key` value: 1–128 ASCII letters,
+digits, `.`, `_`, `~`, or `-`. The parser is transport-neutral, so a later body-carried
+key has exactly the same normalization and validation rules.
+
+The process-local store keys an attempt by authenticated acting user, code-owned
+operation, and idempotency key. The operation supplies a SHA-256 fingerprint of the
+fields that determine mutation semantics:
+
+- the same tuple and fingerprint replays an immutable semantic result in a fresh
+  request envelope
+- the same tuple with a different fingerprint conflicts
+- a canceled or failed leader leaves an indeterminate tombstone, because the provider
+  may already have applied the mutation
+- canceling a coalesced follower abandons only that wait and never cancels the leader
+
+Future routes map a different fingerprint or an indeterminate prior execution to
+`409 conflict` (not automatically retryable). Admission pressure maps to retryable
+`429 rate_limited`; it is rejected before mutation execution.
+
+Terminal entries live for 10 minutes. The store admits at most 1,024 entries, 8 MiB of
+stored or pre-reserved results, and 64 KiB for one result. It never pressure-evicts live
+entries; it rejects new work before execution when a bound would be exceeded. State is
+neither persistent nor distributed, so retry guarantees do not cross a process restart
+or coordinate multiple server processes.
+
+Coalesced waits are bounded too: at most 64 followers per in-flight key and 1,024 across
+the process. Excess followers receive the same pre-execution `429 rate_limited` outcome.
+
 ## Pagination
 
 One dialect: opaque forward cursors. Pass the `NextCursor` you were given to fetch the

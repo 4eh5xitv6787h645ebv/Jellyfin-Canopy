@@ -34,6 +34,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // Platform v1 owns a wire format without changing any legacy controller.
             serviceCollection.Configure<MvcOptions>(options =>
                 options.InputFormatters.Insert(0, new PlatformJsonInputFormatter()));
+            // The sole process-wide owner of bounded idempotency state. Future mutation
+            // endpoints consume this singleton; no current read route changes behavior.
+            serviceCollection.AddSingleton<PlatformIdempotencyStore>();
 
             // a named HttpClient with AllowAutoRedirect=false so
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning
