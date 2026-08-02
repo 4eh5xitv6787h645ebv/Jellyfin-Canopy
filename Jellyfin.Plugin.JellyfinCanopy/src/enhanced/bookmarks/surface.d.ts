@@ -44,6 +44,8 @@ export interface BookmarksApi {
     // records this invocation created (equivalence-skipped candidates are
     // excluded, so the length is a truthful add count).
     syncBookmarks(oldBookmarks: any[], newItemDetails: any, timeOffset?: number, removeOldIds?: string[]): Promise<any[]>;
+    /** Adjust selected synced rows in one revisioned atomic batch. */
+    adjustOffsets(bookmarks: any[], offset: number): Promise<number>;
     cleanupOrphaned(): Promise<BookmarkCleanupResult>;
     /** Delete the loaded bookmark set in one revisioned server transaction. */
     deleteAll(): Promise<number>;

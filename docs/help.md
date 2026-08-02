@@ -196,7 +196,7 @@ The same user account should reach the same bookmarks and Canopy preferences fro
 
     **Stored on the Jellyfin server (syncs across devices):**
 
-    - Bookmark data — `bookmark.json` (see [Developer Guide](developers.md))
+    - Bookmark data — the indexed `bookmarks.db` store (the API remains `bookmark.json`; see [Developer Guide](developers.md))
     - Canopy settings and shortcut overrides — `settings.json` and `shortcuts.json`
     - Hidden Content state — `hidden-content.json`
     - [Spoiler Guard](spoiler-guard.md) per-user list and override preferences — `spoilerblur.json`
@@ -209,7 +209,7 @@ The same user account should reach the same bookmarks and Canopy preferences fro
 To troubleshoot missing bookmarks:
 
 - Confirm you're signed in as the same user account.
-- Confirm the bookmark file exists on the server, at `/config/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/{userId}/bookmark.json`. Here `{userId}` is your user ID with all hyphens removed and converted to lowercase — for example `12345678-90AB-...` becomes the folder `1234567890ab...`.
+- Confirm the bookmark database exists at `/config/plugins/configurations/Jellyfin.Plugin.JellyfinCanopy/bookmarks.db`. After an upgrade, a legacy `{userId}/bookmark.json` is imported on first access and archived; a `.unhealthy` marker or `bookmark.json.corrupt-*` file in that normalized user folder means the legacy input was quarantined and must be repaired rather than overwritten. Database-level `bookmarks.db.corrupt-*` groups are preserved when Canopy restores the newest verified `bookmarks.db.backup-*`; backups are deferred and coalesced off request paths, retained to five files, and capped at 1 GiB each. A backup must carry Canopy's owned schema marker and exact bookmark metadata as well as pass SQLite integrity checking; if no valid backup exists, bookmark access fails closed.
 - Check the browser console for errors.
 
 #### The custom pause screen won't appear

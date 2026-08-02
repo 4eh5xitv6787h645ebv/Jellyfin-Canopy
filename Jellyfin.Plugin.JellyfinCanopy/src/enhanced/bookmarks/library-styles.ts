@@ -579,6 +579,26 @@ export function injectBookmarksLibraryStyles(): void {
       border-color: rgba(255, 255, 255, 0.2);
     }
 
+    .jc-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .jc-bookmark-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .jc-bookmark-page-status {
+      min-width: 8rem;
+      color: #b0bec5;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
     .jc-btn-delete {
       background: rgba(200, 40, 40, 0.12);
       color: #ff6b6b;

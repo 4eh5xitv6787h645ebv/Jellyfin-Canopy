@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private readonly ILogger<UserConfigurationManager> _logger;
         private readonly UserConfigurationStore _store;
         private readonly ReviewsStore _reviews;
+        private readonly BookmarkStore _bookmarks;
 
         public UserConfigurationManager(IApplicationPaths appPaths, ILogger<UserConfigurationManager> logger)
         {
@@ -30,6 +31,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             _logger = logger;
             _store = new UserConfigurationStore(_configBaseDir, logger);
             _reviews = new ReviewsStore(_configBaseDir, logger);
+            _bookmarks = new BookmarkStore(_configBaseDir, logger);
 
             // One-shot migration: pre-fix callers normalized user IDs case-sensitively
             // (only stripped hyphens), so the same logical user could land in
@@ -244,6 +246,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         internal ReviewStoreStatus GetReviewStoreStatus()
             => _reviews.GetStatus();
+
+        // ─── Indexed per-user bookmarks (BookmarkStore) ────────────────────────
+
+        internal UserBookmark GetBookmarks(string userId)
+            => _bookmarks.GetState(userId);
+
+        internal BookmarkStoreCounts GetBookmarkCounts(string userId)
+            => _bookmarks.GetCounts(userId);
+
+        internal BookmarkStorePage GetBookmarkPage(
+            string userId,
+            int startIndex,
+            int limit,
+            string? itemId = null,
+            string? mediaType = null)
+            => _bookmarks.GetPage(userId, startIndex, limit, itemId, mediaType);
+
+        internal BookmarkStoreItemGroupPage GetBookmarkItemGroups(
+            string userId,
+            string? afterItemId,
+            int limit)
+            => _bookmarks.GetItemGroups(userId, afterItemId, limit);
+
+        internal BookmarkStoreMutationResult ApplyBookmarkOperations(
+            string userId,
+            long? expectedRevision,
+            IReadOnlyList<BookmarkStoreOperation> operations,
+            bool includeCompleteSuccess = false)
+            => _bookmarks.Apply(userId, expectedRevision, operations, includeCompleteSuccess);
+
+        internal BookmarkStoreMutationResult ReplaceBookmarks(
+            string userId,
+            long? expectedRevision,
+            IReadOnlyDictionary<string, BookmarkItem> replacement)
+            => _bookmarks.Replace(userId, expectedRevision, replacement);
 
         // ─── Processed watchlist convenience wrappers ────────────────────────────
 

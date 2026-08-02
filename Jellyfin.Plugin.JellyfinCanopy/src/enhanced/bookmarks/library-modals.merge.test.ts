@@ -5,7 +5,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { getRefreshSafetyHoldCount } from '../../core/lifecycle';
-import { resetBookmarksLibraryModals, showDuplicatesSyncModal } from './library-modals';
+import {
+  BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE,
+  BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE,
+  BOOKMARK_OFFSET_PREVIEW_SIZE,
+  findDuplicateBookmarks,
+  resetBookmarksLibraryModals,
+  showDuplicatesSyncModal,
+  showOffsetAdjustmentModal
+} from './library-modals';
 import type { IdentityContext } from '../../types/jc';
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
@@ -59,6 +67,8 @@ function selectTarget(modal: HTMLElement, itemId: string): void {
 }
 
 describe('bookmarks duplicate merge modal', () => {
+  const coverageRun = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_JC_V8_COVERAGE === '1';
+  const renderBudgetMs = coverageRun ? 10_000 : 500;
   let context: IdentityContext;
   let syncBookmarks: ReturnType<typeof vi.fn>;
 
@@ -136,7 +146,7 @@ describe('bookmarks duplicate merge modal', () => {
 
     selectTarget(modal, 'item-bbb');
     const merge = mergeButton(modal);
-    expect(merge.disabled).toBe(false);
+    expect(mergeButton(modal).disabled).toBe(false);
     merge.click();
     await vi.waitFor(() => expect(syncBookmarks).toHaveBeenCalledTimes(1));
 
@@ -185,7 +195,7 @@ describe('bookmarks duplicate merge modal', () => {
 
     expect(document.querySelector('.jellyfin-canopy-toast')!.textContent).toContain('bookmark_merge_failed');
     expect(document.querySelectorAll('.jellyfin-canopy-toast')).toHaveLength(1);
-    expect(merge.disabled).toBe(false);
+    expect(mergeButton(modal).disabled).toBe(false);
     // The close path removes the dialog within 200ms; prove it stays available.
     await new Promise(resolve => setTimeout(resolve, 250));
     expect(modal.isConnected).toBe(true);
@@ -198,5 +208,171 @@ describe('bookmarks duplicate merge modal', () => {
     const offsetTargets = [...modal.querySelectorAll<HTMLElement>('[data-offset-item-id]')]
       .map(button => button.dataset.offsetItemId);
     expect(offsetTargets).toEqual(['item-aaa', 'item-bbb']);
+  });
+
+  it('collapses and windows one thousand identical item versions within the responsiveness budget', () => {
+    const store = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+      const itemId = `item-${index.toString().padStart(4, '0')}`;
+      return [`bookmark-${index}`, { ...versionA, itemId, timestamp: index }];
+    }));
+    const started = (globalThis as any).process.cpuUsage();
+    showDuplicatesSyncModal(store, context);
+    const usage = (globalThis as any).process.cpuUsage(started);
+    const elapsed = (usage.user + usage.system) / 1000;
+    const modal = modalElement();
+
+    expect(elapsed).toBeLessThan(renderBudgetMs);
+    expect(modal.querySelectorAll('.jc-duplicate-group')).toHaveLength(1);
+    expect(modal.querySelectorAll('.jc-merge-version')).toHaveLength(BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE);
+    expect(modal.querySelectorAll('*').length).toBeLessThan(500);
+    expect(modal.textContent).toContain('1-10 / 1000');
+
+    modal.querySelector<HTMLButtonElement>('.jc-duplicate-versions-next')!.click();
+    expect(modal.textContent).toContain('11-20 / 1000');
+    expect(modal.querySelectorAll('.jc-merge-version')).toHaveLength(BOOKMARK_DUPLICATE_VERSION_PAGE_SIZE);
+  });
+
+  it('collapses one thousand timestamps on the same item before consistency comparisons', () => {
+    const store = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+      `bookmark-${index}`,
+      { ...versionA, timestamp: index }
+    ]));
+    const started = (globalThis as any).process.cpuUsage();
+    const duplicates = findDuplicateBookmarks(store);
+    const usage = (globalThis as any).process.cpuUsage(started);
+
+    expect(duplicates).toEqual([]);
+    expect((usage.user + usage.system) / 1000).toBeLessThan(renderBudgetMs);
+  });
+
+  it('indexes one thousand unique identities within the supported work budget', () => {
+    const store = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+      `bookmark-${index}`,
+      {
+        ...versionA,
+        itemId: `item-${index}`,
+        tmdbId: `provider-${index}`,
+        tvdbId: ''
+      }
+    ]));
+    const started = (globalThis as any).process.cpuUsage();
+
+    expect(findDuplicateBookmarks(store)).toEqual([]);
+    const usage = (globalThis as any).process.cpuUsage(started);
+    expect((usage.user + usage.system) / 1000).toBeLessThan(renderBudgetMs);
+    showDuplicatesSyncModal(store, context);
+    expect(document.querySelector('[data-jc-bookmark-library-modal="true"]')).toBeNull();
+    expect(document.querySelector('.jellyfin-canopy-toast')?.textContent).toContain('bookmark_no_duplicates');
+  });
+
+  it.each(['unique', 'identical'] as const)(
+    'keeps one thousand rich %s episode identities within CPU and heap budgets',
+    shape => {
+      const store = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+        const identity = shape === 'unique' ? String(index) : 'shared';
+        return [`bookmark-${index}`, {
+          itemId: `episode-item-${index}`,
+          identityVersion: 1,
+          itemType: 'episode',
+          mediaType: 'tv',
+          tmdbId: `episode-tmdb-${identity}`,
+          tvdbId: `episode-tvdb-${identity}`,
+          seriesTmdbId: `series-tmdb-${identity}`,
+          seriesTvdbId: `series-tvdb-${identity}`,
+          seasonNumber: 12,
+          episodeNumber: 34,
+          episodeEndNumber: 35,
+          name: `Episode ${identity}`,
+          timestamp: index
+        }];
+      }));
+      const processApi = (globalThis as any).process;
+      const heapBefore = processApi.memoryUsage().heapUsed;
+      const started = processApi.cpuUsage();
+
+      const duplicates = findDuplicateBookmarks(store);
+
+      const usage = processApi.cpuUsage(started);
+      const allocatedHeap = Math.max(0, processApi.memoryUsage().heapUsed - heapBefore);
+      expect((usage.user + usage.system) / 1000).toBeLessThan(renderBudgetMs);
+      expect(allocatedHeap).toBeLessThan(64 * 1024 * 1024);
+      expect(duplicates).toHaveLength(shape === 'identical' ? 1 : 0);
+    }
+  );
+
+  it('finds a duplicate that appears at the end of a one-thousand-item index', () => {
+    const store = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+      `bookmark-${index}`,
+      {
+        ...versionA,
+        itemId: `item-${String(index).padStart(4, '0')}`,
+        tmdbId: index === 999 ? 'provider-0' : `provider-${index}`,
+        tvdbId: ''
+      }
+    ]));
+
+    const duplicates = findDuplicateBookmarks(store);
+
+    expect(duplicates).toHaveLength(1);
+    expect(Object.keys(duplicates[0].itemGroups)).toEqual(['item-0000', 'item-0999']);
+  });
+
+  it('windows duplicate groups and preserves a target selected on another version page', async () => {
+    const store = Object.fromEntries(Array.from({ length: 25 }, (_, index) => {
+      const itemId = `item-${index.toString().padStart(4, '0')}`;
+      return [`bookmark-${index}`, { ...versionA, itemId, timestamp: index }];
+    }));
+    showDuplicatesSyncModal(store, context);
+    const modal = modalElement();
+    selectTarget(modal, 'item-0000');
+    modal.querySelector<HTMLButtonElement>('.jc-duplicate-versions-next')!.click();
+
+    expect(modal.textContent).toContain('11-20 / 25');
+    expect(mergeButton(modal).disabled).toBe(false);
+    mergeButton(modal).click();
+    await vi.waitFor(() => expect(syncBookmarks).toHaveBeenCalledTimes(1));
+    expect(syncBookmarks.mock.calls[0][0]).toHaveLength(24);
+    expect(syncBookmarks.mock.calls[0][3]).toHaveLength(24);
+  });
+
+  it('renders at most ten duplicate groups at once', () => {
+    const store: Record<string, any> = {};
+    for (let group = 0; group < 25; group++) {
+      for (let version = 0; version < 2; version++) {
+        const itemId = `item-${group}-${version}`;
+        store[`bookmark-${group}-${version}`] = {
+          ...versionA,
+          itemId,
+          tmdbId: String(1000 + group),
+          tvdbId: '',
+          name: `Movie ${group}`
+        };
+      }
+    }
+    showDuplicatesSyncModal(store, context);
+    const modal = modalElement();
+    expect(modal.querySelectorAll('.jc-duplicate-group')).toHaveLength(BOOKMARK_DUPLICATE_GROUP_PAGE_SIZE);
+    expect(modal.textContent).toContain('1-10 / 25');
+    modal.querySelector<HTMLButtonElement>('.jc-duplicate-groups-next')!.click();
+    expect(modal.textContent).toContain('11-20 / 25');
+  });
+
+  it('previews a bounded offset list and applies every selected row in one atomic call', async () => {
+    const adjustOffsets = vi.fn().mockResolvedValue(75);
+    JC.bookmarks = { syncBookmarks, adjustOffsets } as any;
+    const bookmarks = Array.from({ length: 75 }, (_, index) => ({
+      id: `bookmark-${index}`,
+      timestamp: index,
+      label: `Bookmark ${index}`,
+      syncedFrom: 'source-item'
+    }));
+    showOffsetAdjustmentModal({ bookmarks, details: { name: 'Movie' } }, context);
+    const modal = modalElement();
+
+    expect(modal.querySelectorAll('.jc-modal-list-item')).toHaveLength(BOOKMARK_OFFSET_PREVIEW_SIZE + 1);
+    expect(modal.querySelector('.jc-offset-preview-remainder')?.textContent).toContain('+25');
+    modal.querySelector<HTMLButtonElement>('.btnApplyOffset')!.click();
+    await vi.waitFor(() => expect(adjustOffsets).toHaveBeenCalledTimes(1));
+    expect(adjustOffsets).toHaveBeenCalledWith(bookmarks, 0);
   });
 });

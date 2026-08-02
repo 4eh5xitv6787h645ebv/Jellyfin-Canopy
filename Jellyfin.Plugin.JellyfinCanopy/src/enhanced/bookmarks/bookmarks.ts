@@ -50,6 +50,8 @@ import {
 // on every identity activation; an A-disabled/B-enabled SPA switch must still
 // be able to start the feature without re-executing the bundle.
   const logPrefix = '🪼 Jellyfin Canopy: Bookmarks:';
+  const bookmarkMarkerWindowSize = 100;
+  const bookmarkModalPageSize = 50;
   const ownedBookmarkMarkerSelector = '.jc-bookmark-marker[data-jc-identity-owned="true"]';
   let bookmarkGeneration = 0;
   let bookmarkMarkerGeneration = 0;
@@ -59,6 +61,13 @@ import {
   const bookmarkTimers = new Set<number>();
   let forceCleanupBookmarks: (() => void) | null = null;
   let cleanupBookmarks = (): void => undefined;
+  let bookmarkItemLookupCache: {
+    root: object;
+    bookmarks: object;
+    revision: number;
+    key: string;
+    result: { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] };
+  } | null = null;
 
   interface BookmarkIdentityCapture {
     readonly context: Readonly<IdentityContext> | null;
@@ -66,9 +75,15 @@ import {
   }
 
   interface BookmarkOperation {
-    type: 'add' | 'update' | 'delete';
+    type: 'add' | 'update' | 'delete' | 'offset' | 'move';
     bookmarkId: string;
+    /** Source row deleted atomically by a move operation. */
+    sourceBookmarkId?: string;
+    /** Full post-operation row retained locally for receipts and ambiguity evidence. */
     bookmark?: Record<string, unknown>;
+    /** Compact offset wire fields; the server preserves every other stored field. */
+    timestamp?: number;
+    updatedAt?: string;
   }
 
   interface BookmarkCommittedState {
@@ -148,6 +163,10 @@ import {
       : value;
     if (!localValue || typeof localValue !== 'object' || Array.isArray(localValue)) return null;
     const record = localValue as Record<string, unknown>;
+    // Compact successful mutation receipts intentionally omit the complete
+    // state. Never misinterpret their empty compatibility map as deletion of
+    // every bookmark.
+    if ((record.completeState ?? record.CompleteState) === false) return null;
     const revision = Number(record.revision ?? record.Revision);
     const bookmarks = record.bookmarks ?? record.Bookmarks;
     if (!Number.isSafeInteger(revision) || revision < 0
@@ -167,6 +186,38 @@ import {
     return { revision, bookmarks: normalized };
   }
 
+  function compactMutationState(
+    value: unknown,
+    base: BookmarkCommittedState,
+    operations: BookmarkOperation[]
+  ): BookmarkCommittedState | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if ((record.completeState ?? record.CompleteState) !== false) return null;
+    const revision = Number(record.revision ?? record.Revision);
+    if (!Number.isSafeInteger(revision) || revision < base.revision) return null;
+
+    const bookmarks = Object.assign(Object.setPrototypeOf({}, null), base.bookmarks) as Record<string, any>;
+    for (const operation of operations) {
+      if (operation.type === 'delete') {
+        delete bookmarks[operation.bookmarkId];
+      } else if (operation.type === 'move' && operation.bookmark && operation.sourceBookmarkId) {
+        delete bookmarks[operation.sourceBookmarkId];
+        bookmarks[operation.bookmarkId] = { ...operation.bookmark };
+      } else if (operation.bookmark) {
+        const bookmark = { ...operation.bookmark };
+        if (operation.type === 'update' && typeof bookmark.createdAt === 'string'
+            && bookmark.createdAt.trim() === '') {
+          bookmark.createdAt = bookmarks[operation.bookmarkId]?.createdAt ?? '';
+        }
+        bookmarks[operation.bookmarkId] = bookmark;
+      } else {
+        return null;
+      }
+    }
+    return { revision, bookmarks };
+  }
+
   function conflictState(error: unknown): BookmarkCommittedState | null {
     if (!error || typeof error !== 'object') return null;
     const shaped = error as { responseJSON?: unknown; responseText?: string };
@@ -176,14 +227,27 @@ import {
     try { return committedState(JSON.parse(shaped.responseText)); } catch { return null; }
   }
 
-  function cleanupResponse(value: unknown): { state: BookmarkCommittedState; result: BookmarkCleanupResult } | null {
-    const state = committedState(value);
-    if (!state || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+  function cleanupResponse(
+    value: unknown,
+    base: BookmarkCommittedState
+  ): { state: BookmarkCommittedState; result: BookmarkCleanupResult } | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     const deleted = Number(record.deleted ?? record.Deleted);
     const retainedUncertain = Number(record.retainedUncertain ?? record.RetainedUncertain);
     const errors = Number(record.errors ?? record.Errors);
     if (![deleted, retainedUncertain, errors].every(count => Number.isSafeInteger(count) && count >= 0)) return null;
+    let state = committedState(value);
+    if (!state && (record.completeState ?? record.CompleteState) === false) {
+      const revision = Number(record.revision ?? record.Revision);
+      const rawDeletedIds = record.deletedBookmarkIds ?? record.DeletedBookmarkIds;
+      if (!Number.isSafeInteger(revision) || revision < base.revision || !Array.isArray(rawDeletedIds)
+          || rawDeletedIds.length !== deleted || rawDeletedIds.some(id => typeof id !== 'string')) return null;
+      const bookmarks = Object.assign(Object.setPrototypeOf({}, null), base.bookmarks) as Record<string, any>;
+      for (const bookmarkId of rawDeletedIds as string[]) delete bookmarks[bookmarkId];
+      state = { revision, bookmarks };
+    }
+    if (!state) return null;
     return { state, result: { deleted, retainedUncertain, errors } };
   }
 
@@ -233,6 +297,11 @@ import {
       const exists = hasOwnBookmark(state.bookmarks, operation.bookmarkId);
       const existing = state.bookmarks[operation.bookmarkId];
       if (operation.type === 'delete') return !exists;
+      if (operation.type === 'move') {
+        return !!operation.sourceBookmarkId
+          && !hasOwnBookmark(state.bookmarks, operation.sourceBookmarkId)
+          && exists && !!operation.bookmark && sameBookmark(existing, operation.bookmark);
+      }
       return exists && !!operation.bookmark && sameBookmark(existing, operation.bookmark);
     });
   }
@@ -268,12 +337,27 @@ import {
       if (operations.length === 0) return base;
 
       try {
+        const wireOperations = operations.map(operation => operation.type === 'offset'
+          ? {
+              type: operation.type,
+              bookmarkId: operation.bookmarkId,
+              timestamp: operation.timestamp,
+              updatedAt: operation.updatedAt
+            }
+          : operation.type === 'move'
+            ? {
+                type: operation.type,
+                bookmarkId: operation.bookmarkId,
+                sourceBookmarkId: operation.sourceBookmarkId,
+                bookmark: operation.bookmark
+              }
+            : operation);
         const response = await plugin(`/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json/batch`, {
           method: 'POST',
-          body: { revision: base.revision, operations },
+          body: { revision: base.revision, compactResponse: true, operations: wireOperations },
           skipRetry: true
         });
-        const committed = committedState(response);
+        const committed = committedState(response) || compactMutationState(response, base, operations);
         if (!committed) throw new Error('Bookmark server returned an invalid committed state');
         return adoptCommittedState(captured, root, committed) ? committed : null;
       } catch (error) {
@@ -560,7 +644,23 @@ import {
     mediaType?: unknown,
     identity?: BookmarkIdentityRecord
   ): { bookmarks: any[]; hasIdMismatch: boolean; exactMatches: any[]; providerMatches: any[] } {
-    const allBookmarks = (JC.userConfig as any)?.bookmark?.bookmarks || {};
+    const root = (JC.userConfig as any)?.bookmark;
+    const allBookmarks = root?.bookmarks || {};
+    const lookupKey = JSON.stringify([
+      itemId, tmdbId ?? null, tvdbId ?? null, normalizeBookmarkMediaType(mediaType),
+      identity?.identityVersion ?? null, identity?.itemType ?? null,
+      identity?.seriesTmdbId ?? null, identity?.seriesTvdbId ?? null,
+      identity?.seasonNumber ?? null, identity?.episodeNumber ?? null,
+      identity?.episodeEndNumber ?? null
+    ]);
+    const revision = Number.isSafeInteger(root?.revision) ? root.revision : -1;
+    const cachedLookup = bookmarkItemLookupCache;
+    if (root && cachedLookup && cachedLookup.root === root
+        && cachedLookup.bookmarks === allBookmarks
+        && cachedLookup.revision === revision
+        && cachedLookup.key === lookupKey) {
+      return cachedLookup.result;
+    }
     const exactMatches: any[] = [];
     const providerMatches: any[] = [];
 
@@ -588,7 +688,11 @@ import {
     const bookmarks = exactMatches.length > 0 ? exactMatches : providerMatches;
     const hasIdMismatch = exactMatches.length === 0 && providerMatches.length > 0;
 
-    return { bookmarks, hasIdMismatch, exactMatches, providerMatches };
+    const result = { bookmarks, hasIdMismatch, exactMatches, providerMatches };
+    if (root && typeof allBookmarks === 'object') {
+      bookmarkItemLookupCache = { root, bookmarks: allBookmarks, revision, key: lookupKey, result };
+    }
+    return result;
   }
 
   /**
@@ -760,7 +864,7 @@ import {
    */
   function bookmarkEquivalenceKey(timestamp: number, label: unknown): string {
     const normalizedLabel = typeof label === 'string' ? label : '';
-    return `${timestamp} ${normalizedLabel}`;
+    return `${timestamp}\\u0000${normalizedLabel}`;
   }
 
   /**
@@ -948,15 +1052,24 @@ import {
             if (!sameBookmark(state.bookmarks[id], bookmark)) {
               throw new Error(`Bookmark id collision for ${id}`);
             }
-            // The add landed already; still finish the MOVE by deleting the source.
+            // The target landed already; finish a partial prior sync by deleting
+            // the source. A normal move uses one compact atomic operation below.
             if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
             continue;
           }
           if (!seen.has(candidateKey)) {
             seen.add(candidateKey);
-            operations.push({ type: 'add', bookmarkId: id, bookmark });
+            operations.push(deleteSource
+              ? {
+                  type: 'move',
+                  bookmarkId: id,
+                  sourceBookmarkId: removeSource!.id,
+                  bookmark
+                }
+              : { type: 'add', bookmarkId: id, bookmark });
+          } else if (deleteSource) {
+            operations.push({ type: 'delete', bookmarkId: removeSource!.id });
           }
-          if (deleteSource) operations.push({ type: 'delete', bookmarkId: removeSource!.id });
         }
         // Fail a MOVE closed if any source item still carries an unhandled row
         // in the authoritative state (a source-version bookmark added after the
@@ -965,7 +1078,11 @@ import {
         // source-version set to travel in this transaction or none of it.
         if (moveSourceItemIds.size > 0) {
           const deleting = new Set(
-            operations.filter(operation => operation.type === 'delete').map(operation => operation.bookmarkId)
+            operations.flatMap(operation => operation.type === 'delete'
+              ? [operation.bookmarkId]
+              : operation.type === 'move' && operation.sourceBookmarkId
+                ? [operation.sourceBookmarkId]
+                : [])
           );
           for (const [bookmarkId, existing] of Object.entries<any>(state.bookmarks)) {
             if (existing && typeof existing === 'object'
@@ -1005,6 +1122,50 @@ import {
     return durable;
   }
 
+  /** Adjust a selected synced set in one atomic revisioned transaction. */
+  async function adjustBookmarkOffsets(selected: any[], offset: number): Promise<number> {
+    const captured = captureIdentity();
+    if (!captured.context) return 0;
+    const root = bookmarkRootFor(captured);
+    if (!root) return 0;
+    if (!Number.isFinite(offset) || selected.length > 1000) {
+      throw new Error('Refusing an invalid or over-limit bookmark offset batch');
+    }
+    const snapshots = selected.map(bookmark => {
+      const id = String(bookmark?.id ?? '');
+      if (!id || !hasOwnBookmark(root.bookmarks, id)) {
+        throw new Error('Refusing to adjust a bookmark that is no longer present');
+      }
+      return { id, bookmark: { ...root.bookmarks[id] } };
+    });
+    const updatedAt = new Date().toISOString();
+    const startingRevision = root.revision;
+    const committed = await commitBookmarkBatch(captured, root, state => snapshots.map(snapshot => {
+      if (!hasOwnBookmark(state.bookmarks, snapshot.id)
+          || !sameBookmark(state.bookmarks[snapshot.id], snapshot.bookmark)) {
+        throw new Error('Refusing to adjust a bookmark that changed after selection');
+      }
+      const timestamp = Number(snapshot.bookmark.timestamp);
+      if (!Number.isFinite(timestamp)) throw new Error('Refusing a non-finite bookmark timestamp');
+      return {
+        type: 'offset' as const,
+        bookmarkId: snapshot.id,
+        timestamp: Math.max(0, timestamp + offset),
+        updatedAt,
+        bookmark: {
+          ...snapshot.bookmark,
+          timestamp: Math.max(0, timestamp + offset),
+          syncedFrom: '',
+          updatedAt
+        }
+      };
+    }));
+    if (!committed || !isBookmarkRootCurrent(captured, root)) return 0;
+    if (committed.revision === startingRevision) return 0;
+    if (!emitBookmarksUpdated(captured, 'offset')) return 0;
+    return snapshots.length;
+  }
+
   /**
    * Ask the server to classify every bookmarked item in the current user's
    * library scope and atomically delete only authoritative global absences.
@@ -1017,62 +1178,81 @@ import {
     if (!root) return empty();
     const plugin = JC.core.api?.plugin?.bind(JC.core.api);
     if (typeof plugin !== 'function') throw new Error('Bookmark cleanup transport is unavailable');
+    const totals = empty();
     const evidenceDeleted = new Set<string>();
+    let cursor: string | null = null;
 
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (!isBookmarkRootCurrent(captured, root)) return empty();
-      const base = committedState(root);
-      if (!base) throw new Error('Bookmark state is unavailable; reload before cleanup');
-      try {
-        const response = await plugin(
-          `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json/cleanup`,
-          { method: 'POST', body: { revision: base.revision }, skipRetry: true }
-        );
-        const cleaned = cleanupResponse(response);
-        if (!cleaned) throw new Error('Bookmark cleanup returned an invalid committed state');
-        if (!adoptCommittedState(captured, root, cleaned.state)) return empty();
-        const result = {
-          ...cleaned.result,
-          deleted: cleaned.result.deleted + evidenceDeleted.size
-        };
-        if (result.deleted > 0) emitBookmarksUpdated(captured, 'cleanup');
-        console.log(
-          `${logPrefix} Cleanup: ${result.deleted} removed, `
-          + `${result.retainedUncertain} retained uncertain, ${result.errors} errors`
-        );
-        return result;
-      } catch (error) {
-        if (isAmbiguousBookmarkTransportError(error)) {
-          if (!isBookmarkRootCurrent(captured, root)) return empty();
-          try {
-            const response = await plugin(
-              `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json`,
-              { method: 'GET', skipRetry: true }
-            );
-            const evidence = committedState(response);
-            if (!evidence) throw new Error('Bookmark evidence response was invalid');
-            // Evidence cannot distinguish our response-lost commit from a
-            // concurrent session deleting the same bookmark in this narrow
-            // window. Counting every newly absent id avoids false zero-success;
-            // this affects only the informational toast, never deletion policy.
-            for (const bookmarkId of Object.keys(base.bookmarks)) {
-              if (!hasOwnBookmark(evidence.bookmarks, bookmarkId)) evidenceDeleted.add(bookmarkId);
+    for (let batch = 0; batch < 10; batch++) {
+      let completedBatch = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (!isBookmarkRootCurrent(captured, root)) return empty();
+        const base = committedState(root);
+        if (!base) throw new Error('Bookmark state is unavailable; reload before cleanup');
+        try {
+          const response = await plugin(
+            `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json/cleanup`,
+            {
+              method: 'POST',
+              body: { revision: base.revision, compactResponse: true, cursor, limit: 100 },
+              skipRetry: true
             }
-            if (!adoptCommittedState(captured, root, evidence)) return empty();
-            if ((error as { name?: string }).name === 'AbortError') throw error;
-            continue;
-          } catch {
-            throw error;
+          );
+          const cleaned = cleanupResponse(response, base);
+          if (!cleaned || !response || typeof response !== 'object' || Array.isArray(response)) {
+            throw new Error('Bookmark cleanup returned an invalid committed state');
           }
+          const receipt = response as Record<string, unknown>;
+          const hasMore = Boolean(receipt.hasMore ?? receipt.HasMore);
+          const next = receipt.nextCursor ?? receipt.NextCursor;
+          if (hasMore && (typeof next !== 'string' || !next)) {
+            throw new Error('Bookmark cleanup omitted its bounded continuation cursor');
+          }
+          if (!adoptCommittedState(captured, root, cleaned.state)) return empty();
+          totals.deleted += cleaned.result.deleted;
+          totals.retainedUncertain += cleaned.result.retainedUncertain;
+          totals.errors += cleaned.result.errors;
+          cursor = hasMore ? next as string : null;
+          completedBatch = true;
+          if (!hasMore) {
+            totals.deleted += evidenceDeleted.size;
+            if (totals.deleted > 0) emitBookmarksUpdated(captured, 'cleanup');
+            console.log(
+              `${logPrefix} Cleanup: ${totals.deleted} removed, `
+              + `${totals.retainedUncertain} retained uncertain, ${totals.errors} errors`
+            );
+            return totals;
+          }
+          break;
+        } catch (error) {
+          if (isAmbiguousBookmarkTransportError(error)) {
+            if (!isBookmarkRootCurrent(captured, root)) return empty();
+            try {
+              const response = await plugin(
+                `/user-settings/${encodeURIComponent(captured.context.userId)}/bookmark.json`,
+                { method: 'GET', skipRetry: true }
+              );
+              const evidence = committedState(response);
+              if (!evidence) throw new Error('Bookmark evidence response was invalid');
+              for (const bookmarkId of Object.keys(base.bookmarks)) {
+                if (!hasOwnBookmark(evidence.bookmarks, bookmarkId)) evidenceDeleted.add(bookmarkId);
+              }
+              if (!adoptCommittedState(captured, root, evidence)) return empty();
+              if ((error as { name?: string }).name === 'AbortError') throw error;
+              continue;
+            } catch {
+              throw error;
+            }
+          }
+          if (httpStatus(error) !== 409) throw error;
+          const latest = conflictState(error);
+          if (!latest) throw new Error('Bookmark conflict response omitted authoritative state');
+          if (!adoptCommittedState(captured, root, latest)) return empty();
         }
-        if (httpStatus(error) !== 409) throw error;
-        const latest = conflictState(error);
-        if (!latest) throw new Error('Bookmark conflict response omitted authoritative state');
-        if (!adoptCommittedState(captured, root, latest)) return empty();
       }
+      if (!completedBatch) throw new Error('Bookmark state kept changing; retry cleanup');
     }
 
-    throw new Error('Bookmark state kept changing; retry cleanup');
+    throw new Error('Bookmark cleanup exceeded its supported ten-batch bound');
   }
 
   /** Delete the currently loaded bookmark set in one atomic transaction. */
@@ -1166,8 +1346,17 @@ import {
       return;
     }
 
-    // Create markers for each bookmark
-    bookmarksList.forEach(bookmark => {
+    const ordered = [...bookmarksList].sort((left, right) => Number(left.timestamp) - Number(right.timestamp));
+    const insertion = ordered.findIndex(bookmark => Number(bookmark.timestamp) >= video.currentTime);
+    const center = insertion < 0 ? ordered.length : insertion;
+    const windowStart = Math.max(0, Math.min(
+      center - Math.floor(bookmarkMarkerWindowSize / 2),
+      ordered.length - bookmarkMarkerWindowSize
+    ));
+    const visibleBookmarks = ordered.slice(windowStart, windowStart + bookmarkMarkerWindowSize);
+
+    // Create one bounded marker window centered around current playback.
+    visibleBookmarks.forEach(bookmark => {
       const percent = (bookmark.timestamp / duration) * 100;
       const markerColor = bookmark.exactMatch ? '#00d4ff' : '#ffa500';
 
@@ -1222,7 +1411,7 @@ import {
       }
     });
 
-    console.log(`${logPrefix} ✓ Created ${bookmarksList.length} bookmark markers`);
+    console.log(`${logPrefix} ✓ Created ${visibleBookmarks.length}/${bookmarksList.length} bookmark markers`);
   }
 
 
@@ -1317,12 +1506,37 @@ import {
     );
 
     console.log('🪼 Bookmarks modal: Found', existingBookmarks.length, 'existing bookmarks for item', details.itemId);
-    console.log('🪼 Bookmarks modal: Mode =', mode, 'Existing bookmarks:', existingBookmarks);
+    console.log('🪼 Bookmarks modal: Mode =', mode, 'Existing bookmark count:', existingBookmarks.length);
 
     const isEdit = mode === 'edit' && existingBookmark;
     const title = isEdit ? JC.t!('bookmark_edit_title') : (mode === 'view' ? 'Your Bookmarks' : JC.t!('bookmark_add_title'));
     const timestamp = isEdit ? existingBookmark.timestamp : currentTime;
     const label = isEdit ? existingBookmark.label : '';
+    const orderedExistingBookmarks = [...existingBookmarks]
+      .sort((left, right) => Number(left.timestamp) - Number(right.timestamp));
+    const selectedExistingIndex = isEdit
+      ? Math.max(0, orderedExistingBookmarks.findIndex(bookmark => bookmark.id === existingBookmark.id))
+      : Math.max(0, orderedExistingBookmarks.findIndex(bookmark => Number(bookmark.timestamp) >= currentTime));
+    let existingBookmarkPage = Math.floor(selectedExistingIndex / bookmarkModalPageSize);
+    const existingBookmarkPageCount = Math.max(1, Math.ceil(orderedExistingBookmarks.length / bookmarkModalPageSize));
+    const existingBookmarkRows = (): string => orderedExistingBookmarks
+      .slice(
+        existingBookmarkPage * bookmarkModalPageSize,
+        (existingBookmarkPage + 1) * bookmarkModalPageSize
+      )
+      .map(bm => `
+        <div class="jc-bookmark-item">
+          <div class="jc-bookmark-item-marker"></div>
+          <div class="jc-bookmark-item-content">
+            <div class="jc-bookmark-item-time">${formatTimestamp(bm.timestamp)}</div>
+            ${bm.label ? `<div class="jc-bookmark-item-label">${escapeHtml(bm.label)}</div>` : ''}
+            ${!bm.exactMatch ? `<div class="jc-bookmark-item-warning">${JC.t!('bookmark_file_changed')}</div>` : ''}
+          </div>
+          <div class="jc-bookmark-item-actions">
+            <button class="jc-bookmark-btn jc-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_jump')}"><span class="material-icons">forward</span></button>
+            <button class="jc-bookmark-btn jc-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_delete_confirm')}"><span class="material-icons">delete</span></button>
+          </div>
+        </div>`).join('');
 
     const formHtml = `
       <style>
@@ -1636,24 +1850,12 @@ import {
               <div class="jc-bookmark-list-title">${JC.t!('bookmark_existing_title')}</div>
               <div class="jc-bookmark-list-count">${existingBookmarks.length}</div>
             </div>
-            ${existingBookmarks.map(bm => `
-              <div class="jc-bookmark-item">
-                <div class="jc-bookmark-item-marker"></div>
-                <div class="jc-bookmark-item-content">
-                  <div class="jc-bookmark-item-time">${formatTimestamp(bm.timestamp)}</div>
-                  ${bm.label ? `<div class="jc-bookmark-item-label">${escapeHtml(bm.label)}</div>` : ''}
-                  ${!bm.exactMatch ? `<div class="jc-bookmark-item-warning">${JC.t!('bookmark_file_changed')}</div>` : ''}
-                </div>
-                <div class="jc-bookmark-item-actions">
-                  <button class="jc-bookmark-btn jc-bookmark-btn-jump" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_jump')}">
-                    <span class="material-icons">forward</span>
-                  </button>
-                  <button class="jc-bookmark-btn jc-bookmark-btn-delete" data-bookmark-id="${escapeHtml(bm.id)}" title="${JC.t!('bookmark_delete_confirm')}">
-                    <span class="material-icons">delete</span>
-                  </button>
-                </div>
-              </div>
-            `).join('')}
+            <div class="jc-bookmark-items-page">${existingBookmarkRows()}</div>
+            <div class="jc-bookmark-items-pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;">
+              <button class="jc-bookmark-btn jc-bookmark-items-prev" ${existingBookmarkPage === 0 ? 'disabled' : ''}><span class="material-icons">chevron_left</span></button>
+              <span class="jc-bookmark-items-status"></span>
+              <button class="jc-bookmark-btn jc-bookmark-items-next" ${existingBookmarkPage >= existingBookmarkPageCount - 1 ? 'disabled' : ''}><span class="material-icons">chevron_right</span></button>
+            </div>
           </div>
         ` : `
           <div class="jc-bookmark-empty">
@@ -1789,39 +1991,63 @@ import {
       }
     })(); });
 
-    // Jump to bookmark buttons
-    modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-jump').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if (!isModalOwnerCurrent()) return;
-        const bookmarkId = btn.dataset.bookmarkId;
-        const bookmark = existingBookmarks.find(bm => bm.id === bookmarkId);
+    const renderExistingBookmarkPage = (): void => {
+      const page = modal.querySelector<HTMLElement>('.jc-bookmark-items-page');
+      if (!page) return;
+      page.innerHTML = existingBookmarkRows();
+      const start = existingBookmarkPage * bookmarkModalPageSize;
+      const end = Math.min(start + bookmarkModalPageSize, orderedExistingBookmarks.length);
+      const status = modal.querySelector<HTMLElement>('.jc-bookmark-items-status');
+      if (status) status.textContent = `${start + 1}-${end} / ${orderedExistingBookmarks.length}`;
+      const previous = modal.querySelector<HTMLButtonElement>('.jc-bookmark-items-prev');
+      const next = modal.querySelector<HTMLButtonElement>('.jc-bookmark-items-next');
+      if (previous) previous.disabled = existingBookmarkPage === 0;
+      if (next) next.disabled = existingBookmarkPage >= existingBookmarkPageCount - 1;
+    };
+    renderExistingBookmarkPage();
+
+    // Delegation keeps jump/delete controls live as the bounded page changes.
+    modal.addEventListener('click', (event) => {
+      const button = (event.target as Element | null)?.closest<HTMLButtonElement>('button');
+      if (!button || !isModalOwnerCurrent()) return;
+      if (button.classList.contains('jc-bookmark-items-prev')) {
+        existingBookmarkPage = Math.max(0, existingBookmarkPage - 1);
+        renderExistingBookmarkPage();
+        return;
+      }
+      if (button.classList.contains('jc-bookmark-items-next')) {
+        existingBookmarkPage = Math.min(existingBookmarkPageCount - 1, existingBookmarkPage + 1);
+        renderExistingBookmarkPage();
+        return;
+      }
+      const bookmarkId = button.dataset.bookmarkId;
+      if (!bookmarkId) return;
+      const bookmark = orderedExistingBookmarks.find(candidate => candidate.id === bookmarkId);
+      if (button.classList.contains('jc-bookmark-btn-jump')) {
         if (bookmark && video) {
           video.currentTime = bookmark.timestamp;
           toast(`${JC.t!('toast_jumped_to_bookmark')}: ${formatTimestamp(bookmark.timestamp)}`, 2000);
           requestClose();
         }
-      });
-    });
-
-    // Delete bookmark buttons
-    modal.querySelectorAll<HTMLElement>('.jc-bookmark-btn-delete').forEach(btn => {
-      btn.addEventListener('click', () => { void (async () => {
-        if (!isModalOwnerCurrent()) return;
-        const bookmarkId = btn.dataset.bookmarkId!;
+        return;
+      }
+      if (!button.classList.contains('jc-bookmark-btn-delete')) return;
+      button.disabled = true;
+      void (async () => {
         const deleted = await deleteBookmark(bookmarkId);
         if (!isModalOwnerCurrent()) return;
         if (!deleted) {
+          button.disabled = false;
           toast(JC.t!('toast_bookmark_save_failed'), 3000);
           return;
         }
         toast(JC.t!('toast_bookmark_deleted'), 2000);
         void updateBookmarkMarkersForCurrentVideo();
         requestClose();
-        // Reopen modal to show updated list
         scheduleIdentityTask(captured, () => {
           if (isModalOwnerCurrent()) void showBookmarkModal(mode, existingBookmark);
         }, 300);
-      })(); });
+      })();
     });
   }
 
@@ -1835,6 +2061,7 @@ import {
     updateMarkers: updateBookmarkMarkersForCurrentVideo,
     formatTimestamp,
     syncBookmarks,
+    adjustOffsets: adjustBookmarkOffsets,
     cleanupOrphaned: cleanupOrphanedBookmarks,
     deleteAll: deleteAllBookmarks
   } satisfies BookmarksApi;
@@ -2057,6 +2284,7 @@ import {
 
   function resetBookmarks(): void {
     bookmarkGeneration += 1;
+    bookmarkItemLookupCache = null;
     invalidateBookmarkMarkerOutput();
     for (const timer of bookmarkTimers) clearTimeout(timer);
     bookmarkTimers.clear();
@@ -2081,6 +2309,7 @@ import {
     updateMarkers() {},
     formatTimestamp: () => '',
     syncBookmarks: () => Promise.resolve([]),
+    adjustOffsets: () => Promise.resolve(0),
     cleanupOrphaned: () => Promise.resolve({ deleted: 0, retainedUncertain: 0, errors: 0 }),
     deleteAll: () => Promise.resolve(0),
   });

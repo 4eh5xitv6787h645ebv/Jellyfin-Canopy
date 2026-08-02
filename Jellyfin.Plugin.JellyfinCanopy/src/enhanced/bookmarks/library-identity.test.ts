@@ -32,7 +32,8 @@ function bookmarkStore(): Record<string, any> {
 describe('bookmarks library identity ownership', () => {
   let deleteBookmark: ReturnType<typeof vi.fn>;
   let saveUserSettings: ReturnType<typeof vi.fn<(fileName: string, settings: unknown) => Promise<UserSettingsSaveResult>>>;
-  let getItem: ReturnType<typeof vi.fn>;
+  let getItem: ReturnType<typeof vi.fn<(userId: string, itemId: string) => Promise<any>>>;
+  let plugin: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -57,7 +58,7 @@ describe('bookmarks library identity ownership', () => {
     } as any;
     JC.saveUserSettings = saveUserSettings;
 
-    getItem = vi.fn().mockResolvedValue({
+    getItem = vi.fn<(userId: string, itemId: string) => Promise<any>>().mockResolvedValue({
       Id: 'item-a',
       Name: 'A movie',
       Type: 'Movie',
@@ -74,7 +75,61 @@ describe('bookmarks library identity ownership', () => {
     };
     (globalThis as any).ApiClient = apiClient;
     (window as any).ApiClient = apiClient;
-    JC.core.api = { jf: vi.fn().mockResolvedValue([]) } as unknown as ApiApi;
+    plugin = vi.fn(async (path: string, options?: { body?: { itemIds?: string[] } }) => {
+      if (path.includes('/page?')) {
+        const query = new URLSearchParams(path.split('?')[1]);
+        const start = Number(query.get('startIndex'));
+        const limit = Number(query.get('limit'));
+        const mediaType = query.get('mediaType');
+        const bookmarks: Record<string, Record<string, any>> = (JC.userConfig as any).bookmark.bookmarks;
+        const all = Object.entries(bookmarks);
+        const category = (value: unknown): string => {
+          const type = typeof value === 'string' ? value.toLowerCase() : '';
+          if (type === 'movie' || type === 'musicvideo') return 'movie';
+          if (type === 'tv' || type === 'series' || type === 'season' || type === 'episode') return 'tv';
+          return 'other';
+        };
+        const counts = {
+          movie: all.filter(([, bookmark]) => category(bookmark.mediaType) === 'movie').length,
+          tv: all.filter(([, bookmark]) => category(bookmark.mediaType) === 'tv').length,
+          other: all.filter(([, bookmark]) => category(bookmark.mediaType) === 'other').length
+        };
+        const filtered = all.filter(([, bookmark]) => category(bookmark.mediaType) === mediaType);
+        const entries = filtered.slice(start, start + limit);
+        return {
+          Revision: 0,
+          Total: filtered.length,
+          AllTotal: all.length,
+          Movie: counts.movie,
+          Tv: counts.tv,
+          Other: counts.other,
+          StartIndex: start,
+          Limit: limit,
+          HasMore: start + entries.length < filtered.length,
+          Bookmarks: Object.fromEntries(entries)
+        };
+      }
+      if (path.endsWith('/items/resolve')) {
+        const itemIds = options?.body?.itemIds || [];
+        return {
+          Items: await Promise.all(itemIds.map(async itemId => {
+            const item = await getItem('', itemId);
+            return {
+              ItemId: itemId,
+              Status: item ? 'exists' : 'notFound',
+              Id: item?.Id,
+              Type: item?.Type,
+              Name: item?.Name,
+              SeriesName: item?.SeriesName,
+              ParentIndexNumber: item?.ParentIndexNumber,
+              IndexNumber: item?.IndexNumber
+            };
+          }))
+        };
+      }
+      throw new Error(`unexpected plugin request: ${path}`);
+    });
+    JC.core.api = { jf: vi.fn().mockResolvedValue([]), plugin } as unknown as ApiApi;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
@@ -107,7 +162,7 @@ describe('bookmarks library identity ownership', () => {
     const jf = vi.fn()
       .mockImplementationOnce(() => heldSessions.promise)
       .mockResolvedValue({});
-    JC.core.api = { jf } as unknown as ApiApi;
+    JC.core.api = { jf, plugin } as unknown as ApiApi;
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -162,7 +217,7 @@ describe('bookmarks library identity ownership', () => {
     expect(container.textContent).toContain('Unknown bookmark');
     expect(container.textContent).toContain('Missing-type bookmark');
 
-    tabs.find(tab => tab.dataset.tab === 'tv')!.click();
+    container.querySelector<HTMLButtonElement>('.jc-tab[data-tab="tv"]')!.click();
     await vi.waitFor(() => expect(container.querySelectorAll('.jc-bookmark-row')).toHaveLength(2));
     expect(container.textContent).toContain('Episode bookmark');
     expect(container.textContent).toContain('Series bookmark');

@@ -70,7 +70,10 @@ describe('bookmarks data-safety', () => {
             const next = structuredClone(current.bookmarks);
             for (const operation of payload.operations) {
                 if (operation.type === 'delete') delete next[operation.bookmarkId];
-                else next[operation.bookmarkId] = structuredClone(operation.bookmark);
+                else {
+                    if (operation.type === 'move') delete next[operation.sourceBookmarkId];
+                    next[operation.bookmarkId] = structuredClone(operation.bookmark);
+                }
             }
             return Promise.resolve({ revision: current.revision + 1, bookmarks: next });
         });
@@ -138,9 +141,38 @@ describe('bookmarks data-safety', () => {
             expect(plugin).toHaveBeenCalledTimes(1);
             expect(plugin).toHaveBeenCalledWith(
                 '/user-settings/u1/bookmark.json/cleanup',
-                { method: 'POST', body: { revision: 0 }, skipRetry: true }
+                {
+                    method: 'POST',
+                    body: { revision: 0, compactResponse: true, cursor: null, limit: 100 },
+                    skipRetry: true
+                }
             );
             expect(getItem).not.toHaveBeenCalled();
+        });
+
+        it('applies a compact cleanup receipt without treating its empty map as delete-all', async () => {
+            const store: AnyRec = {
+                gone: { itemId: 'gone', timestamp: 1 },
+                keep: { itemId: 'keep', timestamp: 2 }
+            };
+            const api = await loadModule(store);
+            plugin.mockResolvedValueOnce({
+                revision: 1,
+                completeState: false,
+                bookmarks: {},
+                deletedBookmarkIds: ['gone'],
+                deleted: 1,
+                retainedUncertain: 0,
+                errors: 0
+            });
+
+            await expect(api.cleanupOrphaned()).resolves.toEqual({
+                deleted: 1,
+                retainedUncertain: 0,
+                errors: 0
+            });
+            expect(JC.userConfig.bookmark.revision).toBe(1);
+            expect(JC.userConfig.bookmark.bookmarks).toEqual({ keep: store.keep });
         });
 
         it.each([
@@ -262,7 +294,40 @@ describe('bookmarks data-safety', () => {
             expect(entries).toHaveLength(1);
             expect(entries[0].itemId).toBe('newI'); // new copy persisted
             expect(plugin).toHaveBeenCalledTimes(1);
-            expect(plugin.mock.calls[0][1].body.operations.map((op: AnyRec) => op.type).sort()).toEqual(['add', 'delete']);
+            expect(plugin.mock.calls[0][1].body.operations).toEqual([
+                expect.objectContaining({ type: 'move', sourceBookmarkId: 'old1' })
+            ]);
+        });
+
+        it('applies a compact batch receipt to the known local operation set', async () => {
+            const initial = { old1: { itemId: 'oldI', timestamp: 10, label: 'L', createdAt: 't0' } };
+            const api = await loadModule(initial);
+            plugin.mockResolvedValueOnce({
+                revision: 1,
+                completeState: false,
+                bookmarks: {}
+            });
+
+            const synced = await api.syncBookmarks(old(), newDetails, 0);
+
+            expect(synced).toHaveLength(1);
+            expect(JC.userConfig.bookmark.revision).toBe(1);
+            expect(JC.userConfig.bookmark.bookmarks.old1).toEqual(initial.old1);
+            expect(JC.userConfig.bookmark.bookmarks[synced[0].id]).toMatchObject({ itemId: 'newI' });
+        });
+
+        it('mirrors the server createdAt back-fill when applying a compact update receipt', async () => {
+            const api = await loadModule({
+                old1: { itemId: 'oldI', timestamp: 10, label: 'old', createdAt: 't0' }
+            });
+            plugin.mockResolvedValueOnce({ revision: 1, completeState: false, bookmarks: {} });
+
+            await expect(api.update('old1', { label: 'updated', createdAt: '' })).resolves.toBe(true);
+
+            expect(JC.userConfig.bookmark.bookmarks.old1).toMatchObject({
+                label: 'updated',
+                createdAt: 't0'
+            });
         });
 
         it('transaction failure keeps the complete prior state', async () => {
@@ -358,7 +423,10 @@ describe('bookmarks data-safety', () => {
                 }
                 for (const operation of options.body.operations as AnyRec[]) {
                     if (operation.type === 'delete') delete serverState.bookmarks[operation.bookmarkId];
-                    else serverState.bookmarks[operation.bookmarkId] = structuredClone(operation.bookmark);
+                    else {
+                        if (operation.type === 'move') delete serverState.bookmarks[operation.sourceBookmarkId];
+                        serverState.bookmarks[operation.bookmarkId] = structuredClone(operation.bookmark);
+                    }
                 }
                 serverState.revision++;
                 if (!dropped) {
@@ -461,9 +529,10 @@ describe('bookmarks data-safety', () => {
 
             expect(synced).toHaveLength(1);
             const operations = plugin.mock.calls[0][1].body.operations as AnyRec[];
-            expect(operations.filter(op => op.type === 'add')).toHaveLength(1);
-            expect(operations.filter(op => op.type === 'delete').map(op => op.bookmarkId).sort())
-                .toEqual(['src1', 'src2']);
+            expect(operations.filter(op => op.type === 'move')).toHaveLength(1);
+            expect(operations.flatMap(op => op.type === 'move'
+                ? [op.sourceBookmarkId]
+                : op.type === 'delete' ? [op.bookmarkId] : []).sort()).toEqual(['src1', 'src2']);
             expect(targetRows()).toHaveLength(1);
             expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(1);
         });
@@ -700,7 +769,10 @@ describe('bookmarks data-safety', () => {
                 const next = structuredClone(JC.userConfig.bookmark.bookmarks);
                 for (const op of options.body.operations as AnyRec[]) {
                     if (op.type === 'delete') delete next[op.bookmarkId];
-                    else next[op.bookmarkId] = structuredClone(op.bookmark);
+                    else {
+                        if (op.type === 'move') delete next[op.sourceBookmarkId];
+                        next[op.bookmarkId] = structuredClone(op.bookmark);
+                    }
                 }
                 JC.userConfig.bookmark.revision = 5;
                 JC.userConfig.bookmark.bookmarks = { superseded };
@@ -731,6 +803,104 @@ describe('bookmarks data-safety', () => {
 
             expect(plugin).not.toHaveBeenCalled();
             expect(JC.userConfig.bookmark.bookmarks).toEqual(initial);
+        });
+
+        it('moves every unique source at the supported quota in at most one operation per row', async () => {
+            const sources = Array.from({ length: 999 }, (_, index) => {
+                const id = `source-${String(index).padStart(4, '0')}`;
+                return source(id, index + 1, `L${index}`);
+            });
+            const initial = Object.fromEntries([
+                ['target-existing', stored(0, 'existing', 'target-item')],
+                ...sources.map(row => [row.id, stored(row.timestamp, row.label)] as const)
+            ]);
+            const api = await loadModule(initial);
+
+            await expect(api.syncBookmarks(sources, target, 0, sources.map(row => row.id)))
+                .resolves.toHaveLength(999);
+
+            const operations = plugin.mock.calls[0][1].body.operations as AnyRec[];
+            expect(operations).toHaveLength(999);
+            expect(operations.every(operation => operation.type === 'move'
+                && typeof operation.sourceBookmarkId === 'string')).toBe(true);
+            expect(Object.keys(JC.userConfig.bookmark.bookmarks)).toHaveLength(1000);
+        });
+    });
+
+    describe('adjustOffsets: compact atomic transaction', () => {
+        it('updates 1,000 selected rows in one bounded request without sending full bookmarks', async () => {
+            const initial = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+                `bookmark-${String(index).padStart(4, '0')}`,
+                {
+                    itemId: `item-${String(index).padStart(4, '0')}`,
+                    mediaType: 'movie',
+                    name: 'x'.repeat(512),
+                    timestamp: index,
+                    label: 'y'.repeat(512),
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                    syncedFrom: 'source-item'
+                }
+            ]));
+            const api = await loadModule(structuredClone(initial));
+            const updated = vi.fn();
+            document.addEventListener('jc-bookmarks-updated', updated);
+            plugin.mockResolvedValueOnce({
+                revision: 1,
+                completeState: false,
+                bookmarks: {}
+            });
+
+            const selected = Object.entries(initial).map(([id, bookmark]) => ({ id, ...bookmark }));
+            await expect(api.adjustOffsets(selected, 5)).resolves.toBe(1000);
+
+            expect(plugin).toHaveBeenCalledTimes(1);
+            const request = plugin.mock.calls[0][1].body as AnyRec;
+            expect(request.operations).toHaveLength(1000);
+            expect(request.operations.every((operation: AnyRec) =>
+                operation.type === 'offset'
+                && typeof operation.timestamp === 'number'
+                && typeof operation.updatedAt === 'string'
+                && !Object.prototype.hasOwnProperty.call(operation, 'bookmark'))).toBe(true);
+            expect(new TextEncoder().encode(JSON.stringify(request)).byteLength).toBeLessThan(192 * 1024);
+            expect(JC.userConfig.bookmark.revision).toBe(1);
+            expect(JC.userConfig.bookmark.bookmarks['bookmark-0000']).toMatchObject({
+                timestamp: 5,
+                syncedFrom: ''
+            });
+            expect(JC.userConfig.bookmark.bookmarks['bookmark-0999']).toMatchObject({
+                timestamp: 1004,
+                syncedFrom: ''
+            });
+            expect(updated).toHaveBeenCalledTimes(1);
+            document.removeEventListener('jc-bookmarks-updated', updated);
+        });
+
+        it('adopts a conflict and fails the whole retry closed when any selected row drifted', async () => {
+            const initial = {
+                one: { itemId: 'item-one', timestamp: 10, syncedFrom: 'source' },
+                two: { itemId: 'item-two', timestamp: 20, syncedFrom: 'source' }
+            };
+            const api = await loadModule(structuredClone(initial));
+            plugin.mockRejectedValueOnce(Object.assign(httpError(409), {
+                responseJSON: {
+                    revision: 1,
+                    bookmarks: {
+                        one: { ...initial.one, timestamp: 11 },
+                        two: initial.two
+                    }
+                }
+            }));
+
+            await expect(api.adjustOffsets([
+                { id: 'one', ...initial.one },
+                { id: 'two', ...initial.two }
+            ], 5)).rejects.toThrow('changed after selection');
+
+            expect(plugin).toHaveBeenCalledTimes(1);
+            expect(JC.userConfig.bookmark.revision).toBe(1);
+            expect(JC.userConfig.bookmark.bookmarks.one.timestamp).toBe(11);
+            expect(JC.userConfig.bookmark.bookmarks.two.timestamp).toBe(20);
         });
     });
 
