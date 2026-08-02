@@ -12,6 +12,7 @@ const compatibilityWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows
 const playwrightConfig = fs.readFileSync(path.join(ROOT, 'e2e/playwright.config.ts'), 'utf8');
 const compose = fs.readFileSync(path.join(ROOT, 'e2e/docker/compose.yml'), 'utf8');
 const seed = fs.readFileSync(path.join(ROOT, 'e2e/docker/seed.sh'), 'utf8');
+const pinnedImagePull = fs.readFileSync(path.join(__dirname, 'pull-pinned-image.sh'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 function jobBlock(start, end) {
@@ -78,7 +79,13 @@ test('E2E installs once and prepares independent prerequisites concurrently', ()
     assert.equal(packageJson.peerDependencies?.['@playwright/test'], undefined);
     assert.equal((shard.match(/run: npm ci/g) || []).length, 1);
     assert.doesNotMatch(shard, /npm install --no-save/);
-    assert.match(shard, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.match(shard, /bash scripts\/e2e\/pull-pinned-image\.sh "\$\{JF_IMAGE\}"/);
+    assert.doesNotMatch(shard, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.match(compatibilityWorkflow, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.doesNotMatch(
+        compatibilityWorkflow,
+        /bash scripts\/e2e\/pull-pinned-image\.sh "\$\{JF_IMAGE\}"/
+    );
     assert.match(shard, /npx playwright install --with-deps --only-shell chromium/);
     for (const process of ['build', 'image', 'playwright']) {
         assert.match(shard, new RegExp(`${process}_pid=\\$!`));
@@ -88,6 +95,20 @@ test('E2E installs once and prepares independent prerequisites concurrently', ()
         shard,
         /if \(\( build_status != 0 \|\| image_status != 0 \|\| playwright_status != 0 \)\)/
     );
+});
+
+test('E2E pinned-image pulls retry transient failures without weakening digest identity', () => {
+    assert.match(pinnedImagePull, /if \(\( \$# != 1 \)\)/);
+    assert.match(pinnedImagePull, /readonly max_attempts=3/);
+    assert.match(pinnedImagePull, /@sha256:\[0-9a-fA-F\]\{64\}\$/);
+    assert.match(
+        pinnedImagePull,
+        /for \(\( attempt = 1; attempt <= max_attempts; attempt\+\+ \)\)/
+    );
+    assert.match(pinnedImagePull, /docker pull -q "\$\{image\}"/);
+    assert.match(pinnedImagePull, /delay_seconds=\$\(\( attempt \* 2 \)\)/);
+    assert.match(pinnedImagePull, /if \(\( attempt == max_attempts \)\)[\s\S]*exit "\$\{pull_status\}"/);
+    assert.doesNotMatch(pinnedImagePull, /docker pull[^\n]*(?:\|\| true|continue)/);
 });
 
 test('every shard reports current-attempt evidence under unique artifact names', () => {
@@ -179,7 +200,12 @@ test('mutable latest-Jellyfin probing is isolated in one advisory workflow', () 
     assert.match(compatibilityWorkflow, /schedule:/);
     assert.match(compatibilityWorkflow, /workflow_dispatch:/);
     assert.doesNotMatch(compatibilityWorkflow, /continue-on-error:/);
-    assert.match(compatibilityWorkflow, /jellyfin\/jellyfin:unstable/);
+    assert.match(
+        compatibilityWorkflow,
+        /jellyfin_image:[\s\S]*default: jellyfin\/jellyfin:unstable[\s\S]*JF_IMAGE: \$\{\{ inputs\.jellyfin_image \|\| 'jellyfin\/jellyfin:unstable' \}\}/
+    );
+    assert.match(compatibilityWorkflow, /docker pull -q "\$\{JF_IMAGE\}"/);
+    assert.doesNotMatch(compatibilityWorkflow, /pull-pinned-image\.sh/);
     assert.doesNotMatch(workflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
     assert.doesNotMatch(releaseWorkflow, /JF_IMAGE:\s+jellyfin\/jellyfin:unstable\s*$/m);
 });

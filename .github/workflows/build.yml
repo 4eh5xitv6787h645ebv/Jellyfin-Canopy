@@ -280,7 +280,8 @@ jobs:
           dotnet build Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj -c Release \
             > "${prepare_dir}/plugin-build.log" 2>&1 &
           build_pid=$!
-          docker pull -q "${JF_IMAGE}" > "${prepare_dir}/jellyfin-pull.log" 2>&1 &
+          bash scripts/e2e/pull-pinned-image.sh "${JF_IMAGE}" \
+            > "${prepare_dir}/jellyfin-pull.log" 2>&1 &
           image_pid=$!
           npx playwright install --with-deps --only-shell chromium \
             > "${prepare_dir}/playwright-install.log" 2>&1 &
