@@ -202,6 +202,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<RequestIdentityService>();
             serviceCollection.AddSingleton<SpoilerIdentityTagFilter>();
             serviceCollection.AddSingleton<SpoilerUserResolver>();
+            serviceCollection.AddSingleton<ISpoilerGuardItemActionOwner, SpoilerGuardItemActionOwner>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
             // Shared pre-acquisition ("pending") pending-add core used by BOTH the

@@ -2645,6 +2645,7 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
             _provider,
             _manager,
             _library,
+            new SpoilerGuardItemActionOwner(_manager),
             _pending,
             resolver,
             new StubUserDataManager());
