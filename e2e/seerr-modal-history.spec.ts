@@ -322,7 +322,10 @@ test.describe('Seerr modal history ownership', () => {
         await page.waitForFunction(
             () => (history.state as { jcHistoryProof?: string } | null)?.jcHistoryProof === 'late-cap-route-a',
             undefined,
-            { timeout: 30_000 }
+            // Do not couple the assertion loop to requestAnimationFrame. CI can
+            // temporarily throttle rendering after a same-URL history pop even
+            // though the popstate transaction has already settled.
+            { polling: 50, timeout: 30_000 }
         );
         await page.evaluate(() => history.forward());
         await page.waitForFunction(
@@ -443,7 +446,7 @@ test.describe('Seerr modal history ownership', () => {
                     && !owner?.pendingOwnedTraversal
                     && !document.querySelector('.seerr-season-modal')
                     && !document.body.classList.contains('jc-modal-open');
-            }, undefined, { timeout: 30_000 });
+            }, undefined, { polling: 50, timeout: 30_000 });
             expect(await page.evaluate(() => (window as any).__jcAsyncCanonicalProof)).toEqual({
                 laterStates: ['async-canonical-route-b'],
                 rewriteRuns: 1,
@@ -547,7 +550,7 @@ test.describe('Seerr modal history ownership', () => {
                 && state.canonicalized === true
                 && !owner?.pendingOwnedTraversal
                 && !document.querySelector('.seerr-season-modal');
-        }, undefined, { timeout: 30_000 });
+        }, undefined, { polling: 50, timeout: 30_000 });
         expect(await page.evaluate(() => (window as any).__jcSyncCanonicalProof)).toEqual({
             laterStates: ['sync-canonical-route-b'],
             rewriteRuns: 1,
@@ -948,7 +951,7 @@ test.describe('Seerr modal history ownership', () => {
                 && !document.querySelector('.seerr-season-modal')
                 && !document.body.classList.contains('jc-modal-open')
                 && !owner.pendingOwnedTraversal;
-        }, undefined, { timeout: 30_000 });
+        }, undefined, { polling: 50, timeout: 30_000 });
         expect(await page.evaluate(() => (window as any).__jcReactivePushProof)).toEqual({
             laterStates: [],
             reactiveRuns: 1,
@@ -1031,7 +1034,7 @@ test.describe('Seerr modal history ownership', () => {
             return (window as any).__jcLateReplaceProof.arrivals.at(-1) === 'late-replace-route-b'
                 && !document.querySelector('.seerr-season-modal')
                 && !owner.pendingOwnedTraversal;
-        }, undefined, { timeout: 30_000 });
+        }, undefined, { polling: 50, timeout: 30_000 });
         expect(await page.evaluate(() => (window as any).__jcLateReplaceProof.writeState)).toEqual({
             jcHistoryProof: 'late-replace-route-b',
             preservedA: { exact: 23 },
@@ -1250,7 +1253,7 @@ test.describe('Seerr modal history ownership', () => {
             const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
             return (window as any).__jcNestedLateProof.arrivals.at(-1) === 'nested-late-route-b'
                 && !owner.pendingOwnedTraversal;
-        }, undefined, { timeout: 30_000 });
+        }, undefined, { polling: 50, timeout: 30_000 });
         await expect(modals).toHaveCount(1);
         await expect(modals).toHaveAccessibleName('Nested late outer M1');
         expect(await page.evaluate(
