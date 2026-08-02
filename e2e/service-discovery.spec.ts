@@ -180,7 +180,17 @@ test.describe.serial('connected-service auto-discovery', () => {
     });
 
     test('Import from Seerr adopts Sonarr and Radarr servers with their API keys', async ({ page, baseURL, consoleErrors }) => {
-        await blankConnections(baseURL!);
+        // Keep the seeded Seerr connection — it is the import source — and clear
+        // only the arr editors so an imported instance is unambiguously new.
+        await saveConfiguration(baseURL!, {
+            ...original,
+            SonarrInstances: '[]',
+            RadarrInstances: '[]',
+            SonarrUrl: '',
+            SonarrApiKey: '',
+            RadarrUrl: '',
+            RadarrApiKey: '',
+        });
         await loginAs(page, 'admin', consoleErrors);
         const configPage = await openConfigPage(page);
         await configPage.locator('.jellyfin-tab-button[data-tab="arr"]').click();
