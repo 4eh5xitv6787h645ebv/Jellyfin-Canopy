@@ -25,6 +25,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         [HttpGet("discovery")]
         [AllowAnonymous]
+        [PlatformCacheable]
         public ActionResult<PlatformDiscoveryResponse> GetDiscovery() => Ok(new PlatformDiscoveryResponse
         {
             Available = true,
@@ -40,6 +41,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// and from "denied", because a client renders those three differently.
         /// </summary>
         [HttpGet("negotiate")]
+        [PlatformCacheable]
         public ActionResult<PlatformNegotiationResponse> Negotiate(
             [FromQuery] int? protocolMinimum,
             [FromQuery] int? protocolMaximum)

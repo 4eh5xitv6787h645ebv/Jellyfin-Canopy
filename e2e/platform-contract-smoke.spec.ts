@@ -106,12 +106,21 @@ function anonymousPath(): string {
     return entries[0][0];
 }
 
-async function getJson(page: any, path: string, authenticated: boolean): Promise<{ status: number; body: any }> {
+async function getJson(
+    page: any,
+    path: string,
+    authenticated: boolean,
+    conditionalHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: any; etag: string | null; bodyLength: number }> {
     return page.evaluate(
-        async ({ target, withAuth }: { target: string; withAuth: boolean }) => {
+        async ({ target, withAuth, conditions }: {
+            target: string;
+            withAuth: boolean;
+            conditions: Record<string, string>;
+        }) => {
             const api = (window as any).ApiClient;
             const token = api.accessToken ? api.accessToken() : '';
-            const headers: Record<string, string> = {};
+            const headers: Record<string, string> = { ...conditions };
 
             if (withAuth) {
                 // JF12 authenticates from the Authorization header; it dropped the
@@ -122,9 +131,14 @@ async function getJson(page: any, path: string, authenticated: boolean): Promise
             const res = await fetch(new URL(target, window.location.origin).toString(), { headers });
             const text = await res.text();
 
-            return { status: res.status, body: text ? JSON.parse(text) : null };
+            return {
+                status: res.status,
+                body: text ? JSON.parse(text) : null,
+                etag: res.headers.get('etag'),
+                bodyLength: new TextEncoder().encode(text).byteLength,
+            };
         },
-        { target: path, withAuth: authenticated },
+        { target: path, withAuth: authenticated, conditions: conditionalHeaders },
     );
 }
 
@@ -138,12 +152,22 @@ test.describe('Platform v1 contract — live smoke client', () => {
         const discovery = await getJson(page, discoveryPath, false);
 
         expect(discovery.status, 'the anonymous route must be reachable without credentials').toBe(200);
+        expect(discovery.etag, 'discovery must return a strong content validator')
+            .toMatch(/^"sha256-[0-9a-f]{64}"$/);
         assertMatchesSchema(
             discovery.body,
             responseSchema(discoveryPath, 'get', '200'),
             `GET ${discoveryPath}`,
         );
         expect(discovery.body.Available).toBe(true);
+
+        const cachedDiscovery = await getJson(page, discoveryPath, false, {
+            'If-None-Match': `W/${discovery.etag!}`,
+        });
+        expect(cachedDiscovery.status, 'weak GET revalidation must round-trip through Jellyfin').toBe(304);
+        expect(cachedDiscovery.etag).toBe(discovery.etag);
+        expect(cachedDiscovery.bodyLength, '304 must have zero body bytes').toBe(0);
+        expect(cachedDiscovery.body).toBeNull();
 
         // 2. Negotiate, using the range discovery just advertised. This is the
         //    handshake a real consumer performs, and the reason the two routes
@@ -156,6 +180,8 @@ test.describe('Platform v1 contract — live smoke client', () => {
         const negotiated = await getJson(page, negotiatePath + query, true);
 
         expect(negotiated.status).toBe(200);
+        expect(negotiated.etag, 'negotiation must return a strong content validator')
+            .toMatch(/^"sha256-[0-9a-f]{64}"$/);
         assertMatchesSchema(
             negotiated.body,
             responseSchema(negotiatePath, 'get', '200'),
@@ -166,6 +192,51 @@ test.describe('Platform v1 contract — live smoke client', () => {
         // If this ever fails, the two routes disagree about the same server.
         expect(negotiated.body.Compatible).toBe(true);
         expect(negotiated.body.Protocol).toBe(discovery.body.ProtocolMaximum);
+
+        const matchedNegotiation = await getJson(page, negotiatePath + query, true, {
+            'If-Match': negotiated.etag!,
+        });
+        expect(matchedNegotiation.status, 'a matching strong validator must preserve the 200 response').toBe(200);
+        expect(matchedNegotiation.etag).toBe(negotiated.etag);
+
+        const staleValidator = '"sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"';
+        const staleNegotiation = await getJson(page, negotiatePath + query, true, {
+            'If-Match': staleValidator,
+        });
+        expect(staleNegotiation.status, 'a stale strong validator must fail closed').toBe(412);
+        expect(staleNegotiation.etag).toBe(negotiated.etag);
+        assertMatchesSchema(
+            staleNegotiation.body,
+            responseSchema(negotiatePath, 'get', '412'),
+            `GET ${negotiatePath} stale If-Match`,
+        );
+        expect(staleNegotiation.body.Code).toBe('precondition_failed');
+
+        // A real browser reports the deliberate 412 through both the URL-aware
+        // response sink and a URL-less Chromium console line. Prove the exact
+        // request provenance before acknowledging only that collected response,
+        // then narrow only its matching console diagnostic at the final gate.
+        const deliberatePreconditionFailures = consoleErrors.unexpected4xx().filter((failure) => {
+            const url = new URL(failure.url);
+            return failure.status === 412
+                && failure.method === 'GET'
+                && url.pathname + url.search === negotiatePath + query;
+        });
+        expect(deliberatePreconditionFailures, 'only the proved stale validator returns 412')
+            .toHaveLength(1);
+        const staleRequest = consoleErrors.requestFor(deliberatePreconditionFailures[0]);
+        expect(staleRequest, 'the deliberate 412 retains its initiating browser request').toBeDefined();
+        expect(staleRequest!.headers()['if-match']).toBe(staleValidator);
+        consoleErrors.acknowledgeExpected4xx(deliberatePreconditionFailures);
+
+        const expectedPreconditionConsole =
+            /^Failed to load resource: the server responded with a status of 412 \(Precondition Failed\)$/i;
+        expect(
+            consoleErrors.realDetails().filter(
+                detail => detail.source === 'console' && expectedPreconditionConsole.test(detail.text)
+            ),
+            'Chromium reports exactly the proved stale-validator response'
+        ).toHaveLength(1);
 
         // Additive v1 evolution may put a property on a future host that this
         // contract-driven client does not know yet. Prove the reader preserves
@@ -192,7 +263,16 @@ test.describe('Platform v1 contract — live smoke client', () => {
         expect(futureError.Code).toBe('future_platform_code');
         expect(futureError.FutureDetail).toBeUndefined();
 
-        assertNoRuntimeErrors(consoleErrors);
+        assertNoRuntimeErrors({
+            ...consoleErrors,
+            real: () => consoleErrors.real().filter(
+                text => !expectedPreconditionConsole.test(text)
+            ),
+            realDetails: () => consoleErrors.realDetails().filter(
+                detail => !(detail.source === 'console'
+                    && expectedPreconditionConsole.test(detail.text))
+            ),
+        });
     });
 
     test('an unauthenticated call to the authenticated route is refused with an unparseable body', async ({ page, consoleErrors }) => {

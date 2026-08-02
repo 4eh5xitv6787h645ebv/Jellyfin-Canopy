@@ -1,6 +1,6 @@
 namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 {
-    /// <summary>Deterministic ordering for the pre-model-binding Platform boundary.</summary>
+    /// <summary>Deterministic ordering for the Platform request and result pipeline.</summary>
     internal static class PlatformFilterOrder
     {
         /// <summary>Authenticate the first-party actor before inspecting caller input.</summary>
@@ -14,5 +14,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Start the model-binding/action deadline after body acquisition.</summary>
         internal const int RequestLifecycle = int.MinValue + 3;
+
+        /// <summary>Serialize Platform results to their exact bytes outside the deadline.</summary>
+        internal const int JsonResult = int.MinValue + 4;
+
+        /// <summary>Evaluate representation preconditions after exact serialization.</summary>
+        internal const int Concurrency = int.MinValue + 5;
     }
 }

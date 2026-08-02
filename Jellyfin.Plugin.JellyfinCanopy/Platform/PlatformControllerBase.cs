@@ -35,10 +35,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [Produces("application/json")]
     [TypeFilter(typeof(PlatformActorBoundaryFilter), Order = PlatformFilterOrder.ActorBoundary)]
     [TypeFilter(typeof(PlatformRequestFilter), Order = int.MinValue)]
-    [TypeFilter(typeof(PlatformJsonResultFilter))]
     [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = PlatformFilterOrder.JsonMediaType)]
     [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = PlatformFilterOrder.BoundedBody)]
     [TypeFilter(typeof(PlatformRequestLifecycleFilter), Order = PlatformFilterOrder.RequestLifecycle)]
+    [TypeFilter(typeof(PlatformJsonResultFilter), Order = PlatformFilterOrder.JsonResult)]
+    [TypeFilter(typeof(PlatformConcurrency), Order = PlatformFilterOrder.Concurrency)]
     public abstract class PlatformControllerBase : ControllerBase
     {
         /// <summary>

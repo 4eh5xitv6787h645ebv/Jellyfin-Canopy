@@ -34,6 +34,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// <summary>The request was valid but conflicts with current state, typically a lost update.</summary>
         public const string Conflict = "conflict";
 
+        /// <summary>A supplied representation validator does not match the current representation.</summary>
+        public const string PreconditionFailed = "precondition_failed";
+
         /// <summary>The request body or a collection within it exceeded a kernel-owned bound.</summary>
         public const string PayloadTooLarge = "payload_too_large";
 
@@ -65,6 +68,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 [UnsupportedProtocol] = (400, false),
                 [NotFound] = (404, false),
                 [Conflict] = (409, false),
+                [PreconditionFailed] = (412, false),
                 [PayloadTooLarge] = (413, false),
 
                 // Retryable, but only after backing off - which is why the code exists
