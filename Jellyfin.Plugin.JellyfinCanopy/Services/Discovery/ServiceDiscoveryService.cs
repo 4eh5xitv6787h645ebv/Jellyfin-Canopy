@@ -255,9 +255,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
 
         private static async Task<bool> ProbeStatusAsync(HttpClient client, string url, CancellationToken ct)
         {
-            using var response = await client
-                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
-                .ConfigureAwait(false);
+            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 return false;
@@ -281,9 +279,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
 
         private static async Task<bool> ProbeTitleAsync(HttpClient client, string url, string titleToken, CancellationToken ct)
         {
-            using var response = await client
-                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
-                .ConfigureAwait(false);
+            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 return false;

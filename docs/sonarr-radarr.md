@@ -37,7 +37,12 @@ To enable the on-page links:
 
 1. Go to **Dashboard → Plugins → Jellyfin Canopy** and open the **\*arr** tab.
 2. Check **"Enable \*arr Links on Detail Pages"**.
-3. Add one or more Sonarr and/or Radarr instances (below).
+3. Add one or more Sonarr and/or Radarr instances (below). Try **Detect
+   services** first: if Sonarr, Radarr, or Bazarr answer on a well-known
+   address (e.g. Docker hostnames like `http://sonarr:8989`), Canopy pre-fills
+   instance cards and the Bazarr URL for you — you only paste the API keys.
+   Detection never overwrites values you've already entered (see
+   [Getting started](getting-started.md#detect-services-automatically)).
 4. Optionally add a **Bazarr URL** for subtitle-management links (see [Bazarr](#bazarr)).
 5. Optional: check **"Show links as text"** for text links instead of icons.
 6. Click **Save**.

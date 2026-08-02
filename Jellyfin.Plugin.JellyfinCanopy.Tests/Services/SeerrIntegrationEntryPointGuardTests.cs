@@ -158,6 +158,18 @@ public sealed class SeerrIntegrationEntryPointGuardTests
             "HttpCompletionOption.ResponseHeadersRead",
             "deadline.Token"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
+        // Service auto-discovery probes: credential-free GETs to server-built,
+        // ArrUrlGuard-fenced candidates over the guarded Discovery named client
+        // (created once in RunScanAsync), with capped reads and per-probe
+        // cancellation. Reviewed with the ServiceDiscoveryService tests.
+        ["Services/Discovery/ServiceDiscoveryService.cs:ProbeStatusAsync"] = new(
+            1,
+            "client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)",
+            "MaxStatusBodyBytes"),
+        ["Services/Discovery/ServiceDiscoveryService.cs:ProbeTitleAsync"] = new(
+            1,
+            "client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)",
+            "MaxTitleBodyBytes"),
     };
 
     private static readonly Dictionary<string, RawEdgeContract> ExactSetupRawTransportMethods = new(StringComparer.Ordinal)

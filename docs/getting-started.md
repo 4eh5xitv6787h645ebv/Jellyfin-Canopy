@@ -107,6 +107,27 @@ A TMDB API key is the single highest-value thing to set up first. One key unlock
 
 Enter the key on the **Elsewhere** tab. **Elsewhere itself is on by default**, but it stays inert until a valid TMDB key is set — so without the key, none of the features above appear. See [Discover & Request](discover.md).
 
+### Detect services automatically
+
+Each connection tab (**Seerr**, **Maintainerr**, and **\*arr**) has a
+**Detect** button that scans for services Canopy can connect to, so you often
+don't have to type any URL at all. The Jellyfin *server* probes a small, fixed
+set of likely addresses — well-known Docker hostnames such as `sonarr`,
+`radarr`, `bazarr`, `seerr` (plus the legacy `jellyseerr`/`overseerr` names) and
+`maintainerr` on their default ports, the local machine, the Docker gateway,
+and hosts you've already configured for sibling services — and confirms what
+actually answers before suggesting anything.
+
+- Detection only ever **fills fields that are currently empty**. Configured
+  values are never overwritten, and a find next to an existing entry is just
+  reported so you can add it manually if it really is a different server.
+- Probes are **credential-free** — no API key is ever sent — so you still paste
+  each service's API key yourself and press **Save**.
+- Nothing is stored until you press **Save**.
+
+If your services use custom hostnames or non-default ports, detection won't
+find them; enter those URLs manually as described below.
+
 ### Connect Seerr
 
 A [Seerr](discover.md) connection powers two things at once: **media requests** and the **Discovery** feed.
