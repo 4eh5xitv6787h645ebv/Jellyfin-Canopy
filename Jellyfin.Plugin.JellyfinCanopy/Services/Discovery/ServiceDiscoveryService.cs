@@ -253,10 +253,70 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
             }
         }
 
+        internal const int MaxRedirects = 3;
+
+        /// <summary>
+        /// Issues a probe GET with redirects followed explicitly and ONLY within
+        /// the exact candidate origin: same host, same port, and same scheme or
+        /// an http→https upgrade. Any cross-origin redirect aborts the probe
+        /// (returns null) without the destination ever being requested — a
+        /// hostile responder on a well-known candidate must not be able to
+        /// steer the scan anywhere else (SEC-REDIRECT-SCOPE).
+        /// </summary>
+        private static async Task<HttpResponseMessage?> FetchWithinCandidateOriginAsync(
+            HttpClient client,
+            string url,
+            CancellationToken ct)
+        {
+            var current = new Uri(url, UriKind.Absolute);
+            for (var hop = 0; hop <= MaxRedirects; hop++)
+            {
+                var response = await client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                var status = (int)response.StatusCode;
+                if (status is not (301 or 302 or 303 or 307 or 308))
+                {
+                    return response;
+                }
+
+                var location = response.Headers.Location;
+                response.Dispose();
+                if (location == null)
+                {
+                    return null;
+                }
+
+                var target = location.IsAbsoluteUri ? location : new Uri(current, location);
+                if (!IsSameOriginRedirectTarget(current, target))
+                {
+                    return null;
+                }
+
+                current = target;
+            }
+
+            return null;
+        }
+
+        internal static bool IsSameOriginRedirectTarget(Uri current, Uri target)
+        {
+            if (!string.Equals(target.Host, current.Host, StringComparison.OrdinalIgnoreCase)
+                || target.Port != current.Port)
+            {
+                return false;
+            }
+
+            // Same scheme, or an upgrade to https; never a downgrade and never
+            // a non-http(s) scheme.
+            return string.Equals(target.Scheme, current.Scheme, StringComparison.OrdinalIgnoreCase)
+                ? target.Scheme is "http" or "https"
+                : string.Equals(current.Scheme, "http", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(target.Scheme, "https", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static async Task<bool> ProbeStatusAsync(HttpClient client, string url, CancellationToken ct)
         {
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK)
+            using var response = await FetchWithinCandidateOriginAsync(client, url, ct).ConfigureAwait(false);
+            if (response == null || response.StatusCode != HttpStatusCode.OK)
             {
                 return false;
             }
@@ -279,8 +339,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Discovery
 
         private static async Task<bool> ProbeTitleAsync(HttpClient client, string url, string titleToken, CancellationToken ct)
         {
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK)
+            using var response = await FetchWithinCandidateOriginAsync(client, url, ct).ConfigureAwait(false);
+            if (response == null || response.StatusCode != HttpStatusCode.OK)
             {
                 return false;
             }

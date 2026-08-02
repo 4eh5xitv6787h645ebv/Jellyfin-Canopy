@@ -80,11 +80,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
 
         internal static SocketsHttpHandler CreateDiscoveryHandler()
         {
-            // Redirects stay enabled (reverse proxies canonicalize http↔https and
-            // login-page redirects are how the arr UIs answer anonymous probes)
-            // but tightly bounded; every hop re-passes the connect-time IP check.
-            var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true);
-            handler.MaxAutomaticRedirections = 4;
+            // NO automatic redirects: a hostile responder on a well-known
+            // candidate could otherwise steer the probe to an arbitrary
+            // otherwise-allowed private host/port/path. ServiceDiscoveryService
+            // follows a bounded number of redirects explicitly and only within
+            // the exact candidate origin.
+            var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);
             handler.UseCookies = false;
             handler.Credentials = null;
             // A proxy would resolve/connect on our behalf, bypassing ArrUrlGuard's

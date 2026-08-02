@@ -278,6 +278,108 @@ public sealed class ServiceDiscoveryServiceTests
     }
 
     [Fact]
+    public async Task Discover_NeverFollowsCrossOriginRedirects()
+    {
+        // A hostile responder on the well-known sonarr candidate redirects to a
+        // different private host and to a different port on the same host; the
+        // scan must not request either destination and must not confirm.
+        var fixture = new Fixture();
+        fixture.Resolves["sonarr"] = IPAddress.Parse("10.0.0.2");
+        fixture.Resolves["radarr"] = IPAddress.Parse("10.0.0.3");
+        fixture.Resolves["internal-target"] = IPAddress.Parse("10.0.0.50");
+        var previous = fixture.Handler.ResponseFactory;
+        fixture.Handler.ResponseFactory = request =>
+        {
+            var uri = request.RequestUri!;
+            if (string.Equals(uri.Host, "sonarr", StringComparison.OrdinalIgnoreCase))
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+                redirect.Headers.Location = new Uri("http://internal-target:8080/admin/action");
+                return redirect;
+            }
+
+            if (string.Equals(uri.Host, "radarr", StringComparison.OrdinalIgnoreCase))
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+                redirect.Headers.Location = new Uri("http://radarr:9999/");
+                return redirect;
+            }
+
+            return previous?.Invoke(request);
+        };
+
+        var results = await fixture.Build(Config()).DiscoverAsync();
+
+        Assert.Empty(results);
+        Assert.DoesNotContain(
+            fixture.Handler.Requests,
+            r => string.Equals(r.RequestUri?.Host, "internal-target", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(fixture.Handler.Requests, r => r.RequestUri?.Port == 9999);
+    }
+
+    [Fact]
+    public async Task Discover_FollowsBoundedSameOriginRedirects()
+    {
+        // The supported case: an arr UI answering an anonymous probe with a
+        // same-origin redirect to its login page.
+        var fixture = new Fixture();
+        fixture.Resolves["sonarr"] = IPAddress.Parse("10.0.0.2");
+        fixture.Resolves["radarr"] = IPAddress.Parse("10.0.0.3");
+        var previous = fixture.Handler.ResponseFactory;
+        fixture.Handler.ResponseFactory = request =>
+        {
+            var uri = request.RequestUri!;
+            if (string.Equals(uri.Host, "sonarr", StringComparison.OrdinalIgnoreCase))
+            {
+                if (uri.AbsolutePath == "/login")
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("<title>Sonarr</title>", Encoding.UTF8, "text/html"),
+                    };
+                }
+
+                var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+                redirect.Headers.Location = new Uri("/login", UriKind.Relative);
+                return redirect;
+            }
+
+            if (string.Equals(uri.Host, "radarr", StringComparison.OrdinalIgnoreCase))
+            {
+                // An endless same-origin redirect loop must stay bounded.
+                var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+                redirect.Headers.Location = new Uri("/", UriKind.Relative);
+                return redirect;
+            }
+
+            return previous?.Invoke(request);
+        };
+
+        var results = await fixture.Build(Config()).DiscoverAsync();
+
+        Assert.Contains(results, r => r is { Service: "sonarr", Url: "http://sonarr:8989" });
+        Assert.DoesNotContain(results, r => r.Service == "radarr");
+        var radarrRequests = fixture.Handler.Requests
+            .Count(r => string.Equals(r.RequestUri?.Host, "radarr", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ServiceDiscoveryService.MaxRedirects + 1, radarrRequests);
+    }
+
+    [Theory]
+    [InlineData("http://sonarr:8989/", "http://sonarr:8989/login", true)]
+    [InlineData("http://sonarr:8989/", "https://sonarr:8989/login", true)]
+    [InlineData("https://sonarr:8989/", "http://sonarr:8989/login", false)]
+    [InlineData("http://sonarr:8989/", "http://sonarr:9999/", false)]
+    [InlineData("http://sonarr:8989/", "http://other:8989/", false)]
+    [InlineData("http://sonarr:8989/", "ftp://sonarr:8989/", false)]
+    public void SameOriginRedirectPolicy_IsExactHostPortWithOptionalHttpsUpgrade(
+        string current, string target, bool allowed)
+    {
+        Assert.Equal(
+            allowed,
+            ServiceDiscoveryService.IsSameOriginRedirectTarget(new Uri(current), new Uri(target)));
+    }
+
+    [Fact]
     public async Task Discover_ConcurrentCallsShareOneScan()
     {
         var fixture = new Fixture();
