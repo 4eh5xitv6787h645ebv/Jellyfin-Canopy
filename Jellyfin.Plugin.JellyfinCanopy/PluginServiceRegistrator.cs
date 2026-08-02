@@ -40,6 +40,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // One process-local 256-bit authority and nonce ledger for short-lived
             // native action capabilities. Restart intentionally invalidates every token.
             serviceCollection.AddSingleton<PlatformActionCapabilityService>();
+            // Five-minute random handles let repeated item-detail resolves reuse an
+            // exact server-derived semantic snapshot without exposing those claims.
+            // This process-local owner is separate from one-shot invoke capability.
+            serviceCollection.AddSingleton<PlatformPrepareHandleOwner>();
             // Server-private prepared preconditions remain process-local and expire no
             // later than their opaque capability. Invocation concurrency is bounded by
             // authoritative actor and the closed operation vocabulary.
