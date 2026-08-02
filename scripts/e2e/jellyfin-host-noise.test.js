@@ -12,6 +12,7 @@ const {
     SCROLL_HANDLER_ERROR,
     hasValidConcurrentLogoutResponses,
     isExpectedCanopyPauseScreenImageProbe404,
+    isExpectedJellyfinWebTanStackCancellation,
     isKnownHiddenContentHostNoise,
     isKnownJellyfinWebScrollHandlerError,
     isKnownJellyfinWebHostNoise,
@@ -61,6 +62,125 @@ const COMPLETE_SIGNED_OUT = {
         oldTokenStatus: 401,
     },
 };
+const OBSERVED_TANSTACK_CANCELLATION = {
+    source: 'console',
+    url: `${LOGOUT_ORIGIN}/web/hometab.123456789abc.chunk.js`,
+    text: 'e: CancelledError\n'
+        + `    at Object.cancel (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:90321)\n`
+        + `    at e.value (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:42018)\n`
+        + `    at e.value (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:42232)\n`
+        + `    at e.value (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:53013)\n`
+        + `    at ${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:53199\n`
+        + '    at Array.forEach (<anonymous>)\n'
+        + `    at ${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:53176\n`
+        + `    at Object.batch (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:26154)\n`
+        + `    at e.value (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:53147)\n`
+        + `    at t.value (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:72222)`,
+};
+
+test('logout TanStack classifier accepts the exact stock-only cancellation stack', () => {
+    assert.equal(
+        isExpectedJellyfinWebTanStackCancellation(
+            OBSERVED_TANSTACK_CANCELLATION,
+            COMPLETE_SIGNED_OUT
+        ),
+        true
+    );
+});
+
+test('logout TanStack classifier rejects mixed Canopy stacks and contract drift', () => {
+    const stock = OBSERVED_TANSTACK_CANCELLATION.text;
+    const lines = stock.split('\n');
+    const rejected = [
+        { ...OBSERVED_TANSTACK_CANCELLATION, source: 'pageerror' },
+        { ...OBSERVED_TANSTACK_CANCELLATION, url: `${LOGOUT_ORIGIN}/web/dashboard.123456789abc.chunk.js` },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            url: OBSERVED_TANSTACK_CANCELLATION.url.replace('://', '://user:password@'),
+        },
+        { ...OBSERVED_TANSTACK_CANCELLATION, text: stock.replace('CancelledError', 'CanceledError') },
+        { ...OBSERVED_TANSTACK_CANCELLATION, text: `${stock}\nCancelledError` },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: [lines[0], lines[2], lines[1], ...lines.slice(3)].join('\n'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: [...lines.slice(0, 2), lines[3], lines[2], ...lines.slice(4)].join('\n'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: [...lines.slice(0, 5), lines[7], lines[6], lines[5], ...lines.slice(8)].join('\n'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: lines.slice(0, -1).join('\n'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace('Array.forEach (<anonymous>)', 'Array.map (<anonymous>)'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: `${stock}\n    at render (${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:3:29)`,
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace('Object.cancel (http', 'Object.cancel (unexpected-token http'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace('Object.batch (http', 'Object.batch (unexpected-token http'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace(`${LOGOUT_ORIGIN}/web/`, `${LOGOUT_ORIGIN.replace('://', '://user:password@')}/web/`),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace(
+                `${LOGOUT_ORIGIN}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:72222`,
+                `${LOGOUT_ORIGIN.replace('://', '://user:password@')}/web/node_modules.%40tanstack.query-core.bundle.js?123456789abc:2:72222`
+            ),
+        },
+        { ...OBSERVED_TANSTACK_CANCELLATION, text: stock.replace('/web/node_modules.', '/web/other.') },
+        { ...OBSERVED_TANSTACK_CANCELLATION, text: stock.replace(LOGOUT_ORIGIN, 'http://example.test') },
+        { ...OBSERVED_TANSTACK_CANCELLATION, text: stock.replace('?123456789abc', '') },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace('?123456789abc:2:72222', '?fedcba9876543210abcd:2:72222'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace(':2:72222)', ':999:888)'),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: stock.replace(
+                'e: CancelledError\n',
+                `e: CancelledError\n    at Canopy (${LOGOUT_ORIGIN}/JellyfinCanopy/dist/jc.bundle.js?123456789abc:1:9)\n`
+            ),
+        },
+        {
+            ...OBSERVED_TANSTACK_CANCELLATION,
+            text: `${stock}\n    at Canopy (${LOGOUT_ORIGIN}/JellyfinCanopy/dist/jc.bundle.js?123456789abc:1:9)`,
+        },
+    ];
+    for (const [index, detail] of rejected.entries()) {
+        assert.equal(
+            isExpectedJellyfinWebTanStackCancellation(detail, COMPLETE_SIGNED_OUT),
+            false,
+            `unexpectedly accepted TanStack cancellation drift case ${index}`
+        );
+    }
+    assert.equal(
+        isExpectedJellyfinWebTanStackCancellation(
+            OBSERVED_TANSTACK_CANCELLATION,
+            { ...COMPLETE_SIGNED_OUT, signedOut: { ...COMPLETE_SIGNED_OUT.signedOut, initialized: true } }
+        ),
+        false
+    );
+});
 
 test('concurrent logout accepts either request as the session-revocation owner', () => {
     const requestZeroWins = [
@@ -513,6 +633,8 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     const fixture = fs.readFileSync(path.join(ROOT, 'e2e/fixtures/auth.ts'), 'utf8');
     assert.match(source, /hasValidConcurrentLogoutResponses\(orderedResponses\)/);
     assert.doesNotMatch(source, /orderedResponses\[0\][\s\S]{0,200}status: 204/);
+    assert.match(source, /isExpectedJellyfinWebTanStackCancellation\(detail, evidence\)/);
+    assert.doesNotMatch(source, /HOST_LOGOUT_NOISE/);
     assert.match(source, /isExpectedSignedOutHomeAxios401\(detail, evidence, hasAllowedHost401\)/);
     assert.match(source, /response\.status === 401\s*&& isExpectedSignedOutHostLogout4xx\(response, evidence\)/);
     assert.match(source, /failed\.filter\(\(response\) => !isExpectedSignedOutHostLogout4xx\(response, evidence\)\)/);
