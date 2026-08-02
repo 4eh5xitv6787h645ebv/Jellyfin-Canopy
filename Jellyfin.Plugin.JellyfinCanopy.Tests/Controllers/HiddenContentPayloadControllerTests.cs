@@ -1,9 +1,12 @@
+using System.Collections.Immutable;
 using System.Security.Claims;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using Jellyfin.Plugin.JellyfinCanopy.Logging;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -144,6 +147,10 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, read.StatusCode);
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, scopedHide.StatusCode);
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, adminHide.StatusCode);
+        Assert.Contains(
+            "corrupt",
+            System.Text.Json.JsonSerializer.Serialize(scopedHide.Value),
+            StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(HiddenPath));
     }
 
@@ -512,7 +519,8 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             new SeerrCache(_provider),
             _provider,
             _manager,
-            new CountingLibraryManager());
+            new CountingLibraryManager(),
+            new HiddenContentItemActionOwner(_manager, _provider));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -583,7 +591,8 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
                 new SeerrCache(_provider),
                 _provider,
                 _manager,
-                new CountingLibraryManager());
+                new CountingLibraryManager(),
+                new HiddenContentItemActionOwner(_manager, _provider));
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -1413,11 +1422,215 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         Assert.Equal("tt123", item.Identity?.Id);
     }
 
+    [Fact]
+    public void SupportedScopedHide_InvokesSharedOwnerExactlyOnce()
+    {
+        var itemId = Guid.NewGuid();
+        var recording = new RecordingHiddenContentOwner();
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == itemId
+                ? new Movie { Id = itemId, Name = "Accessible" }
+                : null
+        };
+
+        var result = Controller(
+            NullLogger<HiddenContentController>.Instance,
+            library,
+            hiddenContentItemActionOwner: recording)
+            .HideFromContinueWatching(itemId.ToString());
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, recording.ConfigureCalls);
+        Assert.Equal(_user.Id, recording.Actor?.UserId);
+        Assert.Equal(itemId, recording.Item?.ItemId);
+        Assert.True(recording.Configuration?.Hidden);
+    }
+
+    [Fact]
+    public void InaccessibleScopedUnhide_UsesLegacyRepairWithoutOwnerInvocation()
+    {
+        var itemId = Guid.NewGuid();
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            ItemsRevision = 3,
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [itemId.ToString()] = new()
+                {
+                    ItemId = itemId.ToString(),
+                    HideScope = "continuewatching"
+                }
+            }
+        });
+        var recording = new RecordingHiddenContentOwner();
+        var library = new CountingLibraryManager { GetItemByIdUserHook = (_, _) => null };
+
+        var result = Controller(
+            NullLogger<HiddenContentController>.Instance,
+            library,
+            hiddenContentItemActionOwner: recording)
+            .UnhideFromContinueWatching(itemId.ToString());
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(0, recording.ConfigureCalls);
+        Assert.Empty(_manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json").Items);
+    }
+
+    [Fact]
+    public void FailedScopedUnhideAccessLookup_FailsClosedWithoutOwnerOrRepairMutation()
+    {
+        var itemId = Guid.NewGuid();
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            ItemsRevision = 3,
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [itemId.ToString()] = new()
+                {
+                    ItemId = itemId.ToString(),
+                    HideScope = "continuewatching"
+                }
+            }
+        });
+        var path = HiddenPath;
+        var before = File.ReadAllBytes(path);
+        var recording = new RecordingHiddenContentOwner();
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (_, _) => throw new IOException("library unavailable")
+        };
+
+        var result = Assert.IsType<ObjectResult>(Controller(
+            NullLogger<HiddenContentController>.Instance,
+            library,
+            hiddenContentItemActionOwner: recording)
+            .UnhideFromContinueWatching(itemId.ToString()));
+
+        Assert.Equal(500, result.StatusCode);
+        Assert.Equal(0, recording.ConfigureCalls);
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void LegacyAndPlatformAdapters_ProduceEquivalentScopedOwnerState()
+    {
+        var legacyItemId = Guid.NewGuid();
+        var platformItemId = Guid.NewGuid();
+        var platformUserId = Guid.NewGuid();
+        var initial = new UserHiddenContent
+        {
+            ItemsRevision = 4,
+            Settings = new HiddenContentSettings { Revision = 3, Enabled = false }
+        };
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", initial);
+        _manager.SaveUserConfiguration(
+            platformUserId.ToString("N"),
+            "hidden-content.json",
+            new UserHiddenContent
+            {
+                ItemsRevision = 4,
+                Settings = new HiddenContentSettings { Revision = 3, Enabled = false }
+            });
+        var owner = new HiddenContentItemActionOwner(_manager, _provider);
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == legacyItemId
+                ? new Movie
+                {
+                    Id = legacyItemId,
+                    Name = "Legacy title",
+                    ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "123" }
+                }
+                : null
+        };
+
+        var legacyResult = Controller(
+            NullLogger<HiddenContentController>.Instance,
+            library,
+            hiddenContentItemActionOwner: owner)
+            .HideFromContinueWatching(legacyItemId.ToString());
+        var platformResult = new HiddenContentPlatformItemActionAdapter(owner).Configure(
+            new PlatformActor(platformUserId, false, "correlation", null, null),
+            new HostAccessibleItem(
+                platformItemId,
+                HostItemKind.Movie,
+                null,
+                ImmutableArray.Create(new HostProviderReference("tmdb", "123"))),
+            HiddenContentItemConfiguration.Exact(
+                true,
+                HiddenContentItemScope.ContinueWatching,
+                expectedItemsRevision: 4));
+
+        Assert.IsType<OkObjectResult>(legacyResult);
+        Assert.Equal(HiddenContentItemActionOutcome.Configured, platformResult.Outcome);
+        var legacyState = _manager.GetUserConfigurationStrict<UserHiddenContent>(UserId, "hidden-content.json");
+        var platformState = _manager.GetUserConfigurationStrict<UserHiddenContent>(
+            platformUserId.ToString("N"),
+            "hidden-content.json");
+        var legacyEntry = Assert.Single(legacyState.Items).Value;
+        var platformEntry = Assert.Single(platformState.Items).Value;
+        Assert.Equal(legacyEntry.HideScope, platformEntry.HideScope);
+        Assert.Equal(legacyEntry.Type, platformEntry.Type);
+        Assert.Equal(legacyEntry.TmdbId, platformEntry.TmdbId);
+        Assert.Equal(legacyEntry.Identity?.Provider, platformEntry.Identity?.Provider);
+        Assert.Equal(legacyEntry.Identity?.MediaType, platformEntry.Identity?.MediaType);
+        Assert.Equal(legacyEntry.Identity?.Id, platformEntry.Identity?.Id);
+        Assert.Equal(legacyState.ItemsRevision, platformState.ItemsRevision);
+        Assert.Equal(legacyState.Settings.Revision, platformState.Settings.Revision);
+        Assert.Equal(legacyState.Settings.Enabled, platformState.Settings.Enabled);
+    }
+
+    [Fact]
+    public void LegacyEpisodeHide_PreservesDashedSeriesIdAndClearsPosterLikePriorRoute()
+    {
+        var episodeId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+        _manager.SaveUserConfiguration(UserId, "hidden-content.json", new UserHiddenContent
+        {
+            Items = new Dictionary<string, HiddenContentItem>
+            {
+                [episodeId.ToString()] = new()
+                {
+                    ItemId = episodeId.ToString(),
+                    PosterPath = "/old-poster.jpg",
+                    HideScope = "nextup"
+                }
+            }
+        });
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, _) => id == episodeId
+                ? new Episode
+                {
+                    Id = episodeId,
+                    Name = "Episode",
+                    SeriesId = seriesId,
+                    SeriesName = "Series",
+                    ParentIndexNumber = 2,
+                    IndexNumber = 3
+                }
+                : null
+        };
+
+        var result = Controller(NullLogger<HiddenContentController>.Instance, library)
+            .HideFromContinueWatching(episodeId.ToString());
+
+        Assert.IsType<OkObjectResult>(result);
+        var entry = Assert.Single(_manager.GetUserConfigurationStrict<UserHiddenContent>(
+            UserId,
+            "hidden-content.json").Items).Value;
+        Assert.Equal(seriesId.ToString(), entry.SeriesId);
+        Assert.Equal(string.Empty, entry.PosterPath);
+        Assert.Equal("homesections", entry.HideScope);
+    }
+
     private HiddenContentController Controller(
         ILogger<HiddenContentController> logger,
         CountingLibraryManager? libraryManager = null,
         bool includeAdminItemsIfMatch = true,
-        long? adminItemsIfMatch = null)
+        long? adminItemsIfMatch = null,
+        IHiddenContentItemActionOwner? hiddenContentItemActionOwner = null)
     {
         libraryManager ??= new CountingLibraryManager
         {
@@ -1433,7 +1646,9 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             new SeerrCache(_provider),
             _provider,
             _manager,
-            libraryManager);
+            libraryManager,
+            hiddenContentItemActionOwner
+                ?? new HiddenContentItemActionOwner(_manager, _provider));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -1546,5 +1761,45 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
                 Func<TState, Exception?, string> formatter)
                 => _messages.Add(formatter(state, exception));
         }
+    }
+
+    private sealed class RecordingHiddenContentOwner : IHiddenContentItemActionOwner
+    {
+        public int ConfigureCalls { get; private set; }
+
+        public HiddenContentActorProjection? Actor { get; private set; }
+
+        public HiddenContentItemProjection? Item { get; private set; }
+
+        public HiddenContentItemConfiguration? Configuration { get; private set; }
+
+        public HiddenContentItemActionResult GetState(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemScope scope)
+            => Result();
+
+        public HiddenContentItemActionResult Configure(
+            HiddenContentActorProjection actor,
+            HiddenContentItemProjection item,
+            HiddenContentItemConfiguration configuration)
+        {
+            ConfigureCalls++;
+            Actor = actor;
+            Item = item;
+            Configuration = configuration;
+            return Result();
+        }
+
+        private static HiddenContentItemActionResult Result() => new(
+            HiddenContentItemActionOutcome.Configured,
+            hidden: true,
+            changed: true,
+            "item-key",
+            new HiddenContentItem { ItemId = "item-key", HideScope = "continuewatching" },
+            itemsRevision: 1,
+            settingsRevision: 0,
+            hiddenContentEnabled: true,
+            settingsChanged: false);
     }
 }

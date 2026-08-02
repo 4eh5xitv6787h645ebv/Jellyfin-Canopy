@@ -2615,7 +2615,8 @@ public sealed class AdminTargetPreferenceControllerTests : IDisposable
             new SeerrCache(_provider),
             _provider,
             _manager,
-            _library);
+            _library,
+            new HiddenContentItemActionOwner(_manager, _provider));
         ConfigureController(controller, ifMatch, rawIfMatch);
         return controller;
     }
