@@ -150,11 +150,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         Task<Seerr4kCapability> ISeerrMediaRequestAdmission.Get4kCapabilityAsync(
-            Guid jellyfinUserId,
+            SeerrRequestIdentity admittedIdentity,
             bool isAdministrator,
             CancellationToken cancellationToken)
-            => GetSeerr4kCapabilityCoreAsync(
-                jellyfinUserId.ToString("D"),
+            => GetBoundSeerr4kCapabilityAsync(
+                admittedIdentity,
                 isAdministrator,
                 cancellationToken);
 
@@ -302,6 +302,70 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             string jellyfinUserId,
             bool isAdmin = false)
             => GetSeerr4kCapabilityCoreAsync(jellyfinUserId, isAdmin, CancellationToken.None);
+
+        private async Task<Seerr4kCapability> GetBoundSeerr4kCapabilityAsync(
+            SeerrRequestIdentity admittedIdentity,
+            bool isAdmin,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (admittedIdentity.UserId <= 0 || string.IsNullOrEmpty(admittedIdentity.SourceUrl))
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var config = integration.Configuration!;
+            var configurationRevision = integration.ConfigurationRevision;
+            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            var configuredUrls = integration.Urls;
+            var sourceUrl = configuredUrls.FirstOrDefault(url => string.Equals(
+                url,
+                admittedIdentity.SourceUrl,
+                StringComparison.Ordinal));
+            bool IsConfigurationCurrent() => integration.IsCurrent(_configProvider)
+                && configStamp.Matches(
+                    _configProvider.ConfigurationOrNull,
+                    _configProvider.ConfigurationRevision);
+            if (sourceUrl == null || !IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            var (movie4k, series4k) = await GetPublic4kSettingsAsync(
+                sourceUrl,
+                configuredUrls,
+                integration.ApiKey,
+                config.SeerrDisableCache,
+                configurationRevision,
+                configStamp,
+                cancellationToken).ConfigureAwait(false);
+            if (!IsConfigurationCurrent())
+            {
+                return new Seerr4kCapability(false, false, false, false);
+            }
+
+            if (isAdmin)
+            {
+                return new Seerr4kCapability(
+                    movie4k,
+                    series4k,
+                    movie4k && config.SeerrEnable4KRequests,
+                    series4k && config.SeerrEnable4KTvRequests);
+            }
+
+            var permissions = admittedIdentity.Permissions;
+            return new Seerr4kCapability(
+                movie4k,
+                series4k,
+                movie4k && SeerrPermissionHelper.CanRequest4k(permissions, isTv: false),
+                series4k && SeerrPermissionHelper.CanRequest4k(permissions, isTv: true));
+        }
 
         private async Task<Seerr4kCapability> GetSeerr4kCapabilityCoreAsync(
             string jellyfinUserId,

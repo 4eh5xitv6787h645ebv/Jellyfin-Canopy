@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -143,6 +144,36 @@ public class Seerr4kCapabilityTests
         Assert.True(cap.Series4kEnabled);
         Assert.False(cap.CanRequest4kMovie);
         Assert.False(cap.CanRequest4kTv);
+    }
+
+    [Fact]
+    public async Task ExactOwnerCapability_IsPinnedToAdmittedIdentityWithoutABASourceReresolution()
+    {
+        var config = Config();
+        config.SeerrUrls = "http://seerr-a:5055,http://seerr-b:5055";
+        config.SeerrEnable4KRequests = true;
+        var (client, handler) = NewClient(config);
+        handler.AddResponse(
+            "/api/v1/settings/public",
+            "{\"movie4kEnabled\":true,\"series4kEnabled\":true}");
+        var admission = (ISeerrMediaRequestAdmission)client;
+        var identity = new SeerrRequestIdentity(
+            42,
+            SeerrPermission.REQUEST_4K,
+            "http://seerr-a:5055");
+
+        var capability = await admission.Get4kCapabilityAsync(
+            identity,
+            isAdministrator: false,
+            CancellationToken.None);
+
+        Assert.True(capability.CanRequest4kMovie);
+        var settingsRequest = Assert.Single(handler.Requests);
+        Assert.Equal("seerr-a", settingsRequest.RequestUri!.Host);
+        Assert.Equal("/api/v1/settings/public", settingsRequest.RequestUri.AbsolutePath);
+        Assert.DoesNotContain(
+            handler.Requests,
+            request => request.RequestUri!.AbsolutePath == "/api/v1/user");
     }
 
     private sealed class PassthroughParentalFilter : ISeerrParentalFilter

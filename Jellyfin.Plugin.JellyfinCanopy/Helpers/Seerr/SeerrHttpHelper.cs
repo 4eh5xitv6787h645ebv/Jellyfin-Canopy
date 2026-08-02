@@ -89,6 +89,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
         }
     }
 
+    /// <summary>
+    /// Typed evidence that the opaque saved-generation fence rejected a request
+    /// before transport <c>SendAsync</c> was invoked.
+    /// </summary>
+    internal sealed class SeerrDispatchNotAttemptedException : InvalidOperationException
+    {
+        internal SeerrDispatchNotAttemptedException()
+            : base("The Seerr dispatch fence rejected the request before transport dispatch.")
+        {
+        }
+    }
+
     public static class SeerrHttpHelper
     {
         public static string UserAgent { get; set; } = "JellyfinCanopy/unknown";
@@ -146,7 +158,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             => dispatchFence.CanDispatch(request.RequestUri)
                 ? httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
                 : Task.FromException<HttpResponseMessage>(
-                    new InvalidOperationException("The Seerr dispatch fence is no longer current."));
+                    new SeerrDispatchNotAttemptedException());
 
         public static Task<(string? Json, SeerrError? Error, int HttpStatus)> SendAndReadJsonAsync(
             HttpClient httpClient,

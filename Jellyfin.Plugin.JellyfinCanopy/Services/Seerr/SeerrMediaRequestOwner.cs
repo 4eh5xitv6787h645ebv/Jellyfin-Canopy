@@ -51,6 +51,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         /// <summary>The linked identity changed during admission.</summary>
         IdentityChanged,
 
+        /// <summary>The current host user or authoritative item projection changed.</summary>
+        HostAuthorizationChanged,
+
         /// <summary>The linked identity lacks the exact media-edition permission.</summary>
         PermissionDenied,
 
@@ -175,7 +178,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             CancellationToken cancellationToken);
 
         Task<Seerr4kCapability> Get4kCapabilityAsync(
-            Guid jellyfinUserId,
+            SeerrRequestIdentity admittedIdentity,
             bool isAdministrator,
             CancellationToken cancellationToken);
 
@@ -196,6 +199,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly IPlatformHost _host;
         private readonly ISeerrMediaRequestAdmission _admission;
         private readonly ISeerrParentalFilter _parentalFilter;
         private readonly ISeerrSpoilerIntentStore _spoilerIntentStore;
@@ -204,6 +208,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public SeerrMediaRequestOwner(
             IHttpClientFactory httpClientFactory,
             IPluginConfigProvider configProvider,
+            IPlatformHost host,
             ISeerrMediaRequestAdmission admission,
             ISeerrParentalFilter parentalFilter,
             ISeerrSpoilerIntentStore spoilerIntentStore,
@@ -211,6 +216,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         {
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
             _configProvider = configProvider ?? throw new ArgumentNullException(nameof(configProvider));
+            _host = host ?? throw new ArgumentNullException(nameof(host));
             _admission = admission ?? throw new ArgumentNullException(nameof(admission));
             _parentalFilter = parentalFilter ?? throw new ArgumentNullException(nameof(parentalFilter));
             _spoilerIntentStore = spoilerIntentStore ?? throw new ArgumentNullException(nameof(spoilerIntentStore));
@@ -280,7 +286,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 }
 
                 var capability = await _admission.Get4kCapabilityAsync(
-                    actor.UserId,
+                    initialIdentity,
                     actor.IsElevated,
                     cancellationToken).ConfigureAwait(false);
                 if (!integration.IsCurrent(_configProvider))
@@ -344,6 +350,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.IdentityChanged);
             }
 
+            // Every earlier projection is stale after an await. Re-enter the host's
+            // current user-scoped seam immediately before transport and require both
+            // the acting authority and the complete safe item projection to match.
+            cancellationToken.ThrowIfCancellationRequested();
+            var currentUser = _host.Users.Find(actor.UserId);
+            var currentAccess = _host.Library.FindAccessible(actor.UserId, item.Id);
+            if (!currentUser.HasValue
+                || (actor.IsElevated && !currentUser.Value.IsAdministrator)
+                || currentAccess.Item is not HostAccessibleItem currentItem
+                || !SameAuthoritativeItem(item, currentItem)
+                || !TryProjectTarget(currentItem, out var currentTarget)
+                || !target.Equals(currentTarget))
+            {
+                return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.HostAuthorizationChanged);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
             var persistSpoilerIntent = config.SpoilerBlurEnabled
                 && config.SpoilerAutoEnableOnSeerrRequest;
             var requestUri = finalIdentity.SourceUrl + RequestPath;
@@ -358,56 +382,81 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 requestBody);
             request.Headers.Add(PlatformIdempotencyKey.HeaderName, idempotencyKey.Value);
 
-            using var response = await SeerrHttpHelper.SendResponseHeadersReadAsync(
-                httpClient,
-                request,
-                integration.CreateDispatchFence(_configProvider),
-                cancellationToken).ConfigureAwait(false);
-
-            if (response.IsSuccessStatusCode)
+            HttpResponseMessage response;
+            try
             {
-                // ResponseHeadersRead has confirmed the provider mutation. Fulfil the
-                // frozen local durability obligation synchronously before observing
-                // caller cancellation again or executing any fallible post-work.
-                var intentRecorded = false;
-                if (persistSpoilerIntent)
+                response = await SeerrHttpHelper.SendResponseHeadersReadAsync(
+                    httpClient,
+                    request,
+                    integration.CreateDispatchFence(_configProvider),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (SeerrDispatchNotAttemptedException)
+            {
+                return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ConfigurationChanged);
+            }
+
+            using (response)
+            {
+                if (response.IsSuccessStatusCode)
                 {
-                    try
+                    // ResponseHeadersRead has confirmed the provider mutation. Fulfil the
+                    // frozen local durability obligation synchronously before observing
+                    // caller cancellation again or executing any fallible post-work.
+                    var intentRecorded = false;
+                    if (persistSpoilerIntent)
                     {
-                        intentRecorded = _spoilerIntentStore.TryRegister(
-                            actor.UserId,
-                            target.Kind,
-                            target.TmdbId);
+                        try
+                        {
+                            intentRecorded = _spoilerIntentStore.TryRegister(
+                                actor.UserId,
+                                target.Kind,
+                                target.TmdbId);
+                        }
+                        catch (Exception exception)
+                        {
+                            _logger.LogError(
+                                exception,
+                                "Seerr accepted an installed-item request, but its Spoiler Guard intent could not be persisted.");
+                        }
                     }
-                    catch (Exception exception)
+
+                    if (persistSpoilerIntent && !intentRecorded)
                     {
-                        _logger.LogError(
-                            exception,
-                            "Seerr accepted an installed-item request, but its Spoiler Guard intent could not be persisted.");
+                        _logger.LogWarning(
+                            "Seerr accepted an installed-item request, but Spoiler Guard intent registration failed.");
                     }
+
+                    return SeerrMediaRequestResult.Accepted(persistSpoilerIntent, intentRecorded);
                 }
 
-                if (persistSpoilerIntent && !intentRecorded)
+                if (response.StatusCode == HttpStatusCode.Conflict)
                 {
-                    _logger.LogWarning(
-                        "Seerr accepted an installed-item request, but Spoiler Guard intent registration failed.");
+                    return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.AlreadyRequested);
                 }
 
-                return SeerrMediaRequestResult.Accepted(persistSpoilerIntent, intentRecorded);
-            }
+                if (response.StatusCode is HttpStatusCode.RequestTimeout
+                    or HttpStatusCode.TooManyRequests)
+                {
+                    return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ProviderUnavailable);
+                }
 
-            if (response.StatusCode == HttpStatusCode.Conflict)
-            {
-                return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.AlreadyRequested);
-            }
+                if ((int)response.StatusCode is >= 400 and < 500)
+                {
+                    return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ProviderRejected);
+                }
 
-            if ((int)response.StatusCode is >= 400 and < 500)
-            {
-                return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ProviderRejected);
+                return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ProviderUnavailable);
             }
-
-            return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.ProviderUnavailable);
         }
+
+        private static bool SameAuthoritativeItem(
+            HostAccessibleItem admitted,
+            HostAccessibleItem current)
+            => admitted.Id == current.Id
+                && admitted.Kind == current.Kind
+                && admitted.SeriesId == current.SeriesId
+                && admitted.ProviderReferences.SequenceEqual(current.ProviderReferences);
 
         private static SeerrMediaRequestResult? ValidateIdentity(
             SeerrRequestIdentityResolution resolution,

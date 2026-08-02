@@ -65,6 +65,7 @@ public sealed class SeerrMediaRequestOwnerTests
 
         Assert.Equal(SeerrMediaRequestOutcome.Requested, result.Outcome);
         Assert.Equal(1, harness.Admission.CapabilityCalls);
+        Assert.Equal(Found(permissions: SeerrPermission.REQUEST_4K_TV).Identity, harness.Admission.CapabilityIdentity);
         using var body = JsonDocument.Parse(Assert.Single(harness.Handler.Sent).Body);
         Assert.Equal("tv", body.RootElement.GetProperty("mediaType").GetString());
         Assert.Equal("all", body.RootElement.GetProperty("seasons").GetString());
@@ -219,6 +220,92 @@ public sealed class SeerrMediaRequestOwnerTests
     }
 
     [Fact]
+    public async Task FinalHostReauthorization_RejectsDeletedUser()
+    {
+        var harness = new Harness();
+        harness.Host.UserExists = false;
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "151"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+    }
+
+    [Fact]
+    public async Task FinalHostReauthorization_RejectsAdministratorDemotion()
+    {
+        var harness = new Harness(isElevated: true);
+        harness.Host.IsAdministrator = false;
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "152"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+    }
+
+    [Fact]
+    public async Task FinalHostReauthorization_RejectsItemDeletionMoveOrLibraryRemoval()
+    {
+        var harness = new Harness();
+        harness.Host.ItemAccessible = false;
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "153"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.HostAuthorizationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+    }
+
+    [Fact]
+    public async Task FinalHostProjection_RejectsAnyProviderReferenceDriftOrTargetAmbiguity()
+    {
+        var original = new HostAccessibleItem(
+            Guid.NewGuid(),
+            HostItemKind.Movie,
+            null,
+            ImmutableArray.Create(
+                new HostProviderReference("Tmdb", "154"),
+                new HostProviderReference("Tvdb", "7")));
+
+        var driftHarness = new Harness();
+        driftHarness.Host.ItemTransform = item => new HostAccessibleItem(
+            item.Id,
+            item.Kind,
+            item.SeriesId,
+            ImmutableArray.Create(
+                new HostProviderReference("Tmdb", "154"),
+                new HostProviderReference("Tvdb", "8")));
+        Assert.Equal(
+            SeerrMediaRequestOutcome.HostAuthorizationChanged,
+            (await driftHarness.InvokeAsync(original)).Outcome);
+        Assert.Empty(driftHarness.Handler.Sent);
+
+        var ambiguityHarness = new Harness();
+        ambiguityHarness.Host.ItemTransform = item => new HostAccessibleItem(
+            item.Id,
+            item.Kind,
+            item.SeriesId,
+            item.ProviderReferences.Add(new HostProviderReference("Tmdb", "155")));
+        Assert.Equal(
+            SeerrMediaRequestOutcome.HostAuthorizationChanged,
+            (await ambiguityHarness.InvokeAsync(original, idempotencyKey: Key("ambiguous-host"))).Outcome);
+        Assert.Empty(ambiguityHarness.Handler.Sent);
+    }
+
+    [Fact]
+    public async Task DispatchFenceDriftFromFactory_IsTypedAsNotAttemptedAndNeverReachesSendAsync()
+    {
+        var harness = new Harness(clientFactory: current => new CallbackHttpClientFactory(
+            new RecordingHttpClientFactory(current.Handler),
+            () => current.Provider.Current = ActiveConfig(apiKey: "rotated-before-send")));
+
+        var result = await harness.InvokeAsync(Item(HostItemKind.Movie, "156"));
+
+        Assert.Equal(SeerrMediaRequestOutcome.ConfigurationChanged, result.Outcome);
+        Assert.Empty(harness.Handler.Sent);
+        Assert.Empty(harness.Handler.Requests);
+    }
+
+    [Fact]
     public async Task CallerCancellationPropagatesBeforeMutation()
     {
         var harness = new Harness();
@@ -298,6 +385,8 @@ public sealed class SeerrMediaRequestOwnerTests
     [InlineData(HttpStatusCode.Conflict, SeerrMediaRequestOutcome.AlreadyRequested)]
     [InlineData(HttpStatusCode.Forbidden, SeerrMediaRequestOutcome.ProviderRejected)]
     [InlineData(HttpStatusCode.UnprocessableEntity, SeerrMediaRequestOutcome.ProviderRejected)]
+    [InlineData(HttpStatusCode.RequestTimeout, SeerrMediaRequestOutcome.ProviderUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests, SeerrMediaRequestOutcome.ProviderUnavailable)]
     [InlineData(HttpStatusCode.InternalServerError, SeerrMediaRequestOutcome.ProviderUnavailable)]
     public async Task ProviderStatusesMapToClosedBodyFreeOutcomes(
         HttpStatusCode status,
@@ -366,30 +455,37 @@ public sealed class SeerrMediaRequestOwnerTests
 
     private sealed class Harness
     {
-        public Harness(HttpStatusCode status = HttpStatusCode.Created, bool isElevated = false)
+        public Harness(
+            HttpStatusCode status = HttpStatusCode.Created,
+            bool isElevated = false,
+            Func<Harness, IHttpClientFactory>? clientFactory = null)
         {
             Config = ActiveConfig();
             Provider = new FakePluginConfigProvider(Config);
             Admission.Resolutions.Add(Found());
             Handler.AddResponse("/api/v1/request", "{}", status);
-            Owner = new SeerrMediaRequestOwner(
-                new RecordingHttpClientFactory(Handler),
-                Provider,
-                Admission,
-                Parental,
-                Spoiler,
-                NullLogger<SeerrMediaRequestOwner>.Instance);
             Actor = new PlatformActor(
                 Guid.NewGuid(),
                 isElevated,
                 "correlation",
                 null,
                 null);
+            Host.IsAdministrator = isElevated;
+            Owner = new SeerrMediaRequestOwner(
+                clientFactory?.Invoke(this) ?? new RecordingHttpClientFactory(Handler),
+                Provider,
+                Host,
+                Admission,
+                Parental,
+                Spoiler,
+                NullLogger<SeerrMediaRequestOwner>.Instance);
         }
 
         public PluginConfiguration Config { get; }
 
         public FakePluginConfigProvider Provider { get; }
+
+        public FakePlatformHost Host { get; } = new();
 
         public FakeAdmission Admission { get; } = new();
 
@@ -408,12 +504,15 @@ public sealed class SeerrMediaRequestOwnerTests
             SeerrMediaRequestVariant variant = SeerrMediaRequestVariant.Standard,
             PlatformIdempotencyKey? idempotencyKey = null,
             CancellationToken cancellationToken = default)
-            => Owner.RequestAsync(
+        {
+            Host.AdmittedItem = item;
+            return Owner.RequestAsync(
                 Actor,
                 item,
                 variant,
                 idempotencyKey ?? Key(),
                 cancellationToken);
+        }
     }
 
     private sealed class FakeAdmission : ISeerrMediaRequestAdmission
@@ -427,6 +526,8 @@ public sealed class SeerrMediaRequestOwnerTests
         public int InvalidationCalls { get; private set; }
 
         public Seerr4kCapability Capability { get; set; } = new(true, true, true, true);
+
+        public SeerrRequestIdentity? CapabilityIdentity { get; private set; }
 
         public List<SeerrRequestIdentityResolutionMode> ResolutionModes { get; } = new();
 
@@ -443,12 +544,13 @@ public sealed class SeerrMediaRequestOwnerTests
         }
 
         public Task<Seerr4kCapability> Get4kCapabilityAsync(
-            Guid jellyfinUserId,
+            SeerrRequestIdentity admittedIdentity,
             bool isAdministrator,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             CapabilityCalls++;
+            CapabilityIdentity = admittedIdentity;
             return Task.FromResult(Capability);
         }
 
@@ -461,6 +563,96 @@ public sealed class SeerrMediaRequestOwnerTests
         {
             Resolutions.Clear();
             Resolutions.Add(Found(userId, permissions, source));
+        }
+    }
+
+    private sealed class FakePlatformHost : IPlatformHost
+    {
+        public FakePlatformHost()
+        {
+            Users = new FakeUsers(this);
+            Library = new FakeLibrary(this);
+        }
+
+        public bool UserExists { get; set; } = true;
+
+        public bool IsAdministrator { get; set; }
+
+        public bool ItemAccessible { get; set; } = true;
+
+        public HostAccessibleItem AdmittedItem { get; set; }
+
+        public Func<HostAccessibleItem, HostAccessibleItem>? ItemTransform { get; set; }
+
+        public IHostUsers Users { get; }
+
+        public IHostLibrary Library { get; }
+
+        public IHostSessions Sessions { get; } = new EmptySessions();
+
+        public IHostPlugins Plugins { get; } = new EmptyPlugins();
+
+        private sealed class FakeUsers(FakePlatformHost owner) : IHostUsers
+        {
+            public HostUser? Find(Guid id)
+                => owner.UserExists
+                    ? new HostUser(id, "current-user", owner.IsAdministrator)
+                    : null;
+
+            public IReadOnlyList<HostUser> All() => Array.Empty<HostUser>();
+        }
+
+        private sealed class FakeLibrary(FakePlatformHost owner) : IHostLibrary
+        {
+            public HostItem? Find(Guid id) => null;
+
+            public HostItemAccessResult FindAccessible(Guid userId, Guid itemId)
+            {
+                if (!owner.ItemAccessible
+                    || !owner.UserExists
+                    || owner.AdmittedItem.Id != itemId)
+                {
+                    return HostItemAccessResult.NotAccessible;
+                }
+
+                var item = owner.ItemTransform?.Invoke(owner.AdmittedItem)
+                    ?? owner.AdmittedItem;
+                return HostItemAccessResult.Accessible(item);
+            }
+
+            public IReadOnlyList<HostItem> ChildrenOf(Guid id) => Array.Empty<HostItem>();
+        }
+
+        private sealed class EmptySessions : IHostSessions
+        {
+            public IReadOnlyList<HostSession> Active() => Array.Empty<HostSession>();
+
+            public IReadOnlyList<HostSession> ForUser(Guid userId) => Array.Empty<HostSession>();
+        }
+
+        private sealed class EmptyPlugins : IHostPlugins
+        {
+            public IReadOnlyList<HostPlugin> Installed() => Array.Empty<HostPlugin>();
+
+            public HostPlugin? Find(Guid id) => null;
+        }
+    }
+
+    private sealed class CallbackHttpClientFactory : IHttpClientFactory
+    {
+        private readonly IHttpClientFactory _inner;
+        private Action? _callback;
+
+        public CallbackHttpClientFactory(IHttpClientFactory inner, Action callback)
+        {
+            _inner = inner;
+            _callback = callback;
+        }
+
+        public HttpClient CreateClient(string name)
+        {
+            Interlocked.Exchange(ref _callback, null)?.Invoke();
+            return _inner.CreateClient(name);
         }
     }
 

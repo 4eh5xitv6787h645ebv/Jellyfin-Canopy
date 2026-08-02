@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
@@ -71,6 +72,20 @@ public sealed class SeerrMediaRequestOwnerArchitectureTests
         Assert.DoesNotContain("Controller", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach", source, StringComparison.Ordinal);
         Assert.DoesNotContain("while", source, StringComparison.Ordinal);
+
+        Assert.Contains("_host.Users.Find(actor.UserId)", source, StringComparison.Ordinal);
+        Assert.Contains("_host.Library.FindAccessible(actor.UserId, item.Id)", source, StringComparison.Ordinal);
+        Assert.Contains("admitted.ProviderReferences.SequenceEqual(current.ProviderReferences)", source, StringComparison.Ordinal);
+        Assert.True(
+            source.LastIndexOf("SeerrRequestIdentityResolutionMode.FinalPreDispatch", StringComparison.Ordinal)
+                < source.IndexOf("_host.Users.Find(actor.UserId)", StringComparison.Ordinal));
+        Assert.True(
+            source.IndexOf("_host.Library.FindAccessible(actor.UserId, item.Id)", StringComparison.Ordinal)
+                < source.IndexOf("SeerrHttpHelper.SendResponseHeadersReadAsync", StringComparison.Ordinal));
+
+        var constructor = Assert.Single(typeof(SeerrMediaRequestOwner).GetConstructors(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+        Assert.Contains(constructor.GetParameters(), parameter => parameter.ParameterType == typeof(IPlatformHost));
     }
 
     [Fact]
@@ -107,6 +122,9 @@ public sealed class SeerrMediaRequestOwnerArchitectureTests
                 || parameter.ParameterType == typeof(HttpMethod));
         Assert.DoesNotContain(methods, method => method.ReturnType == typeof(object));
 
+        var capability = Assert.Single(methods, method => method.Name == "Get4kCapabilityAsync");
+        Assert.Equal(typeof(SeerrRequestIdentity), capability.GetParameters()[0].ParameterType);
+
         var clientSource = PlatformHostSeamTests.CodeOnly(File.ReadAllText(Path.Combine(
             ProductionRoot(),
             "Services",
@@ -116,6 +134,37 @@ public sealed class SeerrMediaRequestOwnerArchitectureTests
             "allowAutoImport: mode == SeerrRequestIdentityResolutionMode.InitialAdmission",
             clientSource,
             StringComparison.Ordinal);
+
+        var boundStart = clientSource.IndexOf(
+            "private async Task<Seerr4kCapability> GetBoundSeerr4kCapabilityAsync",
+            StringComparison.Ordinal);
+        var legacyStart = clientSource.IndexOf(
+            "private async Task<Seerr4kCapability> GetSeerr4kCapabilityCoreAsync",
+            boundStart,
+            StringComparison.Ordinal);
+        Assert.True(boundStart >= 0 && legacyStart > boundStart);
+        Assert.DoesNotContain(
+            "ResolveSeerrUser",
+            clientSource[boundStart..legacyStart],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DispatchFenceRejectionIsTypedAndConstructedOnlyOnThePreSendBranch()
+    {
+        Assert.True(typeof(InvalidOperationException).IsAssignableFrom(typeof(SeerrDispatchNotAttemptedException)));
+        Assert.True(typeof(SeerrDispatchNotAttemptedException).IsSealed);
+
+        var helperSource = PlatformHostSeamTests.CodeOnly(File.ReadAllText(Path.Combine(
+            ProductionRoot(),
+            "Helpers",
+            "Seerr",
+            "SeerrHttpHelper.cs")));
+        Assert.Matches(
+            new Regex(
+                @"dispatchFence\.CanDispatch\(request\.RequestUri\)\s*\?\s*httpClient\.SendAsync\([\s\S]{0,240}?\:\s*Task\.FromException<HttpResponseMessage>\(\s*new SeerrDispatchNotAttemptedException\(\)\)",
+                RegexOptions.CultureInvariant),
+            helperSource);
     }
 
     private static string OwnerSource([CallerFilePath] string sourceFile = "")
