@@ -240,13 +240,12 @@ test.describe.serial('connected-service auto-discovery', () => {
 
         await configPage.locator('.jellyfin-tab-button[data-tab="maintainerr"]').click();
         await configPage.locator('#detectMaintainerrBtn').click();
-        // The fixture Maintainerr is exactly what is already configured, so the
-        // row reports it as already added and exposes no Add action.
-        const alreadyRow = configPage.locator('#maintainerrDetectResult .jc-detect-row')
-            .filter({ hasText: 'http://integrations:6246' });
-        await expect(alreadyRow).toBeVisible({ timeout: 30_000 });
-        await expect(alreadyRow.locator('.jc-detect-row-note')).toHaveText('already added');
-        await expect(alreadyRow.locator('button')).toHaveCount(0);
+        // The only reachable Maintainerr is exactly what is already configured,
+        // so the server omits that endpoint entirely: the admin is told there is
+        // nothing new, offered no action, and the saved value is untouched.
+        const maintainerrResult = configPage.locator('#maintainerrDetectResult');
+        await expect(maintainerrResult).toContainText('No Maintainerr instance found', { timeout: 30_000 });
+        await expect(maintainerrResult.locator('.jc-detect-add')).toHaveCount(0);
         await expect(configPage.locator('#maintainerrUrl')).toHaveValue('http://integrations:6246');
 
         assertNoConfigPageRuntimeErrors(consoleErrors);
