@@ -549,6 +549,18 @@ test('account switching scopes logout Axios noise to the phase-local response cl
     assert.match(source, /const b1Login = await beginAuthenticationTransition\(logoutA1Phase, 'user'\)/);
     assert.match(source, /const a2Login = await beginAuthenticationTransition\(logoutB1Phase, 'admin'\)/);
 
+    // Upstream Jellyfin #16457 can crash when overlapping same-device socket
+    // closures race session disposal. The account-switch test must observe all
+    // stock /socket instances, drain them after every logout, and explicitly
+    // close/drain final B2 before Playwright tears the page down.
+    assert.match(source, /new URL\(socket\.url\(\)\)\.pathname === '\/socket'/);
+    assert.match(source, /const hostSockets = trackHostSockets\(page\);[\s\S]{0,120}await loginAs\(page, 'admin'/);
+    assert.equal((source.match(/spaLogout\(page, documentIdentity, [^,]+, hostSockets\)/g) ?? []).length, 3);
+    assert.match(source, /await waitForHostSocketDrain\(sockets, 'logout'\)/);
+    assert.match(source, /const finalB2Logout = await spaLogout\([\s\S]{0,160}b2Login\.token,[\s\S]{0,80}hostSockets[\s\S]{0,80}\);\s*await page\.close\(\);/);
+    assert.match(source, /assertOnlyHostLogoutNoise\(consoleErrors, 'final B2 logout', finalB2Logout\);[\s\S]{0,300}acknowledgeExpected4xx\(expectedFinalB2Failures\);\s*consoleErrors\.reset\(\);\s*assertNoRuntimeErrors\(consoleErrors\);\s*hostSockets\.dispose\(\);/);
+    assert.doesNotMatch(source, /logoutCurrentHostSessionAndDrain/);
+
     // Selection remains the intersection of exact Request ownership, complete
     // phase evidence, exact host shape, and an absent/revoked credential.
     assert.match(source, /const phase = phases\.find\(\(\{ requests, authenticationTransitionRequests \}\) =>\s*requests\.has\(request\) \|\| authenticationTransitionRequests\.has\(request\)\)/);
