@@ -5,6 +5,7 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -133,6 +134,7 @@ public sealed class SeerrScheduledTaskPaginationTests
         var secondUser = new User("second-user", "provider", "password-provider");
         var movie = new Movie
         {
+            Id = Guid.NewGuid(),
             Name = "Staged movie",
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -198,7 +200,8 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
-            configProvider);
+            configProvider,
+            new StubItemLookupService());
 
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
@@ -302,7 +305,8 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<SeerrWatchlistSyncTask>.Instance,
-            provider);
+            provider,
+            new StubItemLookupService());
 
         var executeTask = task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
         await watchlistStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -384,11 +388,835 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<SeerrWatchlistSyncTask>.Instance,
-            provider);
+            provider,
+            StubItemLookupService.FromItems(new BaseItem[] { firstMovie, secondMovie }));
 
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         Assert.Equal(1, Volatile.Read(ref saveCalls));
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_InaccessibleFirstUsesAccessibleAlternate()
+    {
+        var user = new User("alternate-sync-user", "provider", "password-provider");
+        var inaccessible = MovieWithTmdbId("Restricted cut", "701");
+        inaccessible.Id = Guid.Parse("00000000-0000-0000-0000-000000000021");
+        var accessible = MovieWithTmdbId("Accessible cut", "701");
+        accessible.Id = Guid.Parse("00000000-0000-0000-0000-000000000022");
+        var items = new BaseItem[] { inaccessible, accessible };
+        var handler = new RequestRoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/user" => UserMap(user, 7),
+            "/api/v1/user/7/watchlist" => Json(new
+            {
+                page = 1,
+                totalPages = 1,
+                totalResults = 1,
+                results = new[]
+                {
+                    new { tmdbId = 701, mediaType = "movie", title = "Alternate cut" },
+                },
+            }),
+            var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+        });
+        BaseItem? savedItem = null;
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = false,
+            },
+            SaveUserDataHook = (_, item, _, _, _) => savedItem = item,
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = _ => items,
+        };
+        var lookup = StubItemLookupService.FromItems(
+            items,
+            (ids, _) => ids.Where(id => id == accessible.Id).ToHashSet());
+        var task = new SeerrWatchlistSyncTask(
+            library,
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SyncSeerrWatchlist = true,
+                AddRequestedMediaToWatchlist = false,
+                PreventWatchlistReAddition = false,
+                SeerrUrls = "http://only",
+                SeerrApiKey = "key",
+            }),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(2, lookup.ProviderQueryCount);
+        Assert.Equal(3, lookup.AccessQueryCount);
+        Assert.Equal(1, userData.GetUserDataBatchCallCount);
+        Assert.Equal(0, userData.GetUserDataCallCount);
+        Assert.Same(accessible, savedItem);
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_AccessRevokedDuringOwnershipProofDoesNotSave()
+    {
+        var user = new User("revoked-sync-user", "provider", "password-provider");
+        var movie = MovieWithTmdbId("Revoked movie", "702");
+        var handler = new RequestRoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/user" => UserMap(user, 7),
+            "/api/v1/user/7/watchlist" => Json(new
+            {
+                page = 1,
+                totalPages = 1,
+                totalResults = 1,
+                results = new[]
+                {
+                    new { tmdbId = 702, mediaType = "movie", title = "Revoked movie" },
+                },
+            }),
+            var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+        });
+        var accessReads = 0;
+        var lookup = StubItemLookupService.FromItems(
+            new BaseItem[] { movie },
+            (ids, _) => Interlocked.Increment(ref accessReads) == 1
+                ? ids.ToHashSet()
+                : new HashSet<Guid>());
+        var saveCalls = 0;
+        var task = new SeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = _ => new BaseItem[] { movie },
+            },
+            new StubUserManager(user),
+            new StubUserDataManager
+            {
+                GetUserDataHook = (_, item) => new UserItemData
+                {
+                    Key = item.Id.ToString("N"),
+                    Likes = false,
+                },
+                SaveUserDataHook = (_, _, _, _, _) => Interlocked.Increment(ref saveCalls),
+            },
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SyncSeerrWatchlist = true,
+                AddRequestedMediaToWatchlist = false,
+                PreventWatchlistReAddition = false,
+                SeerrUrls = "http://only",
+                SeerrApiKey = "key",
+            }),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(2, accessReads);
+        Assert.Equal(0, saveCalls);
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_FirstUsersSaveRevokesSecondUsersAccess()
+    {
+        var firstUser = new User("first-revocation-user", "provider", "password-provider");
+        var secondUser = new User("second-revocation-user", "provider", "password-provider");
+        var movie = MovieWithTmdbId("Shared movie", "703");
+        var handler = new RequestRoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/user" => Json(new
+            {
+                results = new[]
+                {
+                    new { id = 7, jellyfinUserId = firstUser.Id },
+                    new { id = 8, jellyfinUserId = secondUser.Id },
+                },
+                pageInfo = new { page = 1, pages = 1, results = 2 },
+            }),
+            "/api/v1/user/7/watchlist" or "/api/v1/user/8/watchlist" => Json(new
+            {
+                page = 1,
+                totalPages = 1,
+                totalResults = 1,
+                results = new[]
+                {
+                    new { tmdbId = 703, mediaType = "movie", title = "Shared movie" },
+                },
+            }),
+            var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+        });
+        var secondUserRevoked = false;
+        var lookup = StubItemLookupService.FromItems(
+            new BaseItem[] { movie },
+            (ids, user) => user.Id == secondUser.Id && secondUserRevoked
+                ? new HashSet<Guid>()
+                : ids.ToHashSet());
+        var savedUsers = new List<Guid>();
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = false,
+            },
+            SaveUserDataHook = (user, _, _, _, _) =>
+            {
+                savedUsers.Add(user.Id);
+                secondUserRevoked = true;
+            },
+        };
+        var task = new SeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = _ => new BaseItem[] { movie },
+            },
+            new StubUserManager(firstUser, secondUser),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SyncSeerrWatchlist = true,
+                AddRequestedMediaToWatchlist = false,
+                PreventWatchlistReAddition = false,
+                SeerrUrls = "http://only",
+                SeerrApiKey = "key",
+            }),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(new[] { firstUser.Id }, savedUsers);
+        Assert.Equal(2, lookup.ProviderQueryCount);
+        Assert.Equal(6, lookup.AccessQueryCount);
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_AlreadyLikedEditionDoesNotLikeAnotherCut()
+    {
+        var user = new User("existing-cut-user", "provider", "password-provider");
+        var unlikedEdition = MovieWithTmdbId("Unliked cut", "704");
+        unlikedEdition.Id = Guid.Parse("00000000-0000-0000-0000-000000000023");
+        var likedEdition = MovieWithTmdbId("Liked cut", "704");
+        likedEdition.Id = Guid.Parse("00000000-0000-0000-0000-000000000024");
+        var items = new BaseItem[] { unlikedEdition, likedEdition };
+        var handler = new RequestRoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/user" => UserMap(user, 7),
+            "/api/v1/user/7/watchlist" => Json(new
+            {
+                page = 1,
+                totalPages = 1,
+                totalResults = 1,
+                results = new[]
+                {
+                    new { tmdbId = 704, mediaType = "movie", title = "Existing cut" },
+                },
+            }),
+            var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+        });
+        var saveCount = 0;
+        var userData = new StubUserDataManager
+        {
+            GetUserDataBatchHook = (accessibleItems, _) => accessibleItems.ToDictionary(
+                static item => item.Id,
+                item => new UserItemData
+                {
+                    Key = item.Id.ToString("N"),
+                    Likes = item.Id == likedEdition.Id,
+                }),
+            SaveUserDataHook = (_, _, _, _, _) => saveCount++,
+        };
+        var lookup = StubItemLookupService.FromItems(items);
+        var task = new SeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = _ => items,
+            },
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<SeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SyncSeerrWatchlist = true,
+                AddRequestedMediaToWatchlist = false,
+                PreventWatchlistReAddition = false,
+                SeerrUrls = "http://only",
+                SeerrApiKey = "key",
+            }),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(0, saveCount);
+        Assert.Equal(1, userData.GetUserDataBatchCallCount);
+        Assert.Equal(3, lookup.AccessQueryCount);
+    }
+
+    [Fact]
+    public async Task SeerrToJellyfinTask_UnlikeAtFinalAccessBarrierSavesBeforeMarker()
+    {
+        var baseDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "jc-watchlist-scheduled-live-data-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(baseDirectory);
+        try
+        {
+            var user = new User("scheduled-unlike-user", "provider", "password-provider");
+            var movie = MovieWithTmdbId("Scheduled unlike", "705");
+            var handler = new RequestRoutingHandler(request => request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/user" => UserMap(user, 7),
+                "/api/v1/user/7/watchlist" => Json(new
+                {
+                    page = 1,
+                    totalPages = 1,
+                    totalResults = 1,
+                    results = new[]
+                    {
+                        new { tmdbId = 705, mediaType = "movie", title = "Scheduled unlike" },
+                    },
+                }),
+                var path => throw new Xunit.Sdk.XunitException($"Unexpected path {path}."),
+            });
+            var unliked = false;
+            var lookup = StubItemLookupService.FromItems(new BaseItem[] { movie });
+            lookup.BeforeAccessQuery = count =>
+            {
+                if (count == 3)
+                {
+                    unliked = true;
+                }
+            };
+            var saveCount = 0;
+            var userData = new StubUserDataManager
+            {
+                GetUserDataBatchHook = (items, _) => items.ToDictionary(
+                    static item => item.Id,
+                    item => new UserItemData
+                    {
+                        Key = item.Id.ToString("N"),
+                        Likes = !unliked,
+                    }),
+                SaveUserDataHook = (_, _, data, _, _) =>
+                {
+                    Assert.True(data.Likes);
+                    saveCount++;
+                },
+            };
+            var userConfiguration = new UserConfigurationManager(
+                new StubAppPaths(baseDirectory),
+                NullLogger<UserConfigurationManager>.Instance);
+            var task = new SeerrWatchlistSyncTask(
+                new CountingLibraryManager
+                {
+                    GetItemListHook = _ => new BaseItem[] { movie },
+                },
+                new StubUserManager(user),
+                userData,
+                new RecordingHttpClientFactory(handler),
+                userConfiguration,
+                NullLogger<SeerrWatchlistSyncTask>.Instance,
+                new FakePluginConfigProvider(new PluginConfiguration
+                {
+                    SeerrEnabled = true,
+                    SyncSeerrWatchlist = true,
+                    AddRequestedMediaToWatchlist = false,
+                    PreventWatchlistReAddition = true,
+                    SeerrUrls = "http://only",
+                    SeerrApiKey = "key",
+                }),
+                lookup);
+
+            await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+            Assert.True(unliked);
+            Assert.Equal(1, saveCount);
+            var marker = Assert.Single(
+                userConfiguration.GetProcessedWatchlistItems(user.Id).Items);
+            Assert.Equal("sync", marker.Source);
+            Assert.Equal(705, marker.TmdbId);
+        }
+        finally
+        {
+            Directory.Delete(baseDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task JellyfinToSeerrTask_ExportsOnlyEachUsersAccessibleLikes()
+    {
+        var firstUser = new User("first-scope", "provider", "password-provider");
+        var secondUser = new User("second-scope", "provider", "password-provider");
+        var firstMovie = MovieWithTmdbId("First scope movie", "801");
+        firstMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000031");
+        var firstUsersSecondMovie = MovieWithTmdbId("First scope sequel", "803");
+        firstUsersSecondMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000033");
+        var secondMovie = MovieWithTmdbId("Second scope movie", "802");
+        secondMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000032");
+        var secondUsersSecondMovie = MovieWithTmdbId("Second scope sequel", "804");
+        secondUsersSecondMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000034");
+        var movies = new[]
+        {
+            firstMovie,
+            firstUsersSecondMovie,
+            secondMovie,
+            secondUsersSecondMovie,
+        };
+        var posts = new List<(string UserId, int TmdbId)>();
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v1/user")
+            {
+                return Json(new
+                {
+                    results = new[]
+                    {
+                        new { id = 7, jellyfinUserId = firstUser.Id },
+                        new { id = 8, jellyfinUserId = secondUser.Id },
+                    },
+                    pageInfo = new { page = 1, pages = 1, results = 2 },
+                });
+            }
+
+            if (path is "/api/v1/user/7/watchlist" or "/api/v1/user/8/watchlist")
+            {
+                return EmptyWatchlist();
+            }
+
+            if (path == "/api/v1/user/7")
+            {
+                return Json(new { id = 7, jellyfinUserId = firstUser.Id });
+            }
+
+            if (path == "/api/v1/user/8")
+            {
+                return Json(new { id = 8, jellyfinUserId = secondUser.Id });
+            }
+
+            if (request.Method == HttpMethod.Post && path == "/api/v1/watchlist")
+            {
+                var apiUser = Assert.Single(request.Headers.GetValues("X-Api-User"));
+                using var body = JsonDocument.Parse(
+                    request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                posts.Add((apiUser, body.RootElement.GetProperty("tmdbId").GetInt32()));
+                return Json(new { id = 1 });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {request.RequestUri}.");
+        });
+        var lookup = StubItemLookupService.FromItems(
+            movies,
+            (ids, user) => ids.Where(id => user.Id == firstUser.Id
+                    ? id == firstMovie.Id || id == firstUsersSecondMovie.Id
+                    : id == secondMovie.Id || id == secondUsersSecondMovie.Id)
+                .ToHashSet());
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = query => query.IncludeItemTypes.Contains(Jellyfin.Data.Enums.BaseItemKind.Movie)
+                ? movies.Cast<BaseItem>().ToArray()
+                : Array.Empty<BaseItem>(),
+        };
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = true,
+            },
+        };
+        var task = new JellyfinToSeerrWatchlistSyncTask(
+            library,
+            new StubUserManager(firstUser, secondUser),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(OutboundConfig()),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(
+            new[] { ("7", 801), ("7", 803), ("8", 802), ("8", 804) },
+            posts);
+        Assert.Equal(1, lookup.ProviderQueryCount);
+        Assert.Equal(8, lookup.AccessQueryCount);
+        Assert.Equal(8, userData.GetUserDataBatchCallCount);
+        Assert.Equal(0, userData.GetUserDataCallCount);
+    }
+
+    [Theory]
+    [InlineData("access")]
+    [InlineData("like")]
+    public async Task JellyfinToSeerrTask_FirstPostRevocationSuppressesSecondPost(
+        string revocation)
+    {
+        var user = new User("late-revocation-user", "provider", "password-provider");
+        var firstMovie = MovieWithTmdbId("First late movie", "805");
+        firstMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000035");
+        var secondMovie = MovieWithTmdbId("Second late movie", "806");
+        secondMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000036");
+        var movies = new[] { firstMovie, secondMovie };
+        var revoked = false;
+        var posts = new List<int>();
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v1/user") return UserMap(user, 7);
+            if (path == "/api/v1/user/7/watchlist") return EmptyWatchlist();
+            if (path == "/api/v1/user/7")
+            {
+                return Json(new { id = 7, jellyfinUserId = user.Id });
+            }
+
+            if (request.Method == HttpMethod.Post && path == "/api/v1/watchlist")
+            {
+                using var body = JsonDocument.Parse(
+                    request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                posts.Add(body.RootElement.GetProperty("tmdbId").GetInt32());
+                revoked = true;
+                return Json(new { id = 1 });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {request.RequestUri}.");
+        });
+        var lookup = StubItemLookupService.FromItems(
+            movies,
+            (ids, _) => ids.Where(id => !(revoked
+                    && revocation == "access"
+                    && id == secondMovie.Id))
+                .ToHashSet());
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = !(revoked
+                    && revocation == "like"
+                    && item.Id == secondMovie.Id),
+            },
+        };
+        var task = new JellyfinToSeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = query => query.IncludeItemTypes.Contains(
+                        Jellyfin.Data.Enums.BaseItemKind.Movie)
+                    ? movies.Cast<BaseItem>().ToArray()
+                    : Array.Empty<BaseItem>(),
+            },
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(OutboundConfig()),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(new[] { 805 }, posts);
+        Assert.Equal(1, lookup.ProviderQueryCount);
+        Assert.Equal(4, lookup.AccessQueryCount);
+        Assert.Equal(
+            revocation == "access" ? 3 : 4,
+            userData.GetUserDataBatchCallCount);
+    }
+
+    [Fact]
+    public async Task JellyfinToSeerrTask_FirstPostRebindSuppressesSecondPost()
+    {
+        var user = new User("late-rebind-user", "provider", "password-provider");
+        var reboundUserId = Guid.NewGuid();
+        var firstMovie = MovieWithTmdbId("First rebind movie", "807");
+        firstMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000037");
+        var secondMovie = MovieWithTmdbId("Second rebind movie", "808");
+        secondMovie.Id = Guid.Parse("00000000-0000-0000-0000-000000000038");
+        var movies = new[] { firstMovie, secondMovie };
+        var bindingReads = 0;
+        var rebound = false;
+        var posts = new List<int>();
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v1/user") return UserMap(user, 7);
+            if (path == "/api/v1/user/7/watchlist") return EmptyWatchlist();
+            if (path == "/api/v1/user/7")
+            {
+                bindingReads++;
+                return Json(new
+                {
+                    id = 7,
+                    jellyfinUserId = rebound ? reboundUserId : user.Id,
+                });
+            }
+
+            if (request.Method == HttpMethod.Post && path == "/api/v1/watchlist")
+            {
+                using var body = JsonDocument.Parse(
+                    request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                posts.Add(body.RootElement.GetProperty("tmdbId").GetInt32());
+                rebound = true;
+                return Json(new { id = 1 });
+            }
+
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {request.RequestUri}.");
+        });
+        var lookup = StubItemLookupService.FromItems(movies);
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = true,
+            },
+        };
+        var task = new JellyfinToSeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = query => query.IncludeItemTypes.Contains(
+                        Jellyfin.Data.Enums.BaseItemKind.Movie)
+                    ? movies.Cast<BaseItem>().ToArray()
+                    : Array.Empty<BaseItem>(),
+            },
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(OutboundConfig()),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(new[] { 807 }, posts);
+        Assert.Equal(3, bindingReads);
+        Assert.Equal(1, lookup.ProviderQueryCount);
+        Assert.Equal(3, lookup.AccessQueryCount);
+        Assert.Equal(3, userData.GetUserDataBatchCallCount);
+        Assert.Equal(0, userData.GetUserDataCallCount);
+    }
+
+    [Fact]
+    public void JellyfinToSeerrTask_LateAuthorizationBudgetCountsPreflightAndMutationReads()
+    {
+        Assert.Equal(
+            3,
+            JellyfinToSeerrWatchlistSyncTask.LateAuthorizationQueriesPerMutation);
+
+        const int exactPreflightBindings = 2;
+        var exactMutations = JellyfinToSeerrWatchlistSyncTask.MaximumLateMutationAuthorizations;
+        Assert.Equal(
+            JellyfinToSeerrWatchlistSyncTask.MaximumLateAuthorizationQueries,
+            (exactMutations
+                * JellyfinToSeerrWatchlistSyncTask.LateAuthorizationQueriesPerMutation)
+                + exactPreflightBindings);
+        Assert.True(
+            JellyfinToSeerrWatchlistSyncTask.LateAuthorizationBudget.CanFit(
+                exactMutations,
+                exactPreflightBindings));
+        Assert.False(
+            JellyfinToSeerrWatchlistSyncTask.LateAuthorizationBudget.CanFit(
+                exactMutations,
+                exactPreflightBindings + 1));
+
+        var budget = new JellyfinToSeerrWatchlistSyncTask.LateAuthorizationBudget();
+        Assert.True(budget.TryReservePreflightBinding());
+        Assert.True(budget.TryReservePreflightBinding());
+        for (var index = 0; index < exactMutations; index++)
+        {
+            Assert.True(budget.TryReserveMutation());
+        }
+
+        Assert.Equal(
+            JellyfinToSeerrWatchlistSyncTask.MaximumLateAuthorizationQueries,
+            budget.ReservedQueries);
+        Assert.False(budget.TryReservePreflightBinding());
+        Assert.False(budget.TryReserveMutation());
+    }
+
+    [Theory]
+    [InlineData(WatchlistLibraryResolver.MaximumCandidates, true)]
+    [InlineData(WatchlistLibraryResolver.MaximumCandidates + 1, false)]
+    public async Task JellyfinToSeerrTask_LibrarySnapshotUsesBoundedPagesAtExactLimit(
+        int itemCount,
+        bool expectedComplete)
+    {
+        var movie = MovieWithTmdbId("Paged movie", "900");
+        var queries = new List<(int Start, int Limit)>();
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = query =>
+            {
+                Assert.InRange(
+                    query.Limit ?? 0,
+                    1,
+                    JellyfinToSeerrWatchlistSyncTask.LibraryEnumerationPageSize);
+                var start = query.StartIndex ?? 0;
+                queries.Add((start, query.Limit!.Value));
+                if (!query.IncludeItemTypes.Contains(Jellyfin.Data.Enums.BaseItemKind.Movie)
+                    || start >= itemCount)
+                {
+                    return Array.Empty<BaseItem>();
+                }
+
+                var count = Math.Min(query.Limit.Value, itemCount - start);
+                return Enumerable.Repeat<BaseItem>(movie, count).ToArray();
+            },
+        };
+        var destination = new List<(BaseItem item, string mediaType)>();
+
+        var complete = await JellyfinToSeerrWatchlistSyncTask.TryCollectLibraryItemsBoundedAsync(
+            library,
+            destination,
+            CancellationToken.None);
+
+        Assert.Equal(expectedComplete, complete);
+        Assert.Equal(itemCount, destination.Count);
+        Assert.All(
+            queries,
+            query => Assert.InRange(
+                query.Limit,
+                1,
+                JellyfinToSeerrWatchlistSyncTask.LibraryEnumerationPageSize));
+    }
+
+    [Fact]
+    public async Task JellyfinToSeerrTask_LibrarySnapshotObservesCancellationBetweenPages()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var movie = MovieWithTmdbId("Cancellation page", "901");
+        var library = new CountingLibraryManager
+        {
+            GetItemListHook = query =>
+            {
+                cancellation.Cancel();
+                return Enumerable.Repeat<BaseItem>(movie, query.Limit!.Value).ToArray();
+            },
+        };
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            JellyfinToSeerrWatchlistSyncTask.TryCollectLibraryItemsBoundedAsync(
+                library,
+                new List<(BaseItem item, string mediaType)>(),
+                cancellation.Token));
+        Assert.Equal(1, library.GetItemListCallCount);
+    }
+
+    [Fact]
+    public async Task JellyfinToSeerrTask_AccessRevokedDuringFreshBindingDoesNotExport()
+    {
+        var user = new User("revoked-export-user", "provider", "password-provider");
+        var movie = MovieWithTmdbId("Revoked export", "803");
+        var accessReads = 0;
+        var lookup = StubItemLookupService.FromItems(
+            new[] { movie },
+            (ids, _) => Interlocked.Increment(ref accessReads) == 1
+                ? ids.ToHashSet()
+                : new HashSet<Guid>());
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v1/user") return UserMap(user, 7);
+            if (path == "/api/v1/user/7/watchlist") return EmptyWatchlist();
+            if (path == "/api/v1/user/7")
+            {
+                return Json(new { id = 7, jellyfinUserId = user.Id });
+            }
+
+            if (request.Method == HttpMethod.Post) return Json(new { id = 1 });
+            throw new Xunit.Sdk.XunitException($"Unexpected request {request.Method} {request.RequestUri}.");
+        });
+        var task = CreateOutboundTask(user, new[] { movie }, handler, new FakePluginConfigProvider(OutboundConfig()), lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(2, accessReads);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post);
+    }
+
+    [Theory]
+    [InlineData("access")]
+    [InlineData("like")]
+    public async Task JellyfinToSeerrTask_FinalBindingReadRevocationSuppressesPost(
+        string revokedAuthority)
+    {
+        var user = new User("binding-window-user", "provider", "password-provider");
+        var movie = MovieWithTmdbId("Binding window movie", "809");
+        var revoked = false;
+        var bindingReads = 0;
+        var handler = new RequestRoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v1/user") return UserMap(user, 7);
+            if (path == "/api/v1/user/7/watchlist") return EmptyWatchlist();
+            if (path == "/api/v1/user/7")
+            {
+                if (Interlocked.Increment(ref bindingReads) == 2)
+                {
+                    revoked = true;
+                }
+
+                return Json(new { id = 7, jellyfinUserId = user.Id });
+            }
+
+            if (request.Method == HttpMethod.Post) return Json(new { id = 1 });
+            throw new Xunit.Sdk.XunitException(
+                $"Unexpected request {request.Method} {request.RequestUri}.");
+        });
+        var lookup = StubItemLookupService.FromItems(
+            new BaseItem[] { movie },
+            (ids, _) => revoked && revokedAuthority == "access"
+                ? new HashSet<Guid>()
+                : ids.ToHashSet());
+        var userData = new StubUserDataManager
+        {
+            GetUserDataHook = (_, item) => new UserItemData
+            {
+                Key = item.Id.ToString("N"),
+                Likes = !(revoked && revokedAuthority == "like"),
+            },
+        };
+        var task = new JellyfinToSeerrWatchlistSyncTask(
+            new CountingLibraryManager
+            {
+                GetItemListHook = query => query.IncludeItemTypes.Contains(
+                        Jellyfin.Data.Enums.BaseItemKind.Movie)
+                    ? new BaseItem[] { movie }
+                    : Array.Empty<BaseItem>(),
+            },
+            new StubUserManager(user),
+            userData,
+            new RecordingHttpClientFactory(handler),
+            userConfigurationManager: null!,
+            NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
+            new FakePluginConfigProvider(OutboundConfig()),
+            lookup);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.Equal(2, bindingReads);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post);
+        Assert.Equal(3, lookup.AccessQueryCount);
+        Assert.Equal(
+            revokedAuthority == "access" ? 2 : 3,
+            userData.GetUserDataBatchCallCount);
     }
 
     [Theory]
@@ -402,6 +1230,7 @@ public sealed class SeerrScheduledTaskPaginationTests
         var user = new User("linked-user", "provider", "password-provider");
         var validMovie = new Movie
         {
+            Id = Guid.NewGuid(),
             Name = "Valid first movie",
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -410,6 +1239,7 @@ public sealed class SeerrScheduledTaskPaginationTests
         };
         var invalidMovie = new Movie
         {
+            Id = Guid.NewGuid(),
             Name = "Invalid later movie",
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -471,7 +1301,8 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
-            configProvider);
+            configProvider,
+            new StubItemLookupService());
 
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
@@ -609,7 +1440,9 @@ public sealed class SeerrScheduledTaskPaginationTests
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
-        Assert.Single(handler.Requests, request => request.Uri.AbsolutePath == "/api/v1/user/7");
+        Assert.Equal(
+            2,
+            handler.Requests.Count(request => request.Uri.AbsolutePath == "/api/v1/user/7"));
     }
 
     [Fact]
@@ -672,7 +1505,8 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<SeerrWatchlistSyncTask>.Instance,
-            configProvider);
+            configProvider,
+            new StubItemLookupService());
 
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
@@ -904,6 +1738,7 @@ public sealed class SeerrScheduledTaskPaginationTests
     private static Movie MovieWithTmdbId(string name, string tmdbId)
         => new()
         {
+            Id = Guid.NewGuid(),
             Name = name,
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -931,7 +1766,8 @@ public sealed class SeerrScheduledTaskPaginationTests
         User user,
         IReadOnlyList<Movie> movies,
         HttpMessageHandler handler,
-        FakePluginConfigProvider configProvider)
+        FakePluginConfigProvider configProvider,
+        StubItemLookupService? itemLookup = null)
     {
         var libraryManager = new CountingLibraryManager
         {
@@ -955,7 +1791,8 @@ public sealed class SeerrScheduledTaskPaginationTests
             new RecordingHttpClientFactory(handler),
             userConfigurationManager: null!,
             NullLogger<JellyfinToSeerrWatchlistSyncTask>.Instance,
-            configProvider);
+            configProvider,
+            itemLookup ?? new StubItemLookupService());
     }
 
     private static HttpResponseMessage Json(object body, HttpStatusCode status = HttpStatusCode.OK)

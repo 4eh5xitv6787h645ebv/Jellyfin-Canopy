@@ -30,7 +30,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 null!,
                 null!,
                 NullLogger<WatchlistMonitor>.Instance,
-                new FakePluginConfigProvider(WatchlistEnabled()));
+                new FakePluginConfigProvider(WatchlistEnabled()),
+                new StubItemLookupService());
 
             monitor.Initialize();
             monitor.Initialize();

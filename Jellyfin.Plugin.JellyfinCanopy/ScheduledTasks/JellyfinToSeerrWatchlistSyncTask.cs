@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -22,6 +23,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
     // Scheduled task that syncs Jellyfin watchlist items to Seerr watchlist.
     public class JellyfinToSeerrWatchlistSyncTask : IScheduledTask
     {
+        internal const int MaximumLateAuthorizationQueries = 200_000;
+        internal const int LibraryEnumerationPageSize = 1_000;
+        // One access projection, one Likes read, and one exact Seerr binding
+        // lookup are reserved for every candidate mutation.
+        internal const int LateAuthorizationQueriesPerMutation = 3;
+        internal const int MaximumLateMutationAuthorizations =
+            MaximumLateAuthorizationQueries / LateAuthorizationQueriesPerMutation;
+
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
@@ -29,6 +38,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         private readonly Configuration.UserConfigurationManager _userConfigurationManager;
         private readonly ILogger<JellyfinToSeerrWatchlistSyncTask> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly WatchlistLibraryResolver _watchlistLibraryResolver;
 
         public JellyfinToSeerrWatchlistSyncTask(
             ILibraryManager libraryManager,
@@ -37,7 +47,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             IHttpClientFactory httpClientFactory,
             Configuration.UserConfigurationManager userConfigurationManager,
             ILogger<JellyfinToSeerrWatchlistSyncTask> logger,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            IItemLookupService itemLookup)
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
@@ -46,6 +57,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             _userConfigurationManager = userConfigurationManager;
             _configProvider = configProvider;
             _logger = logger;
+            _watchlistLibraryResolver = new WatchlistLibraryResolver(
+                libraryManager,
+                itemLookup);
         }
 
         public string Name => "Sync Watchlist from Jellyfin to Seerr";
@@ -149,22 +163,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
             _logger.LogInformation($"[Jellyfin→Seerr Watchlist Sync] Found {jellyfinUsers.Count} Jellyfin users");
 
-            // Pre-fetch all movies and series with TMDB IDs once — shared across users
-            var allMovies = _libraryManager.GetItemList(new InternalItemsQuery
+            // PERF(S2): visit the one shared movie/series snapshot in cancellable
+            // 1,000-item pages. A sentinel item makes the aggregate 100,000-item
+            // ceiling complete-or-nothing without ever materializing a giant query.
+            var allLibraryItems = new List<(BaseItem item, string mediaType)>();
+            if (!await TryCollectLibraryItemsBoundedAsync(
+                    _libraryManager,
+                    allLibraryItems,
+                    cancellationToken).ConfigureAwait(false))
             {
-                IncludeItemTypes = new[] { BaseItemKind.Movie },
-                HasTmdbId = true,
-                Recursive = true
-            }).Select(i => (item: i, mediaType: "movie"));
+                _logger.LogWarning(
+                    "[Jellyfin→Seerr Watchlist Sync] The bounded Jellyfin movie/series snapshot exceeded its item limit. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
 
-            var allSeries = _libraryManager.GetItemList(new InternalItemsQuery
+            var allLibraryItemIds = allLibraryItems
+                .Select(static entry => entry.item.Id)
+                .Distinct()
+                .ToList();
+            var linkedUserCount = jellyfinUsers.Count(user =>
+                SeerrUserIdentityDomains.FindBindings(
+                    seerrUserDomains,
+                    user.Id.ToString()).Count > 0);
+            if (linkedUserCount > 0
+                && allLibraryItemIds.Count
+                    > WatchlistLibraryResolver.MaximumCandidateProjections / linkedUserCount)
             {
-                IncludeItemTypes = new[] { BaseItemKind.Series },
-                HasTmdbId = true,
-                Recursive = true
-            }).Select(i => (item: i, mediaType: "tv"));
+                _logger.LogWarning(
+                    "[Jellyfin→Seerr Watchlist Sync] The aggregate linked-user/library access projection budget was exceeded. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
 
-            var allLibraryItems = allMovies.Concat(allSeries).ToList();
+            var libraryItemsByKey = new Dictionary<WatchlistMediaKey, List<BaseItem>>();
+            foreach (var (item, mediaType) in allLibraryItems)
+            {
+                if (!item.ProviderIds.TryGetValue("Tmdb", out var tmdbIdText)
+                    || !int.TryParse(
+                        tmdbIdText,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var tmdbId)
+                    || tmdbId <= 0)
+                {
+                    continue;
+                }
+
+                var mediaKey = new WatchlistMediaKey(mediaType, tmdbId);
+                if (!libraryItemsByKey.TryGetValue(mediaKey, out var editions))
+                {
+                    editions = new List<BaseItem>();
+                    libraryItemsByKey.Add(mediaKey, editions);
+                }
+
+                editions.Add(item);
+            }
 
             // Stage every local watchlist and every source-local absence proof for
             // the whole run before the first Seerr mutation. A failure on a later
@@ -186,8 +240,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                         continue;
                     }
 
-                    var rawJellyfinWatchlist = allLibraryItems
-                        .Where(t => _userDataManager.GetUserData(jellyfinUser, t.item)?.Likes == true)
+                    // Project the one shared library snapshot through this user's
+                    // current access policy before reading any per-item state. The
+                    // fixed ids are queried in cancellable 1,000-item batches,
+                    // never as a library scan or one giant policy query.
+                    var accessibleItemIds = _watchlistLibraryResolver.GetAccessibleItemIdsBounded(
+                        allLibraryItemIds,
+                        jellyfinUser,
+                        cancellationToken);
+                    var accessibleLibraryItems = allLibraryItems
+                        .Where(t => accessibleItemIds.Contains(t.item.Id))
+                        .ToList();
+                    var accessibleBaseItems = accessibleLibraryItems
+                        .Select(static entry => entry.item)
+                        .DistinctBy(static item => item.Id)
+                        .ToList();
+                    var userDataById = accessibleBaseItems.Count == 0
+                        ? new Dictionary<Guid, UserItemData>()
+                        : _userDataManager.GetUserDataBatch(
+                            accessibleBaseItems,
+                            jellyfinUser);
+                    var rawJellyfinWatchlist = accessibleLibraryItems
+                        .Where(t => userDataById.TryGetValue(t.item.Id, out var userData)
+                            && userData.Likes == true)
+                        .OrderBy(static entry => entry.item.Id)
                         .ToList();
                     var jellyfinWatchlist = new List<(
                         BaseItem Item,
@@ -274,6 +350,185 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            var pendingExports = new List<PendingWatchlistExport>();
+            var pendingExportIdentities = new HashSet<(
+                string SourceUrl,
+                string SeerrUserId,
+                string ItemKey)>();
+            var resolutionRequests = new HashSet<(Guid UserId, WatchlistMediaKey Key)>();
+            foreach (var jellyfinUser in jellyfinUsers)
+            {
+                if (!stagedInputs.TryGetValue(jellyfinUser.Id, out var stagedInput))
+                {
+                    continue;
+                }
+
+                foreach (var (binding, seerrWatchlistKeys) in stagedInput.SeerrWatchlists)
+                {
+                    foreach (var (_, mediaType, tmdbId, key) in stagedInput.JellyfinWatchlist)
+                    {
+                        if (seerrWatchlistKeys.Contains(key))
+                        {
+                            continue;
+                        }
+
+                        var identity = (binding.SourceUrl, binding.SeerrUserId, key);
+                        if (!pendingExportIdentities.Add(identity))
+                        {
+                            continue;
+                        }
+
+                        if (pendingExports.Count >= MaximumLateMutationAuthorizations)
+                        {
+                            _logger.LogWarning(
+                                "[Jellyfin→Seerr Watchlist Sync] The aggregate late-authorization query budget was exceeded. No Seerr mutations will be attempted.");
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        var mediaKey = new WatchlistMediaKey(mediaType, tmdbId);
+                        if (resolutionRequests.Add((jellyfinUser.Id, mediaKey))
+                            && resolutionRequests.Count > WatchlistLibraryResolver.MaximumResolutionRequests)
+                        {
+                            _logger.LogWarning(
+                                "[Jellyfin→Seerr Watchlist Sync] The aggregate user/media export-resolution budget was exceeded. No Seerr mutations will be attempted.");
+                            progress?.Report(100);
+                            return;
+                        }
+
+                        pendingExports.Add(new PendingWatchlistExport(
+                            jellyfinUser,
+                            binding,
+                            mediaKey,
+                            key));
+                    }
+                }
+            }
+
+            var pendingBindings = pendingExports
+                .GroupBy(static pending => (
+                    pending.User.Id,
+                    pending.Binding.SourceUrl,
+                    pending.Binding.SeerrUserId))
+                .Select(static group => group.First())
+                .ToList();
+            if (!LateAuthorizationBudget.CanFit(
+                    pendingExports.Count,
+                    pendingBindings.Count))
+            {
+                _logger.LogWarning(
+                    "[Jellyfin→Seerr Watchlist Sync] The aggregate preflight and mutation authorization budget was exceeded. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
+
+            var lateAuthorizationBudget = new LateAuthorizationBudget();
+
+            // A linked account authorizes every item for the same source-local
+            // user. Validate each distinct binding once before the final batched
+            // provider resolution. Exact binding ownership, fixed-id access and
+            // Likes are deliberately rechecked later at each individual POST
+            // boundary.
+            foreach (var pendingBinding in pendingBindings)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!TryAuthorizeMutationConfiguration(
+                        mutationConfigStamp,
+                        initialApiKey,
+                        pendingBinding.Binding.SourceUrl))
+                {
+                    _logger.LogWarning(
+                        "[Jellyfin→Seerr Watchlist Sync] Plugin configuration changed while preparing linked-user validation. No Seerr mutations will be attempted.");
+                    progress?.Report(100);
+                    return;
+                }
+
+                if (!lateAuthorizationBudget.TryReservePreflightBinding())
+                {
+                    _logger.LogWarning(
+                        "[Jellyfin→Seerr Watchlist Sync] The aggregate late-authorization query budget was exhausted before linked-user validation.");
+                    progress?.Report(100);
+                    return;
+                }
+
+                var freshBindingIsValid = await HasFreshExactBindingAsync(
+                    httpClient,
+                    pendingBinding.Binding.SourceUrl,
+                    pendingBinding.Binding.SeerrUserId,
+                    pendingBinding.User.Id,
+                    initialApiKey,
+                    dispatchFence,
+                    cancellationToken).ConfigureAwait(false);
+                if (!TryAuthorizeMutationConfiguration(
+                        mutationConfigStamp,
+                        initialApiKey,
+                        pendingBinding.Binding.SourceUrl)
+                    || !freshBindingIsValid)
+                {
+                    _logger.LogWarning(
+                        $"[Jellyfin→Seerr Watchlist Sync] Fresh linked-user validation failed for {pendingBinding.User.Username} on {pendingBinding.Binding.SourceUrl}. No Seerr mutations will be attempted.");
+                    progress?.Report(100);
+                    return;
+                }
+            }
+
+            var libraryRequests = pendingExports
+                .GroupBy(static pending => (pending.User.Id, pending.MediaKey))
+                .Select(static group => new WatchlistLibraryRequest(
+                    group.First().User,
+                    group.Key.MediaKey))
+                .ToList();
+            WatchlistLibraryBatch dispatchLibrary;
+            try
+            {
+                dispatchLibrary = _watchlistLibraryResolver.Resolve(
+                    libraryRequests,
+                    libraryItemsByKey,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"[Jellyfin→Seerr Watchlist Sync] Failed to prepare the final batched Jellyfin access projection: {ex.Message}. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
+
+            if (!dispatchLibrary.IsComplete)
+            {
+                _logger.LogWarning(
+                    "[Jellyfin→Seerr Watchlist Sync] The final bounded Jellyfin access lookup was incomplete. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
+
+            Dictionary<(Guid UserId, WatchlistMediaKey MediaKey), BaseItem> dispatchSelections;
+            try
+            {
+                dispatchSelections = PrepareDispatchSelections(
+                    pendingExports.Select(static pending => new WatchlistLibraryRequest(
+                        pending.User,
+                        pending.MediaKey)).ToList(),
+                    dispatchLibrary,
+                    _userDataManager,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"[Jellyfin→Seerr Watchlist Sync] Failed to prepare the bounded current-Likes projection: {ex.Message}. No Seerr mutations will be attempted.");
+                progress?.Report(100);
+                return;
+            }
+
             var totalUsers = jellyfinUsers.Count;
             var processedUsers = 0;
             var totalItemsAdded = 0;
@@ -281,7 +536,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                 string SourceUrl,
                 string SeerrUserId,
                 string ItemKey)>();
-
             foreach (var jellyfinUser in jellyfinUsers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -318,7 +572,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
                     foreach (var (binding, seerrWatchlistKeys) in stagedWatchlists)
                     {
-                        foreach (var (item, mediaType, tmdbId, key) in jellyfinWatchlist)
+                        foreach (var (_, mediaType, tmdbId, key) in jellyfinWatchlist)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
 
@@ -338,21 +592,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                                 continue;
                             }
 
-                            // Re-authorize immediately before the awaited fresh
-                            // account lookup, then again after it. The exact user
-                            // endpoint proves the source-local numeric id still
-                            // belongs to this Jellyfin GUID at commit time.
+                            var mediaKey = new WatchlistMediaKey(mediaType, tmdbId);
+                            if (!dispatchSelections.TryGetValue(
+                                    (jellyfinUser.Id, mediaKey),
+                                    out var dispatchItem))
+                            {
+                                _logger.LogDebug(
+                                    $"[Jellyfin→Seerr Watchlist Sync] Suppressed {key} because no currently accessible edition remains liked for {jellyfinUser.Username}.");
+                                itemsSkipped++;
+                                continue;
+                            }
+
                             if (!TryAuthorizeMutationConfiguration(
                                     mutationConfigStamp,
                                     initialApiKey,
                                     binding.SourceUrl))
                             {
                                 _logger.LogWarning(
-                                    "[Jellyfin→Seerr Watchlist Sync] Plugin configuration changed while preparing a watchlist mutation. The run was stopped before dispatch.");
+                                    "[Jellyfin→Seerr Watchlist Sync] Plugin configuration changed before late item authorization. The run was stopped before dispatch.");
                                 progress?.Report(100);
                                 return;
                             }
 
+                            if (!lateAuthorizationBudget.TryReserveMutation())
+                            {
+                                _logger.LogWarning(
+                                    "[Jellyfin→Seerr Watchlist Sync] The aggregate late-authorization query budget was exhausted. The run was stopped before dispatch.");
+                                progress?.Report(100);
+                                return;
+                            }
+
+                            // The remote binding lookup is the only awaited late
+                            // check. Complete it first, then read access and Likes
+                            // synchronously so neither local authority can go stale
+                            // across network latency before the POST.
                             var freshBindingIsValid = await HasFreshExactBindingAsync(
                                 httpClient,
                                 binding.SourceUrl,
@@ -361,6 +634,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                                 initialApiKey,
                                 dispatchFence,
                                 cancellationToken).ConfigureAwait(false);
+                            if (!TryAuthorizeMutationConfiguration(
+                                    mutationConfigStamp,
+                                    initialApiKey,
+                                    binding.SourceUrl)
+                                || !freshBindingIsValid)
+                            {
+                                _logger.LogWarning(
+                                    $"[Jellyfin→Seerr Watchlist Sync] Fresh linked-user validation failed for {jellyfinUser.Username} on {binding.SourceUrl}. The run was stopped before dispatch.");
+                                progress?.Report(100);
+                                return;
+                            }
+
+                            var currentItem = _watchlistLibraryResolver.RevalidateSelection(
+                                jellyfinUser,
+                                mediaKey,
+                                dispatchItem,
+                                cancellationToken);
+                            if (currentItem == null)
+                            {
+                                _logger.LogDebug(
+                                    $"[Jellyfin→Seerr Watchlist Sync] Suppressed {key} because the selected edition is no longer accessible to {jellyfinUser.Username}.");
+                                itemsSkipped++;
+                                continue;
+                            }
+
+                            var currentUserData = _userDataManager.GetUserDataBatch(
+                                new[] { currentItem },
+                                jellyfinUser);
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (!currentUserData.TryGetValue(currentItem.Id, out var liveUserData)
+                                || liveUserData.Likes != true)
+                            {
+                                _logger.LogDebug(
+                                    $"[Jellyfin→Seerr Watchlist Sync] Suppressed {key} because the selected edition is no longer liked by {jellyfinUser.Username}.");
+                                itemsSkipped++;
+                                continue;
+                            }
 
                             if (!TryAuthorizeMutationConfiguration(
                                     mutationConfigStamp,
@@ -368,15 +678,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                                     binding.SourceUrl))
                             {
                                 _logger.LogWarning(
-                                    "[Jellyfin→Seerr Watchlist Sync] Plugin configuration changed during the final linked-user validation. The run was stopped before dispatch.");
-                                progress?.Report(100);
-                                return;
-                            }
-
-                            if (!freshBindingIsValid)
-                            {
-                                _logger.LogWarning(
-                                    $"[Jellyfin→Seerr Watchlist Sync] Fresh linked-user validation failed for {jellyfinUser.Username} on {binding.SourceUrl}. The run was stopped before dispatch.");
+                                    "[Jellyfin→Seerr Watchlist Sync] Plugin configuration changed during the late item authorization. The run was stopped before dispatch.");
                                 progress?.Report(100);
                                 return;
                             }
@@ -397,7 +699,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                                 initialApiKey,
                                 tmdbId,
                                 mediaType,
-                                item.Name ?? string.Empty,
+                                currentItem.Name ?? string.Empty,
                                 dispatchFence,
                                 cancellationToken).ConfigureAwait(false);
 
@@ -406,7 +708,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                                 itemsAdded++;
                                 totalItemsAdded++;
                                 seerrWatchlistKeys.Add(key);
-                                _logger.LogInformation($"[Jellyfin→Seerr Watchlist Sync] ✓ Added to Seerr watchlist: {item.Name} for user {jellyfinUser.Username} on {binding.SourceUrl}");
+                                _logger.LogInformation($"[Jellyfin→Seerr Watchlist Sync] ✓ Added to Seerr watchlist: {currentItem.Name} for user {jellyfinUser.Username} on {binding.SourceUrl}");
                             }
                             else if (result == 0)
                             {
@@ -438,6 +740,130 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             _logger.LogInformation($"=================================================================================================================================");
             _logger.LogInformation($"[Jellyfin→Seerr Watchlist Sync] Completed. Added {totalItemsAdded} total items across {processedUsers} users");
             progress?.Report(100);
+        }
+
+        /// <summary>
+        /// Collects the complete movie/series provider snapshot in bounded pages.
+        /// The shared destination limit includes both media kinds and one sentinel.
+        /// </summary>
+        internal static async Task<bool> TryCollectLibraryItemsBoundedAsync(
+            ILibraryManager libraryManager,
+            List<(BaseItem item, string mediaType)> destination,
+            CancellationToken cancellationToken)
+        {
+            foreach (var (kind, mediaType) in new[]
+            {
+                (BaseItemKind.Movie, "movie"),
+                (BaseItemKind.Series, "tv"),
+            })
+            {
+                var startIndex = 0;
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var remainingWithSentinel =
+                        (WatchlistLibraryResolver.MaximumCandidates + 1)
+                        - destination.Count;
+                    if (remainingWithSentinel <= 0)
+                    {
+                        return false;
+                    }
+
+                    var pageLimit = Math.Min(
+                        LibraryEnumerationPageSize,
+                        remainingWithSentinel);
+                    var page = libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { kind },
+                        HasTmdbId = true,
+                        Recursive = true,
+                        StartIndex = startIndex,
+                        Limit = pageLimit
+                    });
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (page.Count > pageLimit)
+                    {
+                        return false;
+                    }
+
+                    foreach (var item in page)
+                    {
+                        destination.Add((item, mediaType));
+                    }
+
+                    if (destination.Count > WatchlistLibraryResolver.MaximumCandidates)
+                    {
+                        return false;
+                    }
+
+                    if (page.Count < pageLimit)
+                    {
+                        break;
+                    }
+
+                    startIndex = checked(startIndex + page.Count);
+                    await Task.Yield();
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reads each distinct user/media edition set and selects it once, regardless
+        /// of how many source-local Seerr bindings will consume that selection.
+        /// Candidate enumeration therefore remains linear in the resolver's bounded
+        /// user/key projection rather than multiplying by binding count.
+        /// </summary>
+        internal static Dictionary<(Guid UserId, WatchlistMediaKey MediaKey), BaseItem>
+            PrepareDispatchSelections(
+                IReadOnlyCollection<WatchlistLibraryRequest> requests,
+                WatchlistLibraryBatch library,
+                IUserDataManager userDataManager,
+                CancellationToken cancellationToken)
+        {
+            var distinctRequests = requests
+                .GroupBy(static request => (request.User.Id, request.Key))
+                .Select(static group => group.First())
+                .ToList();
+            var selections = new Dictionary<(
+                Guid UserId,
+                WatchlistMediaKey MediaKey), BaseItem>();
+            foreach (var userGroup in distinctRequests.GroupBy(static request => request.User.Id))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var user = userGroup.First().User;
+                var userItems = new List<BaseItem>();
+                var userItemIds = new HashSet<Guid>();
+                foreach (var request in userGroup)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    foreach (var item in library.Get(user, request.Key).AccessibleItems)
+                    {
+                        if (userItemIds.Add(item.Id))
+                        {
+                            userItems.Add(item);
+                        }
+                    }
+                }
+
+                var userData = userItems.Count == 0
+                    ? new Dictionary<Guid, UserItemData>()
+                    : userDataManager.GetUserDataBatch(userItems, user);
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var request in userGroup)
+                {
+                    var selection = library
+                        .Get(user, request.Key)
+                        .SelectPreferred(userData);
+                    if (selection?.UserData.Likes == true)
+                    {
+                        selections[(user.Id, request.Key)] = selection.Item;
+                    }
+                }
+            }
+
+            return selections;
         }
 
         private bool TryAuthorizeMutationConfiguration(
@@ -756,6 +1182,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             {
                 _logger.LogError($"[Jellyfin→Seerr Watchlist Sync] Error adding {title} to Seerr watchlist: {ex.Message}");
                 return -1;
+            }
+        }
+
+        private readonly record struct PendingWatchlistExport(
+            JUser User,
+            SeerrUserBinding Binding,
+            WatchlistMediaKey MediaKey,
+            string ItemKey);
+
+        internal sealed class LateAuthorizationBudget
+        {
+            public int ReservedQueries { get; private set; }
+
+            public static bool CanFit(int mutationCount, int preflightBindingCount)
+            {
+                if (mutationCount < 0 || preflightBindingCount < 0)
+                {
+                    return false;
+                }
+
+                return ((long)mutationCount * LateAuthorizationQueriesPerMutation)
+                    + preflightBindingCount
+                    <= MaximumLateAuthorizationQueries;
+            }
+
+            public bool TryReservePreflightBinding()
+                => TryReserve(1);
+
+            public bool TryReserveMutation()
+                => TryReserve(LateAuthorizationQueriesPerMutation);
+
+            private bool TryReserve(int queryCount)
+            {
+                if (ReservedQueries < 0
+                    || queryCount < 1
+                    || ReservedQueries > MaximumLateAuthorizationQueries - queryCount)
+                {
+                    return false;
+                }
+
+                ReservedQueries += queryCount;
+                return true;
             }
         }
 

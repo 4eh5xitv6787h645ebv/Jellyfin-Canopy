@@ -85,8 +85,23 @@ public sealed class StubUserDataManager : IUserDataManager
     {
         GetUserDataBatchCallCount++;
         GetUserDataBatchItemCount += items.Count;
-        if (GetUserDataBatchHook == null) throw new NotImplementedException();
-        return GetUserDataBatchHook(items, user);
+        if (GetUserDataBatchHook != null)
+        {
+            return GetUserDataBatchHook(items, user);
+        }
+
+        if (GetUserDataHook == null) throw new NotImplementedException();
+        var result = new Dictionary<Guid, UserItemData>();
+        foreach (var item in items)
+        {
+            var data = GetUserDataHook(user, item);
+            if (data != null)
+            {
+                result[item.Id] = data;
+            }
+        }
+
+        return result;
     }
 
     public UserItemDataDto? GetUserDataDto(BaseItem item, BaseItemDto? itemDto, User user, DtoOptions options) => throw new NotImplementedException();

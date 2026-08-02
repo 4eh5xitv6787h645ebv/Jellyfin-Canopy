@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr;
 using MediaBrowser.Controller;
@@ -23,13 +24,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
     // Scheduled task that syncs Seerr watchlist items to Jellyfin watchlist.
     public partial class SeerrWatchlistSyncTask : IScheduledTask
     {
-        private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly Configuration.UserConfigurationManager _userConfigurationManager;
         private readonly ILogger<SeerrWatchlistSyncTask> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly WatchlistLibraryResolver _watchlistLibraryResolver;
 
         public SeerrWatchlistSyncTask(
             ILibraryManager libraryManager,
@@ -38,15 +39,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             IHttpClientFactory httpClientFactory,
             Configuration.UserConfigurationManager userConfigurationManager,
             ILogger<SeerrWatchlistSyncTask> logger,
-            IPluginConfigProvider configProvider)
+            IPluginConfigProvider configProvider,
+            IItemLookupService itemLookup)
         {
-            _libraryManager = libraryManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
             _httpClientFactory = httpClientFactory;
             _userConfigurationManager = userConfigurationManager;
             _configProvider = configProvider;
             _logger = logger;
+            _watchlistLibraryResolver = new WatchlistLibraryResolver(
+                libraryManager,
+                itemLookup);
         }
 
         public string Name => "Sync Watchlist from Seerr to Jellyfin";
@@ -283,6 +287,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            var stagedLibraryRequests = new List<WatchlistLibraryRequest>();
+            foreach (var user in jellyfinUsers)
+            {
+                if (!stagedInputs.TryGetValue(user.Id, out var stagedInput))
+                {
+                    continue;
+                }
+
+                var userKeys = stagedInput.WatchlistItems
+                    .Concat(stagedInput.RequestItems)
+                    .Select(static item => new WatchlistMediaKey(item.MediaType, item.TmdbId))
+                    .Where(static key => key.IsValid)
+                    .Distinct();
+                foreach (var key in userKeys)
+                {
+                    if (stagedLibraryRequests.Count >= WatchlistLibraryResolver.MaximumResolutionRequests)
+                    {
+                        _logger.LogWarning(
+                            "[Seerr→Jellyfin Watchlist Sync] The aggregate user/media resolution budget was exceeded. No local changes will be applied.");
+                        progress?.Report(100);
+                        return;
+                    }
+
+                    stagedLibraryRequests.Add(new WatchlistLibraryRequest(user, key));
+                }
+            }
+
+            try
+            {
+                var preparedLibrary = _watchlistLibraryResolver.Resolve(
+                    stagedLibraryRequests,
+                    cancellationToken: cancellationToken);
+                if (!preparedLibrary.IsComplete)
+                {
+                    _logger.LogWarning(
+                        "[Seerr→Jellyfin Watchlist Sync] The bounded Jellyfin candidate lookup was incomplete. No local changes will be applied.");
+                    progress?.Report(100);
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"[Seerr→Jellyfin Watchlist Sync] Failed while preparing the Jellyfin access snapshot: {ex.Message}. No local changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+
             // Remote rows and their owner bindings form one authorization
             // snapshot. Re-prove the complete all-domain identity map after all
             // watchlist/request reads and require exact equality immediately
@@ -329,6 +385,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             }
 
             config = commitConfig;
+            WatchlistLibraryBatch commitLibrary;
+            try
+            {
+                // Re-run both provider resolution and the sparse per-user access
+                // projection after the awaited ownership proof. Each selected
+                // edition is projected once more immediately before its synchronous
+                // save/marker below.
+                commitLibrary = _watchlistLibraryResolver.Resolve(
+                    stagedLibraryRequests,
+                    cancellationToken: cancellationToken);
+                if (!commitLibrary.IsComplete)
+                {
+                    _logger.LogWarning(
+                        "[Seerr→Jellyfin Watchlist Sync] The final bounded Jellyfin access lookup was incomplete. No local changes will be applied.");
+                    progress?.Report(100);
+                    return;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"[Seerr→Jellyfin Watchlist Sync] Failed while revalidating Jellyfin access: {ex.Message}. No local changes will be applied.");
+                progress?.Report(100);
+                return;
+            }
+
             var totalUsers = jellyfinUsers.Count;
             var processedUsers = 0;
             var totalItemsAdded = 0;
@@ -390,9 +476,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     var alreadyProcessedItems = new List<string>();
                     var alreadyInWatchlistItems = new List<string>();
                     var notInLibraryItems = new List<string>();
+                    var inaccessibleItems = new List<string>();
                     var processedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var item in combinedItems)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var key = $"{item.MediaType}:{item.TmdbId}";
                         if (!processedKeys.Add(key))
                         {
@@ -410,9 +498,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                         var result = await ProcessWatchlistItem(
                             jellyfinUser,
                             item,
+                            commitLibrary.Get(
+                                jellyfinUser,
+                                new WatchlistMediaKey(item.MediaType, item.TmdbId)),
                             config,
                             dispatchFence,
-                            CancellationToken.None).ConfigureAwait(false);
+                            cancellationToken).ConfigureAwait(false);
                         if (result == WatchlistItemResult.ConfigurationChanged
                             || !CanCommit())
                         {
@@ -442,6 +533,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                             case WatchlistItemResult.NotInLibrary:
                                 notInLibraryItems.Add(itemInfo);
                                 break;
+                            case WatchlistItemResult.Inaccessible:
+                                inaccessibleItems.Add(itemInfo);
+                                break;
                         }
                     }
 
@@ -459,7 +553,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                         _logger.LogDebug($"[Seerr→Jellyfin Watchlist Sync] Items not in library for user {jellyfinUser.Username} (will be auto-added by WatchlistMonitor): {string.Join(", ", notInLibraryItems)}");
                     }
 
-                    _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] User {jellyfinUser.Username}: Added {itemsAdded} items to watchlist, {itemsPending} items added to pending watchlist, {alreadyProcessedItems.Count} already processed, {alreadyInWatchlistItems.Count} already in watchlist, {notInLibraryItems.Count} not in library");
+                    if (inaccessibleItems.Count > 0)
+                    {
+                        _logger.LogDebug($"[Seerr→Jellyfin Watchlist Sync] Items outside the current library access scope for user {jellyfinUser.Username}: {string.Join(", ", inaccessibleItems)}");
+                    }
+
+                    _logger.LogInformation($"[Seerr→Jellyfin Watchlist Sync] User {jellyfinUser.Username}: Added {itemsAdded} items to watchlist, {itemsPending} items added to pending watchlist, {alreadyProcessedItems.Count} already processed, {alreadyInWatchlistItems.Count} already in watchlist, {notInLibraryItems.Count} not in library, {inaccessibleItems.Count} inaccessible");
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -808,6 +907,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             AlreadyInWatchlist,
             AlreadyProcessed,
             NotInLibrary,
+            Inaccessible,
             ConfigurationChanged,
             Skipped
         }
@@ -832,6 +932,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         private Task<WatchlistItemResult> ProcessWatchlistItem(
             JUser user,
             WatchlistItem watchlistItem,
+            WatchlistLibraryMatch libraryMatch,
             PluginConfiguration config,
             SeerrDispatchFence dispatchFence,
             CancellationToken cancellationToken)
@@ -858,35 +959,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
                     }
                 }
 
-                // Determine Jellyfin item type based on Seerr media type
-                var itemType = watchlistItem.MediaType == "movie" ? BaseItemKind.Movie : BaseItemKind.Series;
-
-                // Find the item in Jellyfin library by TMDB ID
-                var items = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = new[] { itemType },
-                    HasTmdbId = true,
-                    Recursive = true
-                });
-
-                var item = items.FirstOrDefault(i =>
-                    i.ProviderIds != null
-                    && i.ProviderIds.TryGetValue("Tmdb", out var tmdbId)
-                    && MatchesTmdb(tmdbId, watchlistItem.TmdbId));
-
-                if (item == null)
+                if (libraryMatch.State == WatchlistLibraryMatchState.NotInLibrary)
                 {
                     // Item not in library yet - WatchlistMonitor will automatically add it when it arrives
                     return Task.FromResult(WatchlistItemResult.NotInLibrary);
                 }
 
-                // Get user data
-                var userData = _userDataManager.GetUserData(user, item);
-                if (userData == null)
+                if (libraryMatch.AccessibleItems.Count == 0)
                 {
-                    _logger.LogWarning($"[Seerr→Jellyfin Watchlist Sync] User data is null for item {item.Name}; skipping.");
+                    // A type-correct edition exists, but none is visible to this user
+                    // (or it disappeared while the final snapshot was materialized).
+                    return Task.FromResult(WatchlistItemResult.Inaccessible);
+                }
+
+                var mediaKey = new WatchlistMediaKey(
+                    watchlistItem.MediaType,
+                    watchlistItem.TmdbId);
+                var currentAccessibleItems = _watchlistLibraryResolver.RevalidateAccessibleItems(
+                    user,
+                    mediaKey,
+                    libraryMatch.AccessibleItems,
+                    cancellationToken);
+                if (currentAccessibleItems.Count == 0)
+                {
+                    return Task.FromResult(WatchlistItemResult.Inaccessible);
+                }
+
+                // Access is fixed immediately before this current user-data read.
+                // Re-select across every still-accessible edition so a concurrent
+                // unlike cannot create a processed marker with no Like, and a
+                // newly liked alternate cannot cause a duplicate cut to be liked.
+                var userDataByItemId = _userDataManager.GetUserDataBatch(
+                    currentAccessibleItems,
+                    user);
+                cancellationToken.ThrowIfCancellationRequested();
+                var currentMatch = new WatchlistLibraryMatch(
+                    WatchlistLibraryMatchState.Accessible,
+                    currentAccessibleItems);
+                var selection = currentMatch.SelectPreferred(userDataByItemId);
+                if (selection == null)
+                {
+                    _logger.LogWarning(
+                        $"[Seerr→Jellyfin Watchlist Sync] User data is unavailable for every accessible edition of TMDB {watchlistItem.TmdbId}; skipping.");
                     return Task.FromResult(WatchlistItemResult.Skipped);
                 }
+
+                var item = selection.Item;
+                var userData = selection.UserData;
 
                 // Check if already in watchlist
                 if (userData.Likes == true)

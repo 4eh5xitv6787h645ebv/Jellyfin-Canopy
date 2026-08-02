@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 28559,
-        "totalLines": 37106
+        "coveredLines": 29245,
+        "totalLines": 37825
       },
       "observations": {
-        "cleanRuns": 7,
-        "minimumCoveredLines": 28557,
-        "maximumCoveredLines": 28559
+        "cleanRuns": 4,
+        "minimumCoveredLines": 29243,
+        "maximumCoveredLines": 29245
       },
       "tolerance": {
         "missingCoveredLines": 2,
-        "rationale": "Completing #165 established a reviewed high-water of 28,559/37,106 after five clean .NET 10.0.9/Coverlet runs passed all 2,507 server tests at the identical scope and measured 28,559, 28,558, 28,558, 28,558, and 28,558 covered lines. A GitHub Actions run for PR #545 on 2026-08-01 used the unchanged server source/test tree, passed the same 2,507 tests at the same 37,106-line scope, and measured 28,557, proving the bounded Coverlet instrumentation envelope extends one line lower than the original five-run sample. A seventh clean local validation run on the same server source/test tree and scope measured 28,558 and confirmed the adjusted gate. The seven-run reviewed envelope is therefore 28,557–28,559, while the monotonic high-water remains 28,559/37,106 (76.966%). Under the fixed-scope direct-observation policy, a two-line tolerance (0.005 percentage points) admits only the exact newly observed low side and sets the floor at 28,557/37,106 (76.961%), still above the prior 28,444/36,969 floor (76.940%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "Fixing #154 adds a bounded, access-aware multi-edition resolver and mutation-boundary revalidation for all three watchlist consumers. The final hardening deduplicates outbound edition selection across bindings; orders each final exact binding GET before current access and Likes reads; re-reads current UserItemData at scheduled and monitor write barriers; fences monitor configuration after access and user-data queries; counts preflight binding GETs in the 200,000-query authorization budget; pages the 100,000-item library snapshot in cancellable 1,000-item batches; and routes resolver preparation, final edition revalidation, and outbound staging through deterministic cancellable 1,000-id access-policy queries. Focused regressions cover inaccessible-first, no-access, markers, per-user exports, typed namespaces, duplicate editions, linear repeated-binding enumeration, current access and unlike races, configuration changes during access, exact aggregate and access-batch boundaries, and cancellation between library pages and single-user access chunks. Three clean .NET 10.0.9/Coverlet runs on 2026-08-02 each passed all 2,547 server tests at the identical 37,825-line scope and measured 29,244, 29,245, and 29,244 covered lines. PR #559 run 30725667910 then passed the same 2,547 tests on .NET 10.0.10 at the identical scope and directly observed 29,243 covered lines. The reviewed high-water therefore advances from 29,221/37,802 (77.300%) to 29,245/37,825 (77.317%), while the four-run instrumentation envelope sets the exact floor at 29,243/37,825 (77.311%). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

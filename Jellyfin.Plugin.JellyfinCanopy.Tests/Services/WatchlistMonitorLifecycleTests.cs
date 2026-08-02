@@ -46,7 +46,8 @@ public sealed class WatchlistMonitorLifecycleTests
             new RecordingHttpClientFactory(handler),
             null!,
             NullLogger<WatchlistMonitor>.Instance,
-            new FakePluginConfigProvider(EnabledConfiguration()));
+            new FakePluginConfigProvider(EnabledConfiguration()),
+            new StubItemLookupService());
 
         monitor.Initialize();
         library.RaiseItemAdded(Movie(123));
@@ -308,7 +309,8 @@ public sealed class WatchlistMonitorLifecycleTests
                 SeerrEnabled = true,
                 SeerrUrls = "http://seerr:5055",
                 SeerrApiKey = "key",
-            }));
+            }),
+            new StubItemLookupService());
 
         monitor.Initialize();
         var movie = new Movie { Name = "Cancellation sentinel" };
@@ -352,7 +354,8 @@ public sealed class WatchlistMonitorLifecycleTests
             new RecordingHttpClientFactory(handler),
             null!,
             NullLogger<WatchlistMonitor>.Instance,
-            provider);
+            provider,
+            new StubItemLookupService());
     }
 
     private static PluginConfiguration EnabledConfiguration()
