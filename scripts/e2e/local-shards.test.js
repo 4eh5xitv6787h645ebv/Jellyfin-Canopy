@@ -281,6 +281,58 @@ test('termination finds a shard process group after its tracked leader exits', (
     assert.equal(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
 });
 
+test('termination stops a tracked launcher before its process group exists', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-local-pre-group-'));
+    const command = [
+        'source "$1"',
+        'set -e',
+        "bash -c 'trap \"\" TERM; : > \"$1\"; sleep 30' bash \"$2/ready\" >/dev/null 2>&1 &",
+        'pid=$!',
+        'cleanup_direct_job() {',
+        '  kill -KILL "$pid" >/dev/null 2>&1 || true',
+        '  wait "$pid" >/dev/null 2>&1 || true',
+        '}',
+        'trap cleanup_direct_job EXIT',
+        'for _ in {1..50}; do [[ -f "$2/ready" ]] && break; sleep 0.02; done',
+        '[[ -f "$2/ready" ]]',
+        'SEED_PIDS[1]=$pid',
+        'terminate_active_jobs',
+        '! kill -0 "$pid" >/dev/null 2>&1',
+    ].join('\n');
+    try {
+        const result = spawnSync('bash', ['-c', command, 'bash', SCRIPT, root], {
+            cwd: ROOT,
+            encoding: 'utf8',
+            timeout: 5_000,
+        });
+        assert.equal(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('direct termination recognizes only exact running shell jobs', () => {
+    const command = [
+        'source "$1"',
+        'set -e',
+        'sleep 30 >/dev/null 2>&1 &',
+        'running_pid=$!',
+        'tracked_pid_is_running_job "$running_pid"',
+        '! tracked_pid_is_running_job "${running_pid}0"',
+        'kill -KILL "$running_pid"',
+        'wait "$running_pid" >/dev/null 2>&1 || true',
+        '! tracked_pid_is_running_job "$running_pid"',
+        'SEED_PIDS[1]=$running_pid',
+        'terminate_active_jobs',
+    ].join('\n');
+    const result = spawnSync('bash', ['-c', command, 'bash', SCRIPT], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        timeout: 5_000,
+    });
+    assert.equal(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+});
+
 for (const [signal, expected] of [['INT', 130], ['TERM', 143]]) {
     test(`${signal} delivery preserves its exit code through owned cleanup`, () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), `jc-local-${signal.toLowerCase()}-`));
@@ -326,6 +378,7 @@ test('launcher keeps runner passwords out of the tracked process argv', (t) => {
         fs.writeFileSync(fakeSeed, '#!/usr/bin/env bash\nsleep 30\n', { mode: 0o700 });
         const command = [
             'source "$1"',
+            'set -e',
             'SHARDS=1',
             'RUN_ID=argv-contract',
             'CPUS_PER_SERVER=2',
