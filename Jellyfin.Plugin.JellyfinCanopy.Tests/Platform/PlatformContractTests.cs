@@ -198,6 +198,140 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             return drift.OrderBy(value => value, StringComparer.Ordinal).ToArray();
         }
 
+        private static IReadOnlyList<string> CapabilityMetadataDrift(JsonElement frozen, JsonElement spec)
+        {
+            var drift = new List<string>();
+            var authoredVocabulary = spec.GetProperty("x-canopy-capability-vocabulary")
+                .EnumerateArray().Select(value => value.GetString()!).ToArray();
+            var frozenVocabulary = frozen.GetProperty("capabilityVocabulary")
+                .EnumerateArray().Select(value => value.GetString()!).ToArray();
+            var authoredSet = authoredVocabulary.ToHashSet(StringComparer.Ordinal);
+            var frozenSet = frozenVocabulary.ToHashSet(StringComparer.Ordinal);
+            var authoredMetadata = spec.GetProperty("x-canopy-capability-metadata");
+            var frozenMetadata = frozen.GetProperty("capabilityMetadata");
+
+            drift.AddRange(authoredVocabulary
+                .Where(capability => !frozenSet.Contains(capability))
+                .Select(capability => $"{capability} is absent from the frozen capability vocabulary"));
+            drift.AddRange(frozenVocabulary
+                .Where(capability => !authoredSet.Contains(capability))
+                .Select(capability => $"{capability} is frozen but absent from the authored capability vocabulary"));
+
+            foreach (var capability in authoredVocabulary)
+            {
+                if (!authoredMetadata.TryGetProperty(capability, out var authored))
+                {
+                    drift.Add($"{capability} has no authored capability metadata");
+                    continue;
+                }
+
+                if (!frozenMetadata.TryGetProperty(capability, out var pinned))
+                {
+                    drift.Add($"{capability} has no frozen capability metadata");
+                    continue;
+                }
+
+                if (!string.Equals(
+                    authored.GetProperty("domain").GetString(),
+                    pinned.GetProperty("domain").GetString(),
+                    StringComparison.Ordinal))
+                {
+                    drift.Add($"{capability} domain changed");
+                }
+
+                var authoredKinds = authored.GetProperty("actorKinds")
+                    .EnumerateArray().Select(value => value.GetString()).ToArray();
+                var pinnedKinds = pinned.GetProperty("actorKinds")
+                    .EnumerateArray().Select(value => value.GetString()).ToArray();
+                if (!authoredKinds.SequenceEqual(pinnedKinds, StringComparer.Ordinal))
+                {
+                    drift.Add($"{capability} actor kinds changed");
+                }
+
+                if (authored.GetProperty("requiresElevation").GetBoolean()
+                    != pinned.GetProperty("requiresElevation").GetBoolean())
+                {
+                    drift.Add($"{capability} elevation ceiling changed");
+                }
+            }
+
+            drift.AddRange(authoredMetadata.EnumerateObject()
+                .Where(metadata => !authoredSet.Contains(metadata.Name))
+                .Select(metadata => $"{metadata.Name} has authored metadata but is not in the capability vocabulary"));
+            drift.AddRange(frozenMetadata.EnumerateObject()
+                .Where(metadata => !frozenSet.Contains(metadata.Name))
+                .Select(metadata => $"{metadata.Name} has frozen metadata but is not in the capability vocabulary"));
+
+            return drift.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        }
+
+        private static IReadOnlyList<string> CapabilityVocabularyDrift(
+            IReadOnlyList<string> runtime,
+            JsonElement frozen,
+            JsonElement spec)
+        {
+            var authored = spec.GetProperty("x-canopy-capability-vocabulary")
+                .EnumerateArray().Select(value => value.GetString()!).ToArray();
+            var pinned = frozen.GetProperty("capabilityVocabulary")
+                .EnumerateArray().Select(value => value.GetString()!).ToArray();
+            var runtimeSet = runtime.ToHashSet(StringComparer.Ordinal);
+            var authoredSet = authored.ToHashSet(StringComparer.Ordinal);
+            var pinnedSet = pinned.ToHashSet(StringComparer.Ordinal);
+            var drift = new List<string>();
+
+            drift.AddRange(runtime
+                .Where(capability => !authoredSet.Contains(capability))
+                .Select(capability => $"runtime capability {capability} is absent from the authored vocabulary"));
+            drift.AddRange(runtime
+                .Where(capability => !pinnedSet.Contains(capability))
+                .Select(capability => $"runtime capability {capability} is absent from the frozen vocabulary"));
+            drift.AddRange(authored
+                .Where(capability => !runtimeSet.Contains(capability))
+                .Select(capability => $"authored capability {capability} is absent from runtime"));
+            drift.AddRange(pinned
+                .Where(capability => !runtimeSet.Contains(capability))
+                .Select(capability => $"frozen capability {capability} was removed from runtime"));
+
+            drift.AddRange(Duplicates(runtime, "runtime"));
+            drift.AddRange(Duplicates(authored, "authored"));
+            drift.AddRange(Duplicates(pinned, "frozen"));
+
+            if (runtimeSet.SetEquals(authoredSet)
+                && runtime.Count == authored.Length
+                && !runtime.SequenceEqual(authored, StringComparer.Ordinal))
+            {
+                drift.Add("authored capability order differs from runtime");
+            }
+
+            if (runtimeSet.SetEquals(pinnedSet)
+                && runtime.Count == pinned.Length
+                && !runtime.SequenceEqual(pinned, StringComparer.Ordinal))
+            {
+                drift.Add("frozen capability order differs from runtime");
+            }
+
+            return drift.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+
+            static IEnumerable<string> Duplicates(IEnumerable<string> values, string owner) => values
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => $"{owner} capability {group.Key} is duplicated");
+        }
+
+        private static string CapabilityDomainToken(object domain) => domain.ToString() switch
+        {
+            "Discovery" => "discovery",
+            "ItemLookup" => "item-lookup",
+            "UserData" => "user-data",
+            "Events" => "events",
+            "Storage" => "storage",
+            "UiContributions" => "ui-contributions",
+            "IntegrationActions" => "integration-actions",
+            "Administration" => "administration",
+            "Diagnostics" => "diagnostics",
+            _ => throw new InvalidOperationException($"Unknown Platform capability domain '{domain}'."),
+        };
+
         private static IEnumerable<(string Path, string Method, JsonElement Operation)> SpecOperations(JsonElement spec)
         {
             foreach (var path in spec.GetProperty("paths").EnumerateObject())
@@ -785,6 +919,196 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(runtime, authored);
             Assert.Equal(runtime, frozen);
             Assert.Equal(runtime.Length, runtime.Distinct(StringComparer.Ordinal).Count());
+        }
+
+        [Fact]
+        public void CapabilityTokensAndAuthorityMetadataMatchRuntimeAuthoredAndFrozenContracts()
+        {
+            var expected = new[]
+            {
+                "jellyfin.canopy.discovery.read",
+                "jellyfin.canopy.items.lookup",
+                "jellyfin.canopy.user-data.read",
+                "jellyfin.canopy.events.subscribe",
+                "jellyfin.canopy.storage.read",
+                "jellyfin.canopy.ui.contribute",
+                "jellyfin.canopy.integrations.invoke",
+                "jellyfin.canopy.administration.manage",
+                "jellyfin.canopy.diagnostics.read",
+            };
+            var runtime = PlatformCapabilityVocabulary.All
+                .Select(definition => definition.Id.Value)
+                .ToArray();
+            var authored = Spec.RootElement.GetProperty("x-canopy-capability-vocabulary")
+                .EnumerateArray().Select(value => value.GetString()).ToArray();
+            var frozen = Frozen.RootElement.GetProperty("capabilityVocabulary")
+                .EnumerateArray().Select(value => value.GetString()).ToArray();
+            var authoredMetadata = Spec.RootElement.GetProperty("x-canopy-capability-metadata");
+            var frozenMetadata = Frozen.RootElement.GetProperty("capabilityMetadata");
+
+            Assert.Equal(expected, runtime);
+            Assert.Equal(runtime, authored);
+            Assert.Equal(runtime, frozen);
+            Assert.Equal(runtime.Length, runtime.Distinct(StringComparer.Ordinal).Count());
+            Assert.Equal(runtime.Length, authoredMetadata.EnumerateObject().Count());
+            Assert.Equal(runtime.Length, frozenMetadata.EnumerateObject().Count());
+            Assert.Empty(CapabilityVocabularyDrift(runtime, Frozen.RootElement, Spec.RootElement));
+
+            foreach (var definition in PlatformCapabilityVocabulary.All)
+            {
+                var id = definition.Id.Value;
+                var runtimeKinds = definition.AllowedActorKinds
+                    .Select(kind => PlatformActorKindVocabulary.TokenFor(kind)!)
+                    .ToArray();
+                var published = authoredMetadata.GetProperty(id);
+                var pinned = frozenMetadata.GetProperty(id);
+
+                Assert.Equal(CapabilityDomainToken(definition.Domain), published.GetProperty("domain").GetString());
+                Assert.Equal(
+                    runtimeKinds,
+                    published.GetProperty("actorKinds").EnumerateArray().Select(value => value.GetString()).ToArray());
+                Assert.Equal(definition.RequiresElevation, published.GetProperty("requiresElevation").GetBoolean());
+                Assert.Equal(CapabilityDomainToken(definition.Domain), pinned.GetProperty("domain").GetString());
+                Assert.Equal(
+                    runtimeKinds,
+                    pinned.GetProperty("actorKinds").EnumerateArray().Select(value => value.GetString()).ToArray());
+                Assert.Equal(definition.RequiresElevation, pinned.GetProperty("requiresElevation").GetBoolean());
+            }
+
+            Assert.Empty(CapabilityMetadataDrift(Frozen.RootElement, Spec.RootElement));
+        }
+
+        [Fact]
+        public void CapabilityVocabularyDriftGateNamesUnknownRuntimeRemovedFrozenDuplicatesAndOrder()
+        {
+            const string discovery = "jellyfin.canopy.discovery.read";
+            const string unknown = "jellyfin.canopy.unknown.read";
+            using var empty = JsonDocument.Parse("""
+                {
+                  "x-canopy-capability-vocabulary":[],
+                  "capabilityVocabulary":[]
+                }
+                """);
+
+            Assert.Equal(
+                new[]
+                {
+                    $"runtime capability {unknown} is absent from the authored vocabulary",
+                    $"runtime capability {unknown} is absent from the frozen vocabulary",
+                },
+                CapabilityVocabularyDrift(
+                    new[] { unknown },
+                    empty.RootElement,
+                    empty.RootElement));
+
+            using var frozenOnly = JsonDocument.Parse($$"""
+                {
+                  "x-canopy-capability-vocabulary":[],
+                  "capabilityVocabulary":["{{discovery}}"]
+                }
+                """);
+            Assert.Equal(
+                new[] { $"frozen capability {discovery} was removed from runtime" },
+                CapabilityVocabularyDrift(
+                    Array.Empty<string>(),
+                    frozenOnly.RootElement,
+                    frozenOnly.RootElement));
+
+            using var duplicateAndReordered = JsonDocument.Parse($$"""
+                {
+                  "x-canopy-capability-vocabulary":["{{unknown}}","{{discovery}}","{{discovery}}"],
+                  "capabilityVocabulary":["{{unknown}}","{{discovery}}"]
+                }
+                """);
+            Assert.Contains(
+                $"authored capability {discovery} is duplicated",
+                CapabilityVocabularyDrift(
+                    new[] { discovery, unknown },
+                    duplicateAndReordered.RootElement,
+                    duplicateAndReordered.RootElement));
+
+            using var reordered = JsonDocument.Parse($$"""
+                {
+                  "x-canopy-capability-vocabulary":["{{unknown}}","{{discovery}}"],
+                  "capabilityVocabulary":["{{unknown}}","{{discovery}}"]
+                }
+                """);
+            var orderDrift = CapabilityVocabularyDrift(
+                new[] { discovery, unknown },
+                reordered.RootElement,
+                reordered.RootElement);
+            Assert.Contains("authored capability order differs from runtime", orderDrift);
+            Assert.Contains("frozen capability order differs from runtime", orderDrift);
+        }
+
+        [Fact]
+        public void CapabilityDriftGateNamesMissingRemovedWidenedAndChangedMetadata()
+        {
+            using var oneUserCapability = JsonDocument.Parse("""
+                {
+                  "x-canopy-capability-vocabulary":["jellyfin.canopy.discovery.read"],
+                  "x-canopy-capability-metadata":{
+                    "jellyfin.canopy.discovery.read":{
+                      "domain":"discovery",
+                      "actorKinds":["jellyfin-user-client"],
+                      "requiresElevation":false
+                    }
+                  }
+                }
+                """);
+            using var missingFrozen = JsonDocument.Parse("""
+                {"capabilityVocabulary":[],"capabilityMetadata":{}}
+                """);
+            Assert.Equal(
+                new[]
+                {
+                    "jellyfin.canopy.discovery.read has no frozen capability metadata",
+                    "jellyfin.canopy.discovery.read is absent from the frozen capability vocabulary",
+                },
+                CapabilityMetadataDrift(missingFrozen.RootElement, oneUserCapability.RootElement));
+
+            using var widenedFrozen = JsonDocument.Parse("""
+                {
+                  "capabilityVocabulary":["jellyfin.canopy.discovery.read"],
+                  "capabilityMetadata":{
+                    "jellyfin.canopy.discovery.read":{
+                      "domain":"discovery",
+                      "actorKinds":["jellyfin-user-client","companion-service"],
+                      "requiresElevation":false
+                    }
+                  }
+                }
+                """);
+            Assert.Equal(
+                new[] { "jellyfin.canopy.discovery.read actor kinds changed" },
+                CapabilityMetadataDrift(widenedFrozen.RootElement, oneUserCapability.RootElement));
+
+            using var changedFrozen = JsonDocument.Parse("""
+                {
+                  "capabilityVocabulary":["jellyfin.canopy.discovery.read"],
+                  "capabilityMetadata":{
+                    "jellyfin.canopy.discovery.read":{
+                      "domain":"diagnostics",
+                      "actorKinds":["jellyfin-user-client"],
+                      "requiresElevation":true
+                    }
+                  }
+                }
+                """);
+            Assert.Equal(
+                new[]
+                {
+                    "jellyfin.canopy.discovery.read domain changed",
+                    "jellyfin.canopy.discovery.read elevation ceiling changed",
+                },
+                CapabilityMetadataDrift(changedFrozen.RootElement, oneUserCapability.RootElement));
+
+            using var removedSpec = JsonDocument.Parse("""
+                {"x-canopy-capability-vocabulary":[],"x-canopy-capability-metadata":{}}
+                """);
+            Assert.Equal(
+                new[] { "jellyfin.canopy.discovery.read is frozen but absent from the authored capability vocabulary" },
+                CapabilityMetadataDrift(widenedFrozen.RootElement, removedSpec.RootElement));
         }
 
         [Fact]

@@ -412,10 +412,19 @@ trust browser origin or caller-supplied URLs.
 2. Can a write-only secret reference be protected meaningfully in a
    single-process plugin, or should v1 simply not offer one
    ([ADR-0008](adr/0008-storage-ownership.md) §9)?
-3. ADR-0013 decides exact, case-sensitive, namespaced scopes with no wildcard or
-   prefix authority, plus a bounded effective grant ceiling. Issue
-   [#639](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/639)
-   owns the concrete vocabulary and preview decisions.
+3. Decided by
+   [#639](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/639):
+   v1 has exactly nine authored capability identifiers, in discovery, item lookup,
+   user data, events, storage, UI contribution, integration action,
+   administration and diagnostics order. They use the exact four-segment
+   `jellyfin.canopy.<domain>.<verb>` lower-case ASCII namespace, internal hyphens
+   only and a 128-character maximum. Unknown, duplicate, wildcard, prefix,
+   malformed, over-bound and case-variant requested or granted inputs fail closed.
+   Companion services are eligible only for event subscription; installed
+   providers cannot administer or read diagnostics; administration and diagnostics
+   require current Jellyfin-user elevation. Runtime, authored and frozen metadata
+   pin those actor/elevation ceilings. Vocabulary membership does not activate a
+   route or implementation.
 4. Decided by ADR-0013: revoke denies admission, requests cancellation and
    generation-fences all kernel-owned commits/delivery, but cannot stop or roll
    back a provider-owned or external effect already begun; late/revoked outcomes
