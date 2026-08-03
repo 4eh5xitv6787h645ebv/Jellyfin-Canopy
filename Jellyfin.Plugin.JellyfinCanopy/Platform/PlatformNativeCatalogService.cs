@@ -542,10 +542,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private static bool SameSnapshotItem(
             PlatformPrepareItemSnapshot snapshot,
             HostAccessibleItem current)
-            => snapshot.Id == current.Id
-                && snapshot.Kind == current.Kind
-                && snapshot.SeriesId == current.SeriesId
-                && snapshot.ProviderReferences.SequenceEqual(current.ProviderReferences);
+        {
+            try
+            {
+                var normalizedCurrent = new PlatformPrepareItemSnapshot(current);
+                return snapshot.Id == normalizedCurrent.Id
+                    && snapshot.Kind == normalizedCurrent.Kind
+                    && snapshot.SeriesId == normalizedCurrent.SeriesId
+                    && snapshot.ProviderReferences.SequenceEqual(normalizedCurrent.ProviderReferences);
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+        }
 
         private static bool SupportsAction(PlatformNativeClientCapabilities client, params string[] fields)
             => client.SupportsContribution("action")

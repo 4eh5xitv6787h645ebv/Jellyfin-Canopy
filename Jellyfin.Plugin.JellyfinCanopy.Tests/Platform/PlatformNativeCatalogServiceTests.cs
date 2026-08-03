@@ -243,6 +243,23 @@ public sealed class PlatformNativeCatalogServiceTests
     }
 
     [Fact]
+    public async Task Prepare_NormalizesJellyfinProviderNamesBeforeSnapshotComparison()
+    {
+        using var fixture = new Fixture();
+        fixture.Host.Item = new HostAccessibleItem(
+            fixture.Host.Item.Id,
+            fixture.Host.Item.Kind,
+            fixture.Host.Item.SeriesId,
+            [new HostProviderReference("Tmdb", "123")]);
+        var resolved = await fixture.Service.ResolveAsync(fixture.ActorA, fixture.Request(), CancellationToken.None);
+
+        var result = await fixture.Prepare(fixture.ActorA, resolved, "seerr-request");
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+        Assert.NotNull(result.Response);
+    }
+
+    [Fact]
     public async Task Prepare_HandleCannotCrossUsersEvenWhenBothCanAccessItem()
     {
         using var fixture = new Fixture();

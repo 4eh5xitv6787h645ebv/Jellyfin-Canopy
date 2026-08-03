@@ -283,20 +283,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     {
         private readonly IPluginConfigProvider _configuration;
         private readonly ISeerrMediaRequestOwner _owner;
+        private readonly ISeerrItemRequestPresentationOwner _presentation;
 
         public SeerrPlatformActionPort(
             IPluginConfigProvider configuration,
-            ISeerrMediaRequestOwner owner)
+            ISeerrMediaRequestOwner owner,
+            ISeerrItemRequestPresentationOwner presentation)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+            _presentation = presentation ?? throw new ArgumentNullException(nameof(presentation));
         }
 
-        public PlatformActionPortAdmission ValidateCurrent(
+        public async Task<PlatformActionPortAdmission> ValidateCurrentAsync(
             PlatformActor actor,
             HostAccessibleItem item,
             PlatformPreparedActionContext prepared,
-            ImmutableArray<PlatformActionAnswer> answers)
+            ImmutableArray<PlatformActionAnswer> answers,
+            CancellationToken cancellationToken)
         {
             if (!ReferenceEquals(prepared.Definition, PlatformOperationDefinition.SeerrRequestItem)
                 || prepared.ConfigurationRevision != _configuration.ConfigurationRevision
@@ -308,6 +312,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 || answers[0].OptionIds.HasValue)
             {
                 return PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.InvalidInput);
+            }
+
+            SeerrItemRequestPresentation current;
+            try
+            {
+                current = await _presentation.ResolveItemRequestPresentationAsync(
+                    actor,
+                    item,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.AuthorityDenied);
+            }
+
+            var variantIsStillAuthorized = state.SeerrVariant == SeerrMediaRequestVariant.Standard
+                ? current.StandardRequestAvailable || current.StandardStatus != SeerrItemRequestStatus.Unavailable
+                : current.FourKRequestAvailable || current.FourKStatus != SeerrItemRequestStatus.Unavailable;
+            if (!current.IsVisible
+                || !variantIsStillAuthorized
+                || !string.Equals(current.ConfigurationRevision, state.ConfigurationRevision, StringComparison.Ordinal)
+                || !string.Equals(current.UserRevision, state.UserRevision, StringComparison.Ordinal)
+                || !string.Equals(current.ItemRevision, state.ItemRevision, StringComparison.Ordinal))
+            {
+                return PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.AuthorityDenied);
             }
 
             var input = new SeerrInput(state.SeerrVariant);

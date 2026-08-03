@@ -235,13 +235,18 @@ public sealed class PlatformNativeActionPortTests
     {
         var configuration = EnabledProvider();
         var owner = new SeerrOwner();
-        var port = new SeerrPlatformActionPort(configuration, owner);
+        var port = SeerrPort(configuration, owner);
         var prepared = Prepared(
             PlatformOperationDefinition.SeerrRequestItem,
             configuration.ConfigurationRevision,
             PlatformNativePreparedState.Seerr(variant, Presentation()));
 
-        var admission = port.ValidateCurrent(Actor, Item, prepared, [BooleanAnswer("confirm", true)]);
+        var admission = await port.ValidateCurrentAsync(
+            Actor,
+            Item,
+            prepared,
+            [BooleanAnswer("confirm", true)],
+            CancellationToken.None);
 
         Assert.Equal(PlatformActionPortDecision.Admitted, admission.Decision);
         Assert.Equal(expectedCanonical, Encoding.ASCII.GetString(admission.CanonicalInput.Span));
@@ -253,11 +258,11 @@ public sealed class PlatformNativeActionPortTests
     }
 
     [Fact]
-    public void Seerr_FalseMissingOptionOrExtraConfirmationFailsBeforeOwner()
+    public async Task Seerr_FalseMissingOptionOrExtraConfirmationFailsBeforeOwner()
     {
         var configuration = EnabledProvider();
         var owner = new SeerrOwner();
-        var port = new SeerrPlatformActionPort(configuration, owner);
+        var port = SeerrPort(configuration, owner);
         var prepared = Prepared(
             PlatformOperationDefinition.SeerrRequestItem,
             configuration.ConfigurationRevision,
@@ -275,7 +280,12 @@ public sealed class PlatformNativeActionPortTests
         {
             Assert.Equal(
                 PlatformActionPortDecision.InvalidInput,
-                port.ValidateCurrent(Actor, Item, prepared, answers).Decision);
+                (await port.ValidateCurrentAsync(
+                    Actor,
+                    Item,
+                    prepared,
+                    answers,
+                    CancellationToken.None)).Decision);
         }
 
         Assert.Equal(0, owner.Calls);
@@ -298,15 +308,16 @@ public sealed class PlatformNativeActionPortTests
     {
         var configuration = EnabledProvider();
         var owner = new SeerrOwner { Outcome = ownerOutcome };
-        var port = new SeerrPlatformActionPort(configuration, owner);
-        var admission = port.ValidateCurrent(
+        var port = SeerrPort(configuration, owner);
+        var admission = await port.ValidateCurrentAsync(
             Actor,
             Item,
             Prepared(
                 PlatformOperationDefinition.SeerrRequestItem,
                 configuration.ConfigurationRevision,
                 PlatformNativePreparedState.Seerr(SeerrMediaRequestVariant.Standard, Presentation())),
-            [BooleanAnswer("confirm", true)]);
+            [BooleanAnswer("confirm", true)],
+            CancellationToken.None);
 
         var result = await port.InvokeAsync(Actor, Item, admission.Input!, Key(), CancellationToken.None);
 
@@ -321,6 +332,103 @@ public sealed class PlatformNativeActionPortTests
             Assert.Equal(JsonValueKind.Object, result.Result.Value.ValueKind);
             Assert.Empty(result.Result.Value.EnumerateObject());
         }
+    }
+
+    [Theory]
+    [InlineData("invisible")]
+    [InlineData("configuration")]
+    [InlineData("user")]
+    [InlineData("item")]
+    [InlineData("variant")]
+    [InlineData("variant-4k")]
+    public async Task Seerr_CurrentAuthorityDriftFailsBeforeStoredOrFreshResultCanBeReleased(string drift)
+    {
+        var configuration = EnabledProvider();
+        var owner = new SeerrOwner();
+        var current = drift switch
+        {
+            "invisible" => SeerrItemRequestPresentation.Invisible(),
+            "configuration" => Presentation(configuration: "config-v2"),
+            "user" => Presentation(user: "user-v2"),
+            "item" => Presentation(item: "item-v2"),
+            "variant" => Presentation(standardAvailable: false),
+            "variant-4k" => Presentation(fourKAvailable: false),
+            _ => throw new InvalidOperationException(),
+        };
+        var variant = drift == "variant-4k"
+            ? SeerrMediaRequestVariant.FourK
+            : SeerrMediaRequestVariant.Standard;
+        var port = SeerrPort(configuration, owner, current);
+        var prepared = Prepared(
+            PlatformOperationDefinition.SeerrRequestItem,
+            configuration.ConfigurationRevision,
+            PlatformNativePreparedState.Seerr(variant, Presentation()));
+
+        var admission = await port.ValidateCurrentAsync(
+            Actor,
+            Item,
+            prepared,
+            [BooleanAnswer("confirm", true)],
+            CancellationToken.None);
+
+        Assert.Equal(PlatformActionPortDecision.AuthorityDenied, admission.Decision);
+        Assert.Equal(0, owner.Calls);
+    }
+
+    [Fact]
+    public async Task Seerr_VisibleRequestedStateAllowsIdempotentReplayAfterProviderStatusChange()
+    {
+        var configuration = EnabledProvider();
+        var owner = new SeerrOwner();
+        var requested = Presentation(
+            standardAvailable: false,
+            standardStatus: SeerrItemRequestStatus.Pending,
+            provider: "provider-v2");
+        var port = SeerrPort(configuration, owner, requested);
+        var prepared = Prepared(
+            PlatformOperationDefinition.SeerrRequestItem,
+            configuration.ConfigurationRevision,
+            PlatformNativePreparedState.Seerr(SeerrMediaRequestVariant.Standard, Presentation()));
+
+        var admission = await port.ValidateCurrentAsync(
+            Actor,
+            Item,
+            prepared,
+            [BooleanAnswer("confirm", true)],
+            CancellationToken.None);
+
+        Assert.Equal(PlatformActionPortDecision.Admitted, admission.Decision);
+    }
+
+    [Fact]
+    public async Task Seerr_CurrentAuthorityFailureDeniesButRequestedCancellationPropagates()
+    {
+        var configuration = EnabledProvider();
+        var owner = new SeerrOwner();
+        var presentation = new SeerrPresentationOwner { Failure = new InvalidOperationException("provider failed") };
+        var port = new SeerrPlatformActionPort(configuration, owner, presentation);
+        var prepared = Prepared(
+            PlatformOperationDefinition.SeerrRequestItem,
+            configuration.ConfigurationRevision,
+            PlatformNativePreparedState.Seerr(SeerrMediaRequestVariant.Standard, Presentation()));
+
+        var denied = await port.ValidateCurrentAsync(
+            Actor,
+            Item,
+            prepared,
+            [BooleanAnswer("confirm", true)],
+            CancellationToken.None);
+        Assert.Equal(PlatformActionPortDecision.AuthorityDenied, denied.Decision);
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => port.ValidateCurrentAsync(
+            Actor,
+            Item,
+            prepared,
+            [BooleanAnswer("confirm", true)],
+            canceled.Token));
+        Assert.Equal(0, owner.Calls);
     }
 
     [Fact]
@@ -384,16 +492,33 @@ public sealed class PlatformNativeActionPortTests
         return key;
     }
 
-    private static SeerrItemRequestPresentation Presentation()
+    private static SeerrPlatformActionPort SeerrPort(
+        FakePluginConfigProvider configuration,
+        SeerrOwner owner,
+        SeerrItemRequestPresentation? presentation = null)
+        => new(
+            configuration,
+            owner,
+            new SeerrPresentationOwner { Current = presentation ?? Presentation() });
+
+    private static SeerrItemRequestPresentation Presentation(
+        bool standardAvailable = true,
+        bool fourKAvailable = true,
+        SeerrItemRequestStatus standardStatus = SeerrItemRequestStatus.Unavailable,
+        SeerrItemRequestStatus fourKStatus = SeerrItemRequestStatus.Unavailable,
+        string configuration = "config-v1",
+        string user = "user-v1",
+        string item = "item-v1",
+        string provider = "provider-v1")
         => SeerrItemRequestPresentation.Available(
-            standardRequestAvailable: true,
-            fourKRequestAvailable: true,
-            SeerrItemRequestStatus.Unavailable,
-            SeerrItemRequestStatus.Unavailable,
-            "config-v1",
-            "user-v1",
-            "item-v1",
-            "provider-v1");
+            standardAvailable,
+            fourKAvailable,
+            standardStatus,
+            fourKStatus,
+            configuration,
+            user,
+            item,
+            provider);
 
     private static HiddenContentItemActionResult HiddenResult(
         HiddenContentItemActionOutcome outcome,
@@ -533,6 +658,27 @@ public sealed class PlatformNativeActionPortTests
                 _ => SeerrMediaRequestResult.Refused(Outcome),
             };
             return Task.FromResult(result);
+        }
+    }
+
+    private sealed class SeerrPresentationOwner : ISeerrItemRequestPresentationOwner
+    {
+        internal SeerrItemRequestPresentation Current { get; set; } = SeerrItemRequestPresentation.Invisible();
+
+        internal Exception? Failure { get; set; }
+
+        public Task<SeerrItemRequestPresentation> ResolveItemRequestPresentationAsync(
+            PlatformActor actor,
+            HostAccessibleItem item,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Failure is not null)
+            {
+                return Task.FromException<SeerrItemRequestPresentation>(Failure);
+            }
+
+            return Task.FromResult(Current);
         }
     }
 }
