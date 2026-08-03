@@ -11,6 +11,86 @@
     "installed-provider",
     "companion-service"
   ],
+  "x-canopy-capability-vocabulary": [
+    "jellyfin.canopy.discovery.read",
+    "jellyfin.canopy.items.lookup",
+    "jellyfin.canopy.user-data.read",
+    "jellyfin.canopy.events.subscribe",
+    "jellyfin.canopy.storage.read",
+    "jellyfin.canopy.ui.contribute",
+    "jellyfin.canopy.integrations.invoke",
+    "jellyfin.canopy.administration.manage",
+    "jellyfin.canopy.diagnostics.read"
+  ],
+  "x-canopy-capability-metadata": {
+    "jellyfin.canopy.discovery.read": {
+      "domain": "discovery",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.items.lookup": {
+      "domain": "item-lookup",
+      "actorKinds": [
+        "jellyfin-user-client",
+        "installed-provider"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.user-data.read": {
+      "domain": "user-data",
+      "actorKinds": [
+        "jellyfin-user-client",
+        "installed-provider"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.events.subscribe": {
+      "domain": "events",
+      "actorKinds": [
+        "companion-service"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.storage.read": {
+      "domain": "storage",
+      "actorKinds": [
+        "jellyfin-user-client",
+        "installed-provider"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.ui.contribute": {
+      "domain": "ui-contributions",
+      "actorKinds": [
+        "installed-provider"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.integrations.invoke": {
+      "domain": "integration-actions",
+      "actorKinds": [
+        "jellyfin-user-client",
+        "installed-provider"
+      ],
+      "requiresElevation": false
+    },
+    "jellyfin.canopy.administration.manage": {
+      "domain": "administration",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ],
+      "requiresElevation": true
+    },
+    "jellyfin.canopy.diagnostics.read": {
+      "domain": "diagnostics",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ],
+      "requiresElevation": true
+    }
+  },
   "servers": [
     {
       "url": ".",

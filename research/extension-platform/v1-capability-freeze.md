@@ -42,6 +42,25 @@ caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
 separate-plugin fixture, fingerprint-bound approval, grant/lifecycle tests and
 the EP-03 exit gate. ADR [0005](adr/0005-manifest-discovery.md).
 
+The immutable v1 authority-name floor is authored in this order:
+
+1. `jellyfin.canopy.discovery.read`
+2. `jellyfin.canopy.items.lookup`
+3. `jellyfin.canopy.user-data.read`
+4. `jellyfin.canopy.events.subscribe`
+5. `jellyfin.canopy.storage.read`
+6. `jellyfin.canopy.ui.contribute`
+7. `jellyfin.canopy.integrations.invoke`
+8. `jellyfin.canopy.administration.manage`
+9. `jellyfin.canopy.diagnostics.read`
+
+These exact, case-sensitive names reserve bounded authority domains; they do
+not claim that the corresponding routes or implementations are active. Runtime,
+authored Platform v1 and frozen conformance metadata pin their exact actor-kind
+and elevation ceilings. A later v1 capability is an additive reviewed change to
+all three owners; wildcard, prefix, inherited and caller-registered authority
+remain forbidden.
+
 ## C3 — Server-plugin provider invocation
 
 A convention-based entrypoint invoked over the JSON ABI with a derived context,

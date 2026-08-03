@@ -106,8 +106,31 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
     kind, elevated users remain eligible for ordinary authenticated operations,
     and default, unknown, provider, and service projections deny. The authored
     OpenAPI and frozen metadata publish the same exact allowlists without
-    changing the existing `x-canopy-authority` tokens. Grant intersection remains
-    owned by #639 and is not implemented here.
+    changing the existing `x-canopy-authority` tokens.
+
+    Issue #639 fixes the v1 capability vocabulary, in authored order, as
+    `jellyfin.canopy.discovery.read`, `jellyfin.canopy.items.lookup`,
+    `jellyfin.canopy.user-data.read`, `jellyfin.canopy.events.subscribe`,
+    `jellyfin.canopy.storage.read`, `jellyfin.canopy.ui.contribute`,
+    `jellyfin.canopy.integrations.invoke`,
+    `jellyfin.canopy.administration.manage`, and
+    `jellyfin.canopy.diagnostics.read`. Each identifier has exactly four
+    dot-separated segments, the fixed lower-case ASCII `jellyfin.canopy`
+    namespace, lower-case ASCII letter/digit segments with internal hyphens only,
+    and a maximum length of 128 characters. Matching is ordinal and exact;
+    wildcard, prefix, case-folded, dynamically registered and implicitly inherited
+    authority do not exist. The authored OpenAPI, frozen conformance artifact and
+    runtime definitions carry the same order and exact metadata.
+
+    Discovery admits a Jellyfin user. Item lookup, user-data read, storage read
+    and integration invocation admit Jellyfin users and installed providers.
+    Event subscription admits only a companion service; UI contribution admits
+    only an installed provider. Administration and diagnostics admit only a
+    currently elevated Jellyfin user. Elevation remains a property of that user,
+    never another actor kind. Vocabulary membership names a possible authority;
+    it does not activate a route, grant, manifest, provider, service, state,
+    event, UI surface or diagnostic, and later v1 additions remain reviewed
+    additive changes.
 12. **v1 has no per-user consent.** Grants are administrator-approved and
     server-wide; a user cannot decline an approved extension. The admin and user
     kill switches in [ADR-0007](0007-declarative-web-contributions.md) turn a
