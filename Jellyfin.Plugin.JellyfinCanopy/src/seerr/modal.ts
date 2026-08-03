@@ -1413,11 +1413,7 @@ function handlePendingOwnedTraversalPop(
 
     if (marker) {
         if (pending.phase === 'recovering-forward' && marker.token === pending.token) {
-            // The stale base repair has reached the retained private marker.
-            // Its durable direction is already Forward. Traverse it locally:
-            // the generic marker path treats every live record before a retired
-            // token as "above" it, which would incorrectly close an older live
-            // outer modal in A→M1→M2→B recovery.
+            // Cross recovery locally without closing an older live outer modal.
             event.stopImmediatePropagation();
             pending.recoveringMarkerCrossed = true;
             try {
@@ -1597,7 +1593,10 @@ function ensureHistoryOwner(): ModalHistoryOwnerState {
 
 function adoptCurrentHistoryMarker(owner: ModalHistoryOwnerState): void {
     const marker = readModalHistoryMarker(history.state);
-    if (!marker || owner.records.has(marker.token) || owner.adoptionToken === marker.token) return;
+    if (!marker
+        || owner.pendingOwnedTraversal
+        || owner.records.has(marker.token)
+        || owner.adoptionToken === marker.token) return;
     owner.adoptionToken = marker.token;
     const direction = retiredMarkerDirection(owner, marker);
     const preserveBidirectionalDirection = marker.traversal === 'bidirectional'

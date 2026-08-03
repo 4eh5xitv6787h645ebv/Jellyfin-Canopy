@@ -320,15 +320,51 @@ test.describe('Seerr modal history ownership', () => {
         expect(capProof.lengthBeforeClose).toBeGreaterThanOrEqual(50);
         if (!capProof.isFirefox) expect(capProof.lengthBeforeClose).toBe(50);
 
-        await page.evaluate(() => history.back());
-        await page.waitForFunction(
-            () => (history.state as { jcHistoryProof?: string } | null)?.jcHistoryProof === 'late-cap-route-a',
-            undefined,
-            // Do not couple the assertion loop to requestAnimationFrame. CI can
-            // temporarily throttle rendering after a same-URL history pop even
-            // though the popstate transaction has already settled.
-            { polling: 50, timeout: 30_000 }
-        );
+        await page.evaluate(() => {
+            const proof = {
+                arrivals: [] as Array<{ marker: boolean; route: string | null }>,
+                genuineASeen: false,
+                stableSince: null as number | null,
+            };
+            const listener = (event: PopStateEvent) => {
+                const state = event.state as {
+                    __jellyfinCanopySeerrModal?: unknown;
+                    jcHistoryProof?: string;
+                } | null;
+                const marker = Boolean(state?.__jellyfinCanopySeerrModal);
+                const route = state?.jcHistoryProof ?? null;
+                proof.arrivals.push({ marker, route });
+                if (route === 'late-cap-route-a' && !marker) proof.genuineASeen = true;
+            };
+            window.addEventListener('popstate', listener);
+            (window as any).__jcLateCapTraversalProof = {
+                proof,
+                release: () => window.removeEventListener('popstate', listener),
+            };
+            history.back();
+        });
+        await page.waitForFunction(() => {
+            const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
+            const proof = (window as any).__jcLateCapTraversalProof.proof as {
+                genuineASeen: boolean;
+                stableSince: number | null;
+            };
+            const state = history.state as {
+                __jellyfinCanopySeerrModal?: unknown;
+                jcHistoryProof?: string;
+            } | null;
+            const stable = proof.genuineASeen
+                && state?.jcHistoryProof === 'late-cap-route-a'
+                && !state.__jellyfinCanopySeerrModal
+                && !owner?.pendingOwnedTraversal;
+            if (!stable) {
+                proof.stableSince = null;
+                return false;
+            }
+            proof.stableSince ??= performance.now();
+            return performance.now() - proof.stableSince >= 100;
+        }, undefined, { polling: 25, timeout: 30_000 });
+        await page.evaluate(() => (window as any).__jcLateCapTraversalProof.release());
         await page.evaluate(() => history.forward());
         await page.waitForFunction(
             () => location.hash === '#/search?jcHistoryProof=late-cap-route-b',
