@@ -1,33 +1,23 @@
 using System;
-using System.Linq;
-using System.Security;
 using System.Security.Claims;
 using Jellyfin.Extensions;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Identity;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Helpers {
     public static class UserHelper {
 
-        public static string? GetClaimValue(ClaimsPrincipal user, string name)
-            => user.Claims.FirstOrDefault(claim => claim.Type.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
-
         public static Guid? GetCurrentUserId(ClaimsPrincipal claimsPrincipal)
-        {
-            string currentUserString = GetClaimValue(claimsPrincipal, "Jellyfin-UserId") ?? string.Empty;
-            if (Guid.TryParse(currentUserString, out Guid userId))
-            {
-                return userId;
-            }
-            return null;
-        }
+            => AuthenticatedUserClaimResolver.Resolve(claimsPrincipal);
 
         public static Guid? GetUserId(ClaimsPrincipal claimsPrincipal, Guid? userId)
         {
-            var currentUserId = GetCurrentUserId(claimsPrincipal);
+            var resolvedUser = AuthenticatedUserClaimResolver.ResolveClaim(claimsPrincipal);
 
-            if (userId.IsNullOrEmpty()) return currentUserId.IsNullOrEmpty() ? null : currentUserId;
+            if (!resolvedUser.HasValue) return null;
+            var currentUserId = resolvedUser.Value.UserId;
+            if (userId.IsNullOrEmpty()) return currentUserId;
 
-            var isAdministrator = claimsPrincipal.IsInRole("Administrator");
-            if (isAdministrator || (!currentUserId.IsNullOrEmpty() && userId.Equals(currentUserId)))
+            if (resolvedUser.Value.IsInRole("Administrator") || userId.Equals(currentUserId))
             {
                 return userId.Value;
             }

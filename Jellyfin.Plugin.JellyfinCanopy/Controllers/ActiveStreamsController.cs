@@ -244,8 +244,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         {
             try
             {
+                var userId = UserHelper.GetCurrentUserId(User);
+                if (!userId.HasValue)
+                    return string.Empty;
+
                 var adminSession = _sessionManager.Sessions
-                    .FirstOrDefault(s => s.UserId == GetCurrentUserId());
+                    .FirstOrDefault(s => s.UserId == userId.Value);
                 return adminSession?.Id ?? string.Empty;
             }
             catch

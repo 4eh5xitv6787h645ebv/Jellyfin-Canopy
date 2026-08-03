@@ -325,6 +325,50 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public async Task AuthorityClaimsSplitAcrossIdentitiesFailBeforeHostLookup()
+        {
+            var userId = Guid.NewGuid();
+            var cases = new[]
+            {
+                new ClaimsPrincipal(new[]
+                {
+                    new ClaimsIdentity(authenticationType: "AuthenticatedWithoutUser"),
+                    new ClaimsIdentity(new[]
+                    {
+                        new Claim("Jellyfin-UserId", userId.ToString()),
+                        new Claim("Jellyfin-IsApiKey", bool.FalseString),
+                    }),
+                }),
+                new ClaimsPrincipal(new[]
+                {
+                    new ClaimsIdentity(
+                        new[] { new Claim("Jellyfin-UserId", userId.ToString()) },
+                        "AuthenticatedUser"),
+                    new ClaimsIdentity(new[] { new Claim("Jellyfin-IsApiKey", bool.FalseString) }),
+                }),
+                new ClaimsPrincipal(new[]
+                {
+                    new ClaimsIdentity(
+                        new[] { new Claim("Jellyfin-IsApiKey", bool.FalseString) },
+                        "AuthenticatedApiClass"),
+                    new ClaimsIdentity(
+                        new[] { new Claim("Jellyfin-UserId", userId.ToString()) },
+                        "AuthenticatedUser"),
+                }),
+            };
+
+            foreach (var principal in cases)
+            {
+                var result = await RunAsync(
+                    Request(principal),
+                    _ => throw new InvalidOperationException("split claims must not query host"));
+
+                Assert.False(result.Continued);
+                Assert.IsType<ForbidResult>(result.Context.Result);
+            }
+        }
+
+        [Fact]
         public async Task CurrentHostPermissionCanElevateWithoutARoleClaim()
         {
             var userId = Guid.NewGuid();

@@ -56,7 +56,16 @@ public sealed class CountingSessionManager : ISessionManager
     // convention until a test opts in via SetSessions.
     private List<SessionInfo>? _sessions;
 
+    private readonly List<(string ControllingSessionId, string SessionId, MessageCommand Command)> _messageCommands = new();
+
     public void SetSessions(params SessionInfo[] sessions) => _sessions = sessions.ToList();
+
+    /// <summary>Opts this fake into recording message commands instead of throwing.</summary>
+    public bool RecordMessageCommands { get; set; }
+
+    /// <summary>Message commands captured after recording is enabled.</summary>
+    public IReadOnlyList<(string ControllingSessionId, string SessionId, MessageCommand Command)> MessageCommands
+        => _messageCommands;
 
     public IEnumerable<SessionInfo> Sessions => _sessions ?? throw new NotImplementedException();
 
@@ -78,7 +87,16 @@ public sealed class CountingSessionManager : ISessionManager
 
     public Task SendGeneralCommand(string controllingSessionId, string sessionId, GeneralCommand command, CancellationToken cancellationToken) => throw new NotImplementedException();
 
-    public Task SendMessageCommand(string controllingSessionId, string sessionId, MessageCommand command, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public Task SendMessageCommand(string controllingSessionId, string sessionId, MessageCommand command, CancellationToken cancellationToken)
+    {
+        if (!RecordMessageCommands)
+        {
+            throw new NotImplementedException();
+        }
+
+        _messageCommands.Add((controllingSessionId, sessionId, command));
+        return Task.CompletedTask;
+    }
 
     public Task SendPlayCommand(string controllingSessionId, string sessionId, PlayRequest command, CancellationToken cancellationToken) => throw new NotImplementedException();
 
