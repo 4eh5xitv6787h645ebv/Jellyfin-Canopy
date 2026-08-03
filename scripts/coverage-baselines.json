@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37090,
+        "coveredLines": 37091,
         "totalLines": 46435
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 37089,
-        "maximumCoveredLines": 37090
+        "maximumCoveredLines": 37091
       },
       "tolerance": {
-        "missingCoveredLines": 1,
-        "rationale": "The deterministic quarantine-suffix fix replaces the millisecond collision loops in BookmarkStore and ReviewsStore with a timestamp plus GUID on every call. Two focused regressions each issue seven immediate primary/WAL/SHM quarantines, prove unique compatible .corrupt-* group names, and retain exactly the newest five groups without depending on clock timing. Three clean successful Coverlet runs on the identical 2026-08-03 source and 46,435-line scope each passed all 3,288 server tests and observed 37,089, 37,089, and 37,090 covered lines. A retained-report comparison identified ImageBlurService.cs line 740 as the only covered-line delta, preserving the existing one-line cancellation-completion instrumentation tolerance; every changed quarantine line is stable. Relative to the live-invalidation baseline of 37,089/46,443 (79.859%), removing both collision loops reduces the complete instrumented scope by eight lines and raises the observed high-water to 37,090/46,435 (79.875%). The floor is the directly observed 37,089/46,435 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The deterministic quarantine-suffix fix replaces the millisecond collision loops in BookmarkStore and ReviewsStore with a timestamp plus GUID on every call. Two focused regressions each issue seven immediate primary/WAL/SHM quarantines, prove unique compatible .corrupt-* group names, and retain exactly the newest five groups without depending on clock timing. Four clean successful Coverlet runs on the identical 2026-08-03 source and 46,435-line scope each passed all 3,288 server tests and observed 37,089, 37,089, 37,090, and 37,091 covered lines; the fourth measurement is the authoritative GitHub Actions Unit tests job 91609317499 at exact head 541ccd84b48cdeffc29c0e863d233761ae98dc00. A retained-report comparison between the first three runs identified ImageBlurService.cs line 740 as the first covered-line delta; the CI job did not retain its Cobertura report, so its additional covered line cannot be localized from the available artifact or log. The complete directly observed spread is two lines (0.004 percentage points), which is the minimal evidence-backed instrumentation tolerance and remains well below the 0.15-point policy maximum; every changed quarantine line is stable. Relative to the live-invalidation baseline of 37,089/46,443 (79.859%), removing both collision loops reduces the complete instrumented scope by eight lines and raises the observed high-water to 37,091/46,435 (79.877%). The floor remains the directly observed 37,089/46,435 minimum, exactly two lines below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
