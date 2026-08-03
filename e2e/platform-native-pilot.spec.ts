@@ -362,4 +362,72 @@ test.describe.serial('Platform v1 native pilot — live Jellyfin 12', () => {
             Client: CLIENT,
         }, 400);
     });
+
+    test('a live parental-policy revocation invalidates an already-prepared Seerr capability', async ({ baseURL }) => {
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
+        const movie = await jellyfinMovie(baseURL!, admin);
+        const itemId = movie.Id as string;
+
+        const dtoResponse = await apiRaw(
+            baseURL!,
+            `/Users/${admin.userId}/Items/${itemId}?Fields=ProviderIds`,
+            admin.token,
+        );
+        expect(dtoResponse.status).toBe(200);
+        const originalDto = await dtoResponse.json() as any;
+
+        const userResponse = await apiRaw(baseURL!, `/Users/${user.userId}`, admin.token);
+        expect(userResponse.status).toBe(200);
+        const userRecord = await userResponse.json() as any;
+        const originalPolicy = structuredClone(userRecord.Policy);
+
+        const patchedDto = structuredClone(originalDto);
+        patchedDto.ProviderIds = { ...(patchedDto.ProviderIds ?? {}), Tmdb: '293660' };
+        const patchItem = await apiRaw(baseURL!, `/Items/${itemId}`, admin.token, {
+            method: 'POST',
+            body: JSON.stringify(patchedDto),
+        });
+        expect(patchItem.status).toBe(204);
+
+        try {
+            const prepared = await prepare(
+                baseURL!, user, contribution(await resolve(baseURL!, user, itemId), 'seerr-request'),
+            );
+
+            const restrictedPolicy = structuredClone(originalPolicy);
+            restrictedPolicy.MaxParentalRating = 13;
+            const restrict = await apiRaw(baseURL!, `/Users/${user.userId}/Policy`, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(restrictedPolicy),
+            });
+            expect(restrict.status).toBe(204);
+
+            await postJson<null>(baseURL!, INVOKE_PATH, user, {
+                Capability: prepared.Capability,
+                IdempotencyKey: `revoked-parental-${Date.now()}`,
+                Answers: [{ FieldId: 'confirm', BooleanValue: true }],
+            }, 404);
+        } finally {
+            const restorePolicy = await apiRaw(baseURL!, `/Users/${user.userId}/Policy`, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(originalPolicy),
+            });
+            expect(restorePolicy.status).toBe(204);
+
+            const currentDtoResponse = await apiRaw(
+                baseURL!,
+                `/Users/${admin.userId}/Items/${itemId}?Fields=ProviderIds`,
+                admin.token,
+            );
+            expect(currentDtoResponse.status).toBe(200);
+            const restoredDto = await currentDtoResponse.json() as any;
+            restoredDto.ProviderIds = originalDto.ProviderIds;
+            const restoreItem = await apiRaw(baseURL!, `/Items/${itemId}`, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(restoredDto),
+            });
+            expect(restoreItem.status).toBe(204);
+        }
+    });
 });
