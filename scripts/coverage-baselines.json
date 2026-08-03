@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37091,
-        "totalLines": 46435
+        "coveredLines": 37095,
+        "totalLines": 46442
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 37089,
-        "maximumCoveredLines": 37091
+        "minimumCoveredLines": 37095,
+        "maximumCoveredLines": 37095
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The deterministic quarantine-suffix fix replaces the millisecond collision loops in BookmarkStore and ReviewsStore with a timestamp plus GUID on every call. Two focused regressions each issue seven immediate primary/WAL/SHM quarantines, prove unique compatible .corrupt-* group names, and retain exactly the newest five groups without depending on clock timing. Four clean successful Coverlet runs on the identical 2026-08-03 source and 46,435-line scope each passed all 3,288 server tests and observed 37,089, 37,089, 37,090, and 37,091 covered lines; the fourth measurement is the authoritative GitHub Actions Unit tests job 91609317499 at exact head 541ccd84b48cdeffc29c0e863d233761ae98dc00. A retained-report comparison between the first three runs identified ImageBlurService.cs line 740 as the first covered-line delta; the CI job did not retain its Cobertura report, so its additional covered line cannot be localized from the available artifact or log. The complete directly observed spread is two lines (0.004 percentage points), which is the minimal evidence-backed instrumentation tolerance and remains well below the 0.15-point policy maximum; every changed quarantine line is stable. Relative to the live-invalidation baseline of 37,089/46,443 (79.859%), removing both collision loops reduces the complete instrumented scope by eight lines and raises the observed high-water to 37,091/46,435 (79.877%). The floor remains the directly observed 37,089/46,435 minimum, exactly two lines below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "The previous 37,089-37,091/46,435 envelope was disproved by GitHub Actions Unit tests job 91614321192 at exact head 3517a2f0e43efe975852b571899c8002e763b436: all 3,288 tests passed, but Coverlet measured 37,080/46,435. A retained constrained reproduction compared with a retained 37,089 report on the identical source and scope found exactly nine missing lines and no gains: SpoilerSeerrPendingPromoter.cs lines 769 and 771-777, whose exception contract had only incidental coverage when a lifecycle fake happened to throw, and ReviewsStore.cs line 216, whose inner readiness return depended on initialization contenders accidentally passing the outer check together. An explicit library-lookup-failure test now pins the promoter's fail-closed StillPending result. A test-only post-check seam plus a two-caller barrier deterministically makes the second review-store caller observe completed initialization under the lock. The previously documented ImageBlurService.cs line 740 race is also fixed as coverage evidence: its test-only cancellation seam holds the final participant until the background flight completes, then exercises the cancellation-completion disposal branch on every run. Four clean .NET 10.0.9 Coverlet runs on the final identical 46,442-line scope each passed all 3,290 tests and reproduced exactly 37,095/46,442 (79.874%); three used the ordinary unconstrained runner, and the fourth reproduced the former low condition with DOTNET_PROCESSOR_COUNT=2 on one pinned CPU. The two narrow concurrency seams account for the seven-line scope increase; the meaningful exception, double-check, and cancellation outcomes are now explicit deterministic tests rather than scheduler side effects. The maintained floor and reviewed high-water are both 37,095/46,442 with zero tolerance. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

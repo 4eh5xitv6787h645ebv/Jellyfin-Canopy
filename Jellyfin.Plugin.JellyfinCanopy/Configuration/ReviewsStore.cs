@@ -28,6 +28,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private volatile bool _ready;
         private Exception? _initializationError;
 
+        /// <summary>Test seam for pausing callers after the lock-free readiness check.</summary>
+        internal Action? BeforeInitializationLockForTest { get; set; }
+
         public ReviewsStore(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
@@ -209,6 +212,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 return;
             }
 
+            BeforeInitializationLockForTest?.Invoke();
             lock (InitializationLock)
             {
                 if (_ready)

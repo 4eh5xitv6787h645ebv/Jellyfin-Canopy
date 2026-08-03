@@ -252,6 +252,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var cancellation = new CancellationTokenSource();
+            service.AfterFlightCancellationForTest = () => Assert.True(
+                SpinWait.SpinUntil(
+                    () => service.InFlightCountForTest == 0,
+                    TimeSpan.FromSeconds(5)),
+                "The canceled transform flight must complete before the final participant finishes leaving.");
 
             async Task<Jellyfin.Plugin.JellyfinCanopy.Services.SpoilerTransformResult> Factory(CancellationToken token)
             {

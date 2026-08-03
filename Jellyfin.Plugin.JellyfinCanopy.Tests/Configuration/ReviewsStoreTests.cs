@@ -146,6 +146,34 @@ public sealed class ReviewsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentFirstReads_SecondCallerObservesCompletedInitializationUnderLock()
+    {
+        var store = new ReviewsStore(ConfigDir, NullLogger<ReviewsStore>.Instance);
+        using var callersPastOuterCheck = new CountdownEvent(2);
+        using var releaseInitialization = new ManualResetEventSlim();
+        store.BeforeInitializationLockForTest = () =>
+        {
+            callersPastOuterCheck.Signal();
+            if (!releaseInitialization.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Concurrent review-store initialization was not released.");
+            }
+        };
+
+        var first = Task.Run(store.GetStatus);
+        var second = Task.Run(store.GetStatus);
+        Assert.True(
+            callersPastOuterCheck.Wait(TimeSpan.FromSeconds(5)),
+            "Both callers must pass the outer readiness check before either acquires the initialization lock.");
+
+        releaseInitialization.Set();
+        var statuses = await Task.WhenAll(first, second);
+
+        Assert.All(statuses, status => Assert.Equal(0, status.TotalReviews));
+        Assert.True(File.Exists(Path.Combine(ConfigDir, "reviews.db")));
+    }
+
+    [Fact]
     public void ItemAndModerationPages_AreBoundedStableAndComplete()
     {
         const int count = 205;

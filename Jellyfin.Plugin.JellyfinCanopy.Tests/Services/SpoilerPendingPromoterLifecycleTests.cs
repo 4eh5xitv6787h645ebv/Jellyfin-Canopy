@@ -66,6 +66,24 @@ public sealed class SpoilerPendingPromoterLifecycleTests : IDisposable
     }
 
     [Fact]
+    public void PromoteForUser_LibraryLookupFailureReturnsStillPending()
+    {
+        var harness = CreateHarness();
+        harness.Library.GetItemByIdUserHook = (_, _) =>
+            throw new InvalidOperationException("deterministic library lookup failure");
+
+        var outcome = harness.Promoter.PromoteForUser(
+            harness.User.Id,
+            Guid.NewGuid(),
+            "tv:123",
+            "Pending series",
+            isSeries: true);
+
+        Assert.Equal(SpoilerSeerrPendingPromoter.PromotionOutcome.StillPending, outcome);
+        Assert.Equal(1, harness.Library.GetItemByIdUserCallCount);
+    }
+
+    [Fact]
     public async Task StartupReplayBeyondQueueCapacity_ReturnsBeforeAdmissionBlocks_AndCanceledStopAbortsOwnership()
     {
         var harness = CreateHarness(queueCapacity: SpoilerSeerrPendingPromoter.DefaultQueueCapacity);
