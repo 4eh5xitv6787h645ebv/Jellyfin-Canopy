@@ -289,12 +289,26 @@ print_resource_plan() {
     fi
 }
 
+tracked_pid_is_running_job() {
+    local tracked_pid="$1" job_pid
+    while IFS= read -r job_pid; do
+        [[ "${job_pid}" == "${tracked_pid}" ]] && return 0
+    done < <(jobs -pr)
+    return 1
+}
+
 terminate_active_jobs() {
     local pid attempt alive
     for pid in "${SEED_PIDS[@]:-}" "${TEST_PIDS[@]:-}"; do
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
         if kill -0 -- "-${pid}" >/dev/null 2>&1; then
             kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
+        elif tracked_pid_is_running_job "${pid}" \
+            && kill -0 -- "${pid}" >/dev/null 2>&1; then
+            # The tracked launcher can be visible before setsid establishes
+            # the pid-named process group. Stop that process directly rather
+            # than blocking in wait until the seed or test exits naturally.
+            kill -TERM -- "${pid}" >/dev/null 2>&1 || true
         fi
     done
 
@@ -302,7 +316,9 @@ terminate_active_jobs() {
         alive=0
         for pid in "${SEED_PIDS[@]:-}" "${TEST_PIDS[@]:-}"; do
             [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
-            if kill -0 -- "-${pid}" >/dev/null 2>&1; then
+            if kill -0 -- "-${pid}" >/dev/null 2>&1 \
+                || { tracked_pid_is_running_job "${pid}" \
+                    && kill -0 -- "${pid}" >/dev/null 2>&1; }; then
                 alive=1
             fi
         done
@@ -314,6 +330,9 @@ terminate_active_jobs() {
         [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || continue
         if kill -0 -- "-${pid}" >/dev/null 2>&1; then
             kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
+        elif tracked_pid_is_running_job "${pid}" \
+            && kill -0 -- "${pid}" >/dev/null 2>&1; then
+            kill -KILL -- "${pid}" >/dev/null 2>&1 || true
         fi
         wait "${pid}" >/dev/null 2>&1 || true
     done
