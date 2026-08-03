@@ -633,6 +633,27 @@ curl -X POST \
   "<JELLYFIN_URL>/JellyfinCanopy/seerr/request"
 ```
 
+Native clients whose HTTP SDK discards non-success bodies can use
+`POST /JellyfinCanopy/seerr/request/outcome` with the same body. Authentication
+failures remain bare `401`/`403`; after authentication, the route always returns
+`200` with `{ Outcome, Submitted, Retryable, SourceStatus, Message }`. Stable
+`Outcome` values are `submitted`, `already_requested`, `quota_exceeded`,
+`blocked`, `denied`, `unavailable`, and `failed`. The original `/seerr/request`
+route keeps Seerr's status-preserving behavior for existing consumers.
+
+The native compatibility projection is deliberately additive and route-scoped:
+
+- `/seerr/discover/watchlist` retains `tmdbId` and also supplies the uniform
+  numeric `id` used by the other discovery lists.
+- `/seerr/tv/{tmdbId}` guarantees a numeric `status4k` for every season,
+  deriving it from 4K request records when an older Seerr omits it.
+- `/seerr/settings/partial-requests` returns `stale: false` after a fresh read.
+  After an outage it may return the exact source and configuration generation's
+  last-known settings with `stale: true`; without that evidence it fails rather
+  than guessing mutation settings.
+- Every proxied JSON response is streamed through the shared 8 MiB cap. Error
+  classification uses a separate 64 KiB cap and never forwards the raw body.
+
 ### Maintainerr read-only integration
 
 The Maintainerr surface is a server-mediated, typed projection; it is not a

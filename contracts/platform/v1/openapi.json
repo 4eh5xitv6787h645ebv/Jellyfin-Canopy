@@ -1056,6 +1056,10 @@
             "type": "integer",
             "format": "int32",
             "description": "Echoed so a client can report a mismatch usefully rather than just failing."
+          },
+          "SeerrAvailable": {
+            "type": "boolean",
+            "description": "Whether the authenticated Jellyfin user currently has a usable, non-blocked Seerr link. Seerr operations repeat their authorization checks before use."
           }
         }
       },

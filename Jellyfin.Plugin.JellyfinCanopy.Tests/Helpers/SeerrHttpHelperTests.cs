@@ -50,6 +50,57 @@ public class SeerrHttpHelperTests
         Assert.Equal((int)status, error.HttpStatus);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden, "Movie Quota exceeded.", SeerrErrorCode.QuotaExceeded)]
+    [InlineData(HttpStatusCode.Forbidden, "This media is blocklisted.", SeerrErrorCode.Blocklisted)]
+    [InlineData(HttpStatusCode.Conflict, "Request already exists.", SeerrErrorCode.AlreadyRequested)]
+    public async Task ReadResponseAsync_RequestErrors_ClassifyOnlyTheBoundedSafeMessage(
+        HttpStatusCode status,
+        string message,
+        SeerrErrorCode expected)
+    {
+        using var response = JsonResponse(status, $$"""{"message":"{{message}}"}""");
+
+        var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
+            response,
+            "http://seerr/api/v1/request");
+
+        Assert.Null(json);
+        Assert.Equal(expected, error!.Code);
+        Assert.DoesNotContain(message, error.UserMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReadResponseAsync_NonRequest403_RemainsGenericForbidden()
+    {
+        using var response = JsonResponse(
+            HttpStatusCode.Forbidden,
+            """{"message":"Movie Quota exceeded."}""");
+
+        var (_, error) = await SeerrHttpHelper.ReadResponseAsync(
+            response,
+            "http://seerr/api/v1/settings/main");
+
+        Assert.Equal(SeerrErrorCode.Forbidden, error!.Code);
+    }
+
+    [Fact]
+    public async Task ReadResponseAsync_ChunkedErrorBody_StopsAtTheDedicatedSentinel()
+    {
+        var stream = new TrackingStream(new byte[SeerrHttpHelper.MaxErrorBodyBytes + 128]);
+        using var response = StreamingJsonResponse(stream);
+        response.StatusCode = HttpStatusCode.Forbidden;
+
+        var (json, error) = await SeerrHttpHelper.ReadResponseAsync(
+            response,
+            "http://seerr/api/v1/request");
+
+        Assert.Null(json);
+        Assert.Equal(SeerrErrorCode.ResponseTooLarge, error!.Code);
+        Assert.Equal(SeerrHttpHelper.MaxErrorBodyBytes + 1, stream.BytesRead);
+        Assert.True(stream.WasDisposed);
+    }
+
     [Fact]
     public async Task ReadResponseAsync_HtmlBody_IsClassifiedAsHtmlResponse()
     {

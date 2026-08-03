@@ -27,6 +27,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         internal const int CertificationMaximumEntries = 4096;
         internal const long CertificationMaximumBytes = 16 * 1024 * 1024;
         internal const int Public4kMaximumEntries = 64;
+        internal const int RequestSettingsMaximumEntries = 64;
 
         private readonly IPluginConfigProvider _configProvider;
         private readonly object _importThrottleLock = new();
@@ -70,6 +71,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 maximumWeight: Public4kMaximumEntries, // unit-weight entries
                 comparer: StringComparer.Ordinal,
                 defaultTtl: () => Public4kSettingsCacheTtl);
+            RequestSettingsCache = new(
+                maximumEntries: RequestSettingsMaximumEntries,
+                maximumWeight: RequestSettingsMaximumEntries, // unit-weight entries
+                comparer: StringComparer.Ordinal,
+                // Configuration saves explicitly clear this cache. The long
+                // TTL makes it a last-known-good value across provider outages,
+                // not another short response cache.
+                defaultTtl: () => TimeSpan.FromDays(3650));
             TmdbEnrichmentCache = new(
                 TmdbEnrichmentMaximumEntries,
                 TmdbEnrichmentMaximumBytes,
@@ -168,6 +177,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         public object Public4kSettingsCacheLock { get; } = new();
 
         public TimeSpan Public4kSettingsCacheTtl { get; } = TimeSpan.FromMinutes(5);
+
+        public BoundedTtlCache<string, SeerrRequestSettingsSnapshot> RequestSettingsCache { get; }
 
         // Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr)
         public BoundedTtlCache<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }
@@ -313,6 +324,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             // Flush the cached 4K capability so a changed Seerr URL / key
             // re-resolves movie4kEnabled/series4kEnabled immediately.
             lock (Public4kSettingsCacheLock) { Public4kSettingsCache.Clear(); }
+            RequestSettingsCache.Clear();
             lock (_importThrottleLock)
             {
                 _lastManualImport = DateTime.MinValue;

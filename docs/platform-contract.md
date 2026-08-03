@@ -109,7 +109,10 @@ Two routes, meant to be used as a pair:
    platform is serving requests and which protocol versions it speaks, and deliberately
    nothing else. Check `Available` before you have any reason to authenticate.
 2. **`GET /JellyfinCanopy/Platform/v1/negotiate`** — authenticated. You offer the range
-   you support; the host answers with what it will actually use.
+   you support; the host answers with what it will actually use. Its additive
+   `SeerrAvailable` hint reports whether the authenticated Jellyfin user currently
+   has a usable, non-blocked Seerr link. This replaces a separate user-status probe;
+   Seerr operations still repeat their current authorization checks independently.
 
 `negotiate` answers `200` with `Compatible: false` when there is no common version. That
 is **not** an error — the negotiation succeeded, it just concluded "no". Render it

@@ -78,6 +78,7 @@ describe('Seerr request settings fail closed', () => {
             available: true,
             partialRequestsEnabled: true,
             enableSpecialEpisodes: true,
+            stale: false,
         });
         await expect(jc().seerrAPI.fetchRequestSettings()).resolves.toEqual({ available: false });
     });
@@ -89,6 +90,22 @@ describe('Seerr request settings fail closed', () => {
             available: true,
             partialRequestsEnabled: false,
             enableSpecialEpisodes: false,
+            stale: false,
+        });
+    });
+
+    it('surfaces an exact-generation server fallback as stale but available', async () => {
+        fetchMock.mockResolvedValue({
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: false,
+            stale: true,
+        });
+
+        await expect(jc().seerrAPI.fetchRequestSettings()).resolves.toEqual({
+            available: true,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: false,
+            stale: true,
         });
     });
 

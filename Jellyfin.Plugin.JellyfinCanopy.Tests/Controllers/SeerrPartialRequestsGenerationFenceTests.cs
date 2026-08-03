@@ -21,6 +21,31 @@ public sealed class SeerrPartialRequestsGenerationFenceTests
     private const string SourceB = "http://source-b:5055";
 
     [Fact]
+    public async Task PartialSettings_UpstreamFailure_ServesOnlyTheExactLastKnownGeneration()
+    {
+        var provider = new FakePluginConfigProvider(Configuration(SourceA, "key-a"));
+        var handler = new SequentialSettingsHandler();
+        var cache = new SeerrCache(provider);
+        var controller = CreateController(provider, handler, cache, SourceA);
+
+        var fresh = Assert.IsType<OkObjectResult>(await controller.GetSeerrPartialRequestsSetting());
+        Assert.True(Property<bool>(fresh.Value, "partialRequestsEnabled"));
+        Assert.False(Property<bool>(fresh.Value, "enableSpecialEpisodes"));
+        Assert.False(Property<bool>(fresh.Value, "stale"));
+
+        handler.Fail = true;
+        var fallback = Assert.IsType<OkObjectResult>(await controller.GetSeerrPartialRequestsSetting());
+        Assert.True(Property<bool>(fallback.Value, "partialRequestsEnabled"));
+        Assert.False(Property<bool>(fallback.Value, "enableSpecialEpisodes"));
+        Assert.True(Property<bool>(fallback.Value, "stale"));
+
+        provider.Current = Configuration(SourceA, "key-b");
+        var changed = Assert.IsType<ObjectResult>(await controller.GetSeerrPartialRequestsSetting());
+        Assert.Equal(503, changed.StatusCode);
+        Assert.Equal("unreachable", Property<string>(changed.Value, "code"));
+    }
+
+    [Fact]
     public async Task PartialSettings_ConfigChangesWhileReadIsInFlight_UsesCapturedPairAndRejectsStaleReturn()
     {
         var initial = Configuration($"{SourceA}\n{SourceB}", "key-a");
@@ -74,6 +99,65 @@ public sealed class SeerrPartialRequestsGenerationFenceTests
         SeerrUrls = urls,
         SeerrApiKey = key,
     };
+
+    private static SeerrProxyController CreateController(
+        FakePluginConfigProvider provider,
+        HttpMessageHandler handler,
+        SeerrCache cache,
+        string sourceUrl)
+    {
+        var controller = new SeerrProxyController(
+            new RecordingHttpClientFactory(handler),
+            NullLogger<SeerrProxyController>.Instance,
+            new StubUserManager(),
+            cache,
+            provider,
+            new FixedSeerrClient(new SeerrUser
+            {
+                Id = 7,
+                JellyfinUserId = JellyfinUserId,
+                SourceUrl = sourceUrl,
+            }),
+            parentalFilter: null!,
+            spoilerPending: null!);
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim("Jellyfin-UserId", JellyfinUserId) },
+                    "TestAuth")),
+            },
+        };
+        return controller;
+    }
+
+    private static T Property<T>(object? value, string name)
+    {
+        Assert.NotNull(value);
+        return Assert.IsType<T>(value.GetType().GetProperty(name)!.GetValue(value));
+    }
+
+    private sealed class SequentialSettingsHandler : HttpMessageHandler
+    {
+        public bool Fail { get; set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(Fail
+                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                }
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"partialRequestsEnabled":true,"enableSpecialEpisodes":false}""",
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+    }
 
     private sealed class BlockingSettingsHandler : HttpMessageHandler
     {

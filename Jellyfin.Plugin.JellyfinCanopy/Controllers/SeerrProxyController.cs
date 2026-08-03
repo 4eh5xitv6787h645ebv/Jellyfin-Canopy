@@ -272,6 +272,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             return await ProxySeerrRequest("/api/v1/request", HttpMethod.Post, requestBody.ToString());
         }
 
+        /// <summary>
+        /// Native-safe request submission. Jellyfin's Kotlin SDK intentionally
+        /// discards non-2xx bodies, so this compatibility route returns every
+        /// business outcome in a typed 200 envelope. Authentication remains
+        /// Jellyfin-owned and the existing status-preserving route is unchanged.
+        /// </summary>
+        [HttpPost("seerr/request/outcome")]
+        [Authorize]
+        public async Task<IActionResult> SeerrRequestOutcome([FromBody] JsonElement requestBody)
+        {
+            var result = await ProxySeerrRequest(
+                "/api/v1/request",
+                HttpMethod.Post,
+                requestBody.ToString()).ConfigureAwait(false);
+            return Jellyfin.Plugin.JellyfinCanopy.Services.Seerr.SeerrRequestOutcome.FromProxyResult(result);
+        }
+
         [HttpGet("seerr/request")]
         [Authorize]
         public Task<IActionResult> GetSeerrRequests([FromQuery] int take = 500, [FromQuery] int skip = 0, [FromQuery] string filter = "all")
@@ -1133,6 +1150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
             var config = integration.Configuration!;
             var configurationRevision = integration.ConfigurationRevision;
+            var configurationIdentity = SeerrClient.BuildConfigurationIdentity(config);
             var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
             var apiKey = integration.ApiKey;
             var configuredUrls = integration.Urls;
@@ -1199,6 +1217,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
+            var settingsCacheKey = $"{configurationIdentity.Length}:{configurationIdentity}:{sourceUrl}";
+            var failureStatus = 503;
+            var failureCode = "unreachable";
+            var failureMessage = "Could not reach Seerr to read partial-requests setting.";
+
             var httpClient = Helpers.Seerr.SeerrHttpHelper.CreateClient(_httpClientFactory);
             var requestUri = $"{sourceUrl.TrimEnd('/')}/api/v1/settings/main";
             try
@@ -1232,21 +1255,45 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         || !settings.RootElement.TryGetProperty("enableSpecialEpisodes", out var specialsProp)
                         || specialsProp.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                     {
-                        return StatusCode(502, new
+                        failureStatus = 502;
+                        failureCode = "settings_invalid";
+                        failureMessage = "Seerr returned invalid request settings.";
+                        _logger.LogWarning("Seerr returned incomplete request settings; checking the exact-generation last-known value.");
+                    }
+                    else
+                    {
+                        var partialRequestsEnabled = partialProp.ValueKind == JsonValueKind.True;
+                        var enableSpecialEpisodes = specialsProp.ValueKind == JsonValueKind.True;
+                        var snapshot = new SeerrRequestSettingsSnapshot(
+                            partialRequestsEnabled,
+                            enableSpecialEpisodes,
+                            DateTime.UtcNow,
+                            configurationRevision,
+                            configurationIdentity);
+                        _seerrCache.RequestSettingsCache.TrySet(
+                            settingsCacheKey,
+                            snapshot,
+                            out var publication);
+
+                        if (!IsConfigurationCurrent())
                         {
-                            error = true,
-                            code = "settings_invalid",
-                            message = "Seerr returned invalid request settings."
+                            _seerrCache.RequestSettingsCache.Remove(publication);
+                            return ConfigurationChanged();
+                        }
+
+                        _logger.LogInformation($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
+                        return Ok(new
+                        {
+                            partialRequestsEnabled,
+                            enableSpecialEpisodes,
+                            stale = false,
                         });
                     }
-
-                    var partialRequestsEnabled = partialProp.ValueKind == JsonValueKind.True;
-                    var enableSpecialEpisodes = specialsProp.ValueKind == JsonValueKind.True;
-                    _logger.LogInformation($"Seerr settings — partialRequests: {partialRequestsEnabled}, specialEpisodes: {enableSpecialEpisodes}");
-                    return Ok(new { partialRequestsEnabled, enableSpecialEpisodes });
                 }
-
-                _logger.LogWarning($"Failed to fetch Seerr settings from {sourceUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                else
+                {
+                    _logger.LogWarning($"Failed to fetch Seerr settings from {sourceUrl}: code={error!.Code} status={error.HttpStatus} cf-ray={error.CfRay} — {error.Message}");
+                }
             }
             catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
             {
@@ -1267,16 +1314,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 return ConfigurationChanged();
             }
 
+            if (_seerrCache.RequestSettingsCache.TryGetValue(settingsCacheKey, out var cached)
+                && cached.ConfigurationRevision == configurationRevision
+                && string.Equals(
+                    cached.ConfigurationIdentity,
+                    configurationIdentity,
+                    StringComparison.Ordinal))
+            {
+                _logger.LogWarning(
+                    "Serving the last known Seerr request settings for the exact current configuration generation after an upstream failure.");
+                return Ok(new
+                {
+                    partialRequestsEnabled = cached.PartialRequestsEnabled,
+                    enableSpecialEpisodes = cached.EnableSpecialEpisodes,
+                    stale = true,
+                });
+            }
+
             // Do not fail over to another Seerr identity domain and do not
-            // silently default to false on outage — that
-            // hides admin-configured "partial requests off" UX state. Return
-            // 503 so the frontend can keep last-known state.
-            _logger.LogWarning("Could not fetch settings from the resolved Seerr source — surfacing as 503 unreachable");
-            return StatusCode(503, new
+            // silently default to false. Without an exact-generation
+            // last-known value, the client must preserve its own state.
+            _logger.LogWarning("Could not fetch settings from the resolved Seerr source — surfacing the upstream settings failure");
+            return StatusCode(failureStatus, new
             {
                 error = true,
-                code = "unreachable",
-                message = "Could not reach Seerr to read partial-requests setting."
+                code = failureCode,
+                message = failureMessage,
             });
         }
 

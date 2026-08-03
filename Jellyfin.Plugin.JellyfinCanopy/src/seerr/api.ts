@@ -74,6 +74,7 @@ export type SeerrRequestSettings =
         available: true;
         partialRequestsEnabled: boolean;
         enableSpecialEpisodes: boolean;
+        stale: boolean;
     }
     | {
         available: false;
@@ -1048,14 +1049,14 @@ api.fetchRequestSettings = async function() {
         return {
             available: true,
             partialRequestsEnabled: result.partialRequestsEnabled,
-            enableSpecialEpisodes: result.enableSpecialEpisodes
+            enableSpecialEpisodes: result.enableSpecialEpisodes,
+            stale: result.stale === true
         };
     } catch (error: any) {
         console.warn(`${logPrefix} Failed to fetch request settings:`, error);
-        // These settings determine whether a click means selected seasons or
-        // the whole show. No source/config-scoped last-good cache exists in the
-        // browser, so an outage must remain unavailable rather than silently
-        // changing the mutation shape.
+        // The server may safely return an exact source/config-generation
+        // last-known value with stale=true. A rejected request means it has no
+        // such authoritative fallback, so the mutation shape stays unavailable.
         return { available: false };
     }
 };

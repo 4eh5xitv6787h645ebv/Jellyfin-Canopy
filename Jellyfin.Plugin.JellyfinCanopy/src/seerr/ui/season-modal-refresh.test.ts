@@ -59,6 +59,7 @@ describe('season modal refresh lifecycle', () => {
                 available: true,
                 partialRequestsEnabled: true,
                 enableSpecialEpisodes: false,
+                stale: false,
             }),
             fetchTvShowDetails,
             fetchTvSeasonDetails,

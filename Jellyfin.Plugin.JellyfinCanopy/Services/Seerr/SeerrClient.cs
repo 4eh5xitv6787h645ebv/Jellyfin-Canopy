@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     /// shared <see cref="ISeerrCache"/> user caches so every caller format
     /// (dashed/N/upper) hits the same entry.
     /// </summary>
-    public sealed class SeerrClient : ISeerrClient, ISeerrMediaRequestAdmission
+    public sealed class SeerrClient : ISeerrClient, ISeerrMediaRequestAdmission, ISeerrUserAvailability
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<SeerrClient> _logger;
@@ -147,6 +147,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     resolution.User.Id,
                     resolution.User.Permissions,
                     source));
+        }
+
+        async Task<bool> ISeerrUserAvailability.IsAvailableAsync(
+            Guid jellyfinUserId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+            if (!integration.IsActive)
+            {
+                return false;
+            }
+
+            var resolution = await ResolveSeerrUser(
+                jellyfinUserId.ToString("D"),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return integration.IsCurrent(_configProvider) && resolution.IsFound;
         }
 
         Task<Seerr4kCapability> ISeerrMediaRequestAdmission.Get4kCapabilityAsync(
@@ -2473,7 +2490,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                     if (content != null) _logger.LogDebug($"Request body: {content}");
 
                     IActionResult? spoilerIntentFailure = null;
-                    var (json, error, _) = await SeerrHttpHelper.SendAndReadJsonAsync(
+                    var (json, error, upstreamStatus) = await SeerrHttpHelper.SendAndReadJsonAsync(
                         httpClient,
                         request,
                         requestUri,
@@ -2519,6 +2536,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                             })
                             { StatusCode = 409 };
                         }
+
+                        if (!SeerrProxyProjection.TryProject(json, apiPath, out var projectedJson))
+                        {
+                            return new ObjectResult(new
+                            {
+                                error = true,
+                                code = "proxy_projection_invalid",
+                                message = "Seerr returned an unexpected response shape. Please try again."
+                            })
+                            { StatusCode = 502 };
+                        }
+
+                        json = projectedJson;
 
                         // Cache only complete, size-bounded, parsed JSON 2xx responses.
                         // SendAndReadJsonAsync also prevents HTML challenge pages from
@@ -2582,6 +2612,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                             { StatusCode = 409 };
                         }
 
+                        if (filtered is ContentResult contentResult)
+                        {
+                            // Preserve Seerr's successful mutation status. In
+                            // particular, 202 means no new TV seasons were
+                            // available and is classified by the native outcome
+                            // route rather than being mistaken for a submission.
+                            contentResult.StatusCode = upstreamStatus;
+                        }
+
                         return filtered;
                     }
 
@@ -2597,6 +2636,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                         SeerrErrorCode.Cloudflare5xx => 502,
                         SeerrErrorCode.Unauthorized => 401,
                         SeerrErrorCode.Forbidden => 403,
+                        SeerrErrorCode.QuotaExceeded => 429,
+                        SeerrErrorCode.AlreadyRequested => 409,
+                        SeerrErrorCode.Blocklisted => 422,
                         _ => error.HttpStatus > 0 ? error.HttpStatus : 502,
                     };
                     // admins keep the upstream URL in the response;

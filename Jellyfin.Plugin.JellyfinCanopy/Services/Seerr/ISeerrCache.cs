@@ -31,6 +31,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
     }
 
     /// <summary>
+    /// Last authoritative Seerr request-shape settings for one exact source
+    /// and Canopy configuration generation.
+    /// </summary>
+    public sealed record SeerrRequestSettingsSnapshot(
+        bool PartialRequestsEnabled,
+        bool EnableSpecialEpisodes,
+        DateTime CachedAt,
+        long ConfigurationRevision,
+        string ConfigurationIdentity);
+
+    /// <summary>
     /// Process-wide Seerr/TMDB caches shared by the JellyfinCanopy feature
     /// controllers and the Seerr user-import task. Formerly the static
     /// <c>Controllers.SeerrCaches</c> holder; now a DI singleton so consumers
@@ -111,6 +122,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         object Public4kSettingsCacheLock { get; }
 
         TimeSpan Public4kSettingsCacheTtl { get; }
+
+        /// <summary>
+        /// Last known valid <c>/api/v1/settings/main</c> request-shape flags,
+        /// keyed by exact source URL plus configuration identity. Entries are
+        /// bounded and cleared on every configuration save; they intentionally
+        /// outlive a short upstream outage.
+        /// </summary>
+        BoundedTtlCache<string, SeerrRequestSettingsSnapshot> RequestSettingsCache { get; }
 
         /// <summary>Cache for request-page TMDB enrichments (movie/tv detail lookups via Seerr).</summary>
         BoundedTtlCache<string, (TmdbEnrichmentResult Data, DateTime CachedAt, long ConfigurationRevision)> TmdbEnrichmentCache { get; }

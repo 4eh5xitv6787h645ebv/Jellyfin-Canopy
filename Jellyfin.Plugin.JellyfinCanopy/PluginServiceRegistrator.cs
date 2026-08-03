@@ -174,6 +174,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 services.GetRequiredService<Services.Seerr.SeerrClient>());
             serviceCollection.AddSingleton<Services.Seerr.ISeerrMediaRequestAdmission>(services =>
                 services.GetRequiredService<Services.Seerr.SeerrClient>());
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrUserAvailability>(services =>
+                services.GetRequiredService<Services.Seerr.SeerrClient>());
             // Shared SSRF-guarded Sonarr/Radarr fetch plumbing for the Arr controllers.
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
