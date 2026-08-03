@@ -36,8 +36,11 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-**Activated for the server tranche; not yet delivered.** Built-in Canopy
-families continue to need no third-party manifest or grant. Their existing
+**Activated for the server tranche; contract foundation delivered by #645.** The
+strict installed-provider manifest v1 envelope and its canonical semantic
+fingerprint are frozen without reading a file or creating authority. Host-bound
+safe acquisition, approval/grants, lifecycle and persistence remain undelivered.
+Built-in Canopy families continue to need no third-party manifest or grant. Their existing
 caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
 separate-plugin fixture, fingerprint-bound approval, grant/lifecycle tests and
 the EP-03 exit gate. ADR [0005](adr/0005-manifest-discovery.md).

@@ -168,6 +168,12 @@ Traversal, absolute paths, embedded NUL and escaping symlinks are rejected befor
 any file is opened
 ([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
 Size, malformed-JSON and non-object manifests are rejected before registration, and a fingerprint mismatch is a rejection rather than a flag — all verified. A manifest requests; an admin grants.
+Issue #645 additionally freezes the pure pre-filesystem contract: strict bounded
+UTF-8 JSON, closed fields, canonical identifiers/versions/ranges, exact
+provider-eligible requests through the #639 vocabulary, stable closed rejection
+reasons and a domain-separated semantic SHA-256 fingerprint over every validated
+field. Parse success still proves no installation, host binding, compatibility,
+approval, grant, enablement or authority; those remain registry-owned checks.
 *Residual.* **Low.** Four defects found during the spike were fixed rather than
 documented away: separators are normalised before any test; every path component
 is resolved, not just the leaf; resolution runs to a **fixed point**, because one
