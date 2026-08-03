@@ -1,3 +1,7 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,6 +14,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [Route(PlatformConstants.RoutePrefix)]
     public class PlatformDiscoveryController : PlatformControllerBase
     {
+        private readonly ISeerrUserAvailability? _seerrAvailability;
+
+        /// <summary>Creates the controller for framework activation.</summary>
+        public PlatformDiscoveryController(ISeerrUserAvailability seerrAvailability)
+        {
+            _seerrAvailability = seerrAvailability ?? throw new ArgumentNullException(nameof(seerrAvailability));
+        }
+
+        /// <summary>Creates a fail-closed controller for direct compatibility tests.</summary>
+        public PlatformDiscoveryController()
+        {
+        }
+
         /// <summary>
         /// Anonymous availability probe.
         ///
@@ -43,10 +60,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         [HttpGet("negotiate")]
         [PlatformCacheable]
-        public ActionResult<PlatformNegotiationResponse> Negotiate(
+        public async Task<ActionResult<PlatformNegotiationResponse>> Negotiate(
             [FromQuery] int? protocolMinimum,
             [FromQuery] int? protocolMaximum)
         {
+            var seerrAvailable = await GetSeerrAvailabilityAsync(HttpContext.RequestAborted).ConfigureAwait(false);
             var clientMinimum = protocolMinimum ?? PlatformConstants.ProtocolMinimum;
             var clientMaximum = protocolMaximum ?? PlatformConstants.ProtocolMinimum;
 
@@ -64,6 +82,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     Compatible = false,
                     HostProtocolMinimum = PlatformConstants.ProtocolMinimum,
                     HostProtocolMaximum = PlatformConstants.ProtocolMaximum,
+                    SeerrAvailable = seerrAvailable,
                 });
             }
 
@@ -73,7 +92,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 Protocol = negotiated,
                 HostProtocolMinimum = PlatformConstants.ProtocolMinimum,
                 HostProtocolMaximum = PlatformConstants.ProtocolMaximum,
+                SeerrAvailable = seerrAvailable,
             });
+        }
+
+        private async Task<bool> GetSeerrAvailabilityAsync(CancellationToken cancellationToken)
+        {
+            if (_seerrAvailability == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return await _seerrAvailability.IsAvailableAsync(
+                    Actor.UserId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Availability is an additive rendering hint. Provider failures and
+                // configuration races fail closed without breaking negotiation.
+                return false;
+            }
         }
     }
 
@@ -104,5 +149,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Echoed so a client can report the mismatch usefully rather than just failing.</summary>
         public int HostProtocolMaximum { get; set; }
+
+        /// <summary>
+        /// Whether this authenticated Jellyfin user currently has a usable,
+        /// non-blocked Seerr link. This avoids an extra user-status round trip;
+        /// each Seerr route still repeats its current authorization checks.
+        /// </summary>
+        public bool SeerrAvailable { get; set; }
     }
 }

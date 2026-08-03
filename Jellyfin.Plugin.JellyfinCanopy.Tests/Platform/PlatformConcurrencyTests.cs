@@ -351,7 +351,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         private static async Task<HttpResponse> RunNegotiationAsync(int minimum, int maximum)
         {
             var controller = new PlatformDiscoveryController();
-            var action = Assert.IsType<OkObjectResult>(controller.Negotiate(minimum, maximum).Result);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            var action = Assert.IsType<OkObjectResult>((await controller.Negotiate(minimum, maximum)).Result);
             var method = typeof(PlatformDiscoveryController).GetMethod(nameof(PlatformDiscoveryController.Negotiate))!;
             return await RunAsync(method, action);
         }

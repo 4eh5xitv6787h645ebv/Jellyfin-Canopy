@@ -23,6 +23,55 @@ public class SeerrPaginationIntegrationTests
     private const string NormalizedJellyfinUserId = "3f2504e04f8941d39a0c0305e82c3301";
 
     [Fact]
+    public async Task UserAvailability_IsTrueOnlyForAResolvedCurrentUser()
+    {
+        var handler = new QueryAwareHandler(_ => Page(
+            page: 1,
+            totalPages: 1,
+            totalResults: 1,
+            new[] { UserRow(7, NormalizedJellyfinUserId) }));
+        var (client, _) = NewClient(handler);
+
+        var available = await ((ISeerrUserAvailability)client).IsAvailableAsync(
+            Guid.Parse(JellyfinUserId),
+            CancellationToken.None);
+
+        Assert.True(available);
+    }
+
+    [Fact]
+    public async Task UserAvailability_FailsClosedForABlockedUserWithoutProviderTraffic()
+    {
+        var handler = new QueryAwareHandler(_ => throw new Xunit.Sdk.XunitException("No request expected."));
+        var config = Config();
+        config.SeerrImportBlockedUsers = NormalizedJellyfinUserId;
+        var (client, _) = NewClient(handler, config);
+
+        var available = await ((ISeerrUserAvailability)client).IsAvailableAsync(
+            Guid.Parse(JellyfinUserId),
+            CancellationToken.None);
+
+        Assert.False(available);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task UserAvailability_FailsClosedWhenTheIntegrationIsDisabled()
+    {
+        var handler = new QueryAwareHandler(_ => throw new Xunit.Sdk.XunitException("No request expected."));
+        var config = Config();
+        config.SeerrEnabled = false;
+        var (client, _) = NewClient(handler, config);
+
+        var available = await ((ISeerrUserAvailability)client).IsAvailableAsync(
+            Guid.Parse(JellyfinUserId),
+            CancellationToken.None);
+
+        Assert.False(available);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task GetSeerrUser_FindsUserBeyondFirstReportedPage()
     {
         var handler = new QueryAwareHandler(request =>

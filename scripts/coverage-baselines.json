@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37095,
-        "totalLines": 46442
+        "coveredLines": 37479,
+        "totalLines": 46859
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 37095,
-        "maximumCoveredLines": 37095
+        "cleanRuns": 3,
+        "minimumCoveredLines": 37479,
+        "maximumCoveredLines": 37479
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The previous 37,089-37,091/46,435 envelope was disproved by GitHub Actions Unit tests job 91614321192 at exact head 3517a2f0e43efe975852b571899c8002e763b436: all 3,288 tests passed, but Coverlet measured 37,080/46,435. A retained constrained reproduction compared with a retained 37,089 report on the identical source and scope found exactly nine missing lines and no gains: SpoilerSeerrPendingPromoter.cs lines 769 and 771-777, whose exception contract had only incidental coverage when a lifecycle fake happened to throw, and ReviewsStore.cs line 216, whose inner readiness return depended on initialization contenders accidentally passing the outer check together. An explicit library-lookup-failure test now pins the promoter's fail-closed StillPending result. A test-only post-check seam plus a two-caller barrier deterministically makes the second review-store caller observe completed initialization under the lock. The previously documented ImageBlurService.cs line 740 race is also fixed as coverage evidence: its test-only cancellation seam holds the final participant until the background flight completes, then exercises the cancellation-completion disposal branch on every run. Four clean .NET 10.0.9 Coverlet runs on the final identical 46,442-line scope each passed all 3,290 tests and reproduced exactly 37,095/46,442 (79.874%); three used the ordinary unconstrained runner, and the fourth reproduced the former low condition with DOTNET_PROCESSOR_COUNT=2 on one pinned CPU. The two narrow concurrency seams account for the seven-line scope increase; the meaningful exception, double-check, and cancellation outcomes are now explicit deterministic tests rather than scheduler side effects. The maintained floor and reviewed high-water are both 37,095/46,442 with zero tolerance. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #627-#632 native Seerr compatibility change adds the typed request-outcome contract, bounded upstream error classification, watchlist and per-season 4K projections, authenticated per-user negotiation availability, and exact-generation last-known request settings. Three clean .NET 10.0.9 Coverlet runs on the identical final 46,859-line source and test scope each passed all 3,316 tests and reproduced exactly 37,479 covered lines. The reviewed high-water and exact clean-run floor are therefore both 37,479/46,859 (79.983%), so no instrumentation tolerance is needed. Relative to the prior 37,095/46,442 baseline, the change adds 417 instrumented lines, raises the high-water by 384 covered lines, and increases overall coverage from 79.874% to 79.983%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

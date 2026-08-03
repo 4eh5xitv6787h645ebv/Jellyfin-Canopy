@@ -9,6 +9,19 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
 {
     /// <summary>
+    /// Narrow authenticated availability seam for native clients. It deliberately
+    /// exposes neither the generic proxy nor Seerr's provider-local user identity.
+    /// </summary>
+    public interface ISeerrUserAvailability
+    {
+        /// <summary>
+        /// Returns whether the current Jellyfin user has a usable, non-blocked Seerr
+        /// link under the current integration generation.
+        /// </summary>
+        Task<bool> IsAvailableAsync(Guid jellyfinUserId, CancellationToken cancellationToken);
+    }
+
+    /// <summary>
     /// The acting caller for proxied Seerr operations. Resolved by the
     /// controller from the authenticated principal (never from caller-controlled
     /// headers) and passed down so the singleton client stays HttpContext-free.

@@ -22,6 +22,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
         UpstreamRedirect,
         Cloudflare5xx,
         UpstreamError,
+        QuotaExceeded,
+        AlreadyRequested,
+        Blocklisted,
         ParseError,
         ResponseTooLarge,
         Timeout,
@@ -69,6 +72,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             SeerrErrorCode.UpstreamRedirect  => "Seerr is unreachable. Ask your administrator to check the connection.",
             SeerrErrorCode.Cloudflare5xx     => "Seerr is having connection issues. Please try again in a moment.",
             SeerrErrorCode.UpstreamError     => "Seerr returned an error. Please try again in a moment.",
+            SeerrErrorCode.QuotaExceeded     => "Your Seerr request quota has been reached.",
+            SeerrErrorCode.AlreadyRequested  => "This title is already requested.",
+            SeerrErrorCode.Blocklisted       => "This title is blocked by Seerr policy.",
             SeerrErrorCode.ParseError        => "Got an unexpected response from Seerr. Please try again in a moment.",
             SeerrErrorCode.ResponseTooLarge  => "Seerr returned too much data. Please try again in a moment.",
             SeerrErrorCode.Timeout           => "Seerr took too long to respond. Please try again in a moment.",
@@ -117,6 +123,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
         }
 
         internal const int MaxBodyBytes = 8 * 1024 * 1024;
+        internal const int MaxErrorBodyBytes = 64 * 1024;
         private const int ReadBufferBytes = 64 * 1024;
         private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -315,10 +322,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
                 });
             }
 
-            // Preserve status-specific upstream errors without requiring an
-            // error body to be buffered or even well-formed JSON.
+            // Error bodies are read through their own much smaller streaming
+            // cap. Seerr uses the same 403 for permission, quota, and
+            // blocklist failures; retaining only a bounded message long enough
+            // to classify those outcomes lets body-blind native SDKs receive a
+            // useful status/outcome without exposing the upstream body.
             if (!response.IsSuccessStatusCode)
             {
+                var (errorBytes, observedErrorBytes) = await ReadBoundedBodyAsync(
+                    response.Content,
+                    MaxErrorBodyBytes,
+                    ct).ConfigureAwait(false);
+                if (errorBytes == null)
+                {
+                    return (null, ResponseTooLarge(
+                        url,
+                        status,
+                        cfRay,
+                        MaxErrorBodyBytes,
+                        observedErrorBytes));
+                }
+
+                var upstreamMessage = TryReadErrorMessage(errorBytes);
                 if (status == 401)
                 {
                     return (null, new SeerrError
@@ -334,71 +359,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
 
                 if (status == 403)
                 {
+                    var classified = ClassifyRequestError(url, status, upstreamMessage);
                     return (null, new SeerrError
                     {
-                        Code = SeerrErrorCode.Forbidden,
+                        Code = classified,
                         HttpStatus = 403,
                         CfRay = cfRay,
                         Url = url,
-                        Message = "Seerr returned 403. Common causes: API key rotated, user lacks permission, or CSRF protection enabled in Seerr.",
-                        UserMessage = "Seerr declined the request. Ask your administrator to check your account permissions."
+                        Message = classified switch
+                        {
+                            SeerrErrorCode.QuotaExceeded => "Seerr rejected the request because its quota was exceeded.",
+                            SeerrErrorCode.Blocklisted => "Seerr rejected the request because the media is blocklisted.",
+                            _ => "Seerr returned 403. Common causes: API key rotated, user lacks permission, or CSRF protection enabled in Seerr.",
+                        },
+                        UserMessage = classified switch
+                        {
+                            SeerrErrorCode.QuotaExceeded => "Your Seerr request quota has been reached.",
+                            SeerrErrorCode.Blocklisted => "This title is blocked by Seerr policy.",
+                            _ => "Seerr declined the request. Ask your administrator to check your account permissions.",
+                        },
                     });
                 }
 
+                var requestError = ClassifyRequestError(url, status, upstreamMessage);
+
                 return (null, new SeerrError
                 {
-                    Code = SeerrErrorCode.UpstreamError,
+                    Code = requestError,
                     HttpStatus = status,
                     CfRay = cfRay,
                     Url = url,
-                    Message = $"Seerr returned {status} from {url}.",
-                    UserMessage = "Seerr returned an error. Please try again in a moment."
+                    Message = requestError == SeerrErrorCode.AlreadyRequested
+                        ? $"Seerr reported that the media is already requested ({status}) at {url}."
+                        : $"Seerr returned {status} from {url}.",
+                    UserMessage = requestError == SeerrErrorCode.AlreadyRequested
+                        ? "This title is already requested."
+                        : "Seerr returned an error. Please try again in a moment."
                 });
             }
 
-            var declaredLength = response.Content.Headers.ContentLength;
-            if (declaredLength > maxBodyBytes)
+            var (bodyBytes, observedBytes) = await ReadBoundedBodyAsync(
+                response.Content,
+                maxBodyBytes,
+                ct).ConfigureAwait(false);
+            if (bodyBytes == null)
             {
-                return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, declaredLength));
-            }
-
-            byte[] bodyBytes;
-            var readBuffer = ArrayPool<byte>.Shared.Rent(Math.Min(ReadBufferBytes, maxBodyBytes + 1));
-            try
-            {
-                using var body = new MemoryStream(
-                    declaredLength.HasValue
-                        ? Math.Min(checked((int)declaredLength.Value), ReadBufferBytes)
-                        : Math.Min(8192, maxBodyBytes));
-                using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                while (true)
-                {
-                    var remainingWithSentinel = (long)maxBodyBytes + 1 - body.Length;
-                    if (remainingWithSentinel <= 0)
-                    {
-                        return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, body.Length));
-                    }
-
-                    var readSize = (int)Math.Min(readBuffer.Length, remainingWithSentinel);
-                    var read = await stream.ReadAsync(readBuffer.AsMemory(0, readSize), ct).ConfigureAwait(false);
-                    if (read == 0)
-                    {
-                        break;
-                    }
-
-                    body.Write(readBuffer, 0, read);
-                }
-
-                if (body.Length > maxBodyBytes)
-                {
-                    return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, body.Length));
-                }
-
-                bodyBytes = body.ToArray();
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(readBuffer);
+                return (null, ResponseTooLarge(url, status, cfRay, maxBodyBytes, observedBytes));
             }
 
             string bodyText;
@@ -421,6 +427,109 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers.Seerr
             }
 
             return (bodyText, null);
+        }
+
+        private static async Task<(byte[]? Bytes, long? ObservedBytes)> ReadBoundedBodyAsync(
+            HttpContent content,
+            int maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            var declaredLength = content.Headers.ContentLength;
+            if (declaredLength > maximumBytes)
+            {
+                return (null, declaredLength);
+            }
+
+            var readBuffer = ArrayPool<byte>.Shared.Rent(Math.Min(ReadBufferBytes, maximumBytes + 1));
+            try
+            {
+                using var body = new MemoryStream(
+                    declaredLength.HasValue
+                        ? Math.Min(checked((int)declaredLength.Value), ReadBufferBytes)
+                        : Math.Min(8192, maximumBytes));
+                using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                while (true)
+                {
+                    var remainingWithSentinel = (long)maximumBytes + 1 - body.Length;
+                    if (remainingWithSentinel <= 0)
+                    {
+                        return (null, body.Length);
+                    }
+
+                    var readSize = (int)Math.Min(readBuffer.Length, remainingWithSentinel);
+                    var read = await stream.ReadAsync(
+                        readBuffer.AsMemory(0, readSize),
+                        cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    body.Write(readBuffer, 0, read);
+                }
+
+                return body.Length > maximumBytes
+                    ? (null, body.Length)
+                    : (body.ToArray(), body.Length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(readBuffer);
+            }
+        }
+
+        private static string? TryReadErrorMessage(byte[] body)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                return document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("message", out var message)
+                    && message.ValueKind == JsonValueKind.String
+                        ? message.GetString()
+                        : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static SeerrErrorCode ClassifyRequestError(
+            string url,
+            int status,
+            string? message)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || !string.Equals(
+                    uri.AbsolutePath.TrimEnd('/'),
+                    "/api/v1/request",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return status == 403
+                    ? SeerrErrorCode.Forbidden
+                    : SeerrErrorCode.UpstreamError;
+            }
+
+            if (status == 409)
+            {
+                return SeerrErrorCode.AlreadyRequested;
+            }
+
+            if (message?.Contains("quota", StringComparison.OrdinalIgnoreCase) == true
+                && message.Contains("exceed", StringComparison.OrdinalIgnoreCase))
+            {
+                return SeerrErrorCode.QuotaExceeded;
+            }
+
+            if (message?.Contains("blocklist", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return SeerrErrorCode.Blocklisted;
+            }
+
+            return status == 403
+                ? SeerrErrorCode.Forbidden
+                : SeerrErrorCode.UpstreamError;
         }
 
         private static SeerrError ResponseTooLarge(

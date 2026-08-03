@@ -2,5 +2,6 @@
   "Compatible": false,
   "Protocol": null,
   "HostProtocolMinimum": 1,
-  "HostProtocolMaximum": 1
+  "HostProtocolMaximum": 1,
+  "SeerrAvailable": false
 }
