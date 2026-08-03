@@ -534,7 +534,6 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         const string secretMode = "SECRET-PREFERENCE-CONTENT";
         const string secretShortcut = "SECRET-SHORTCUT-CONTENT";
         const string legacySecret = "SECRET-LEGACY-ROUTE-CONTENT";
-        const string elevatedSecret = "SECRET-ELEVATED-PRINCIPAL-CONTENT";
         _manager.SaveUserConfiguration(TargetId, "settings.json", new UserSettings
         {
             Revision = 1,
@@ -579,17 +578,6 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
                     Revision = 2,
                     WatchProgressMode = legacySecret
                 }));
-        var elevatedCrossUser = AssertResponse<UserSettings>(
-            Controller(
-                ifMatch: 3,
-                logger: logger,
-                includeActorIdClaim: false).SaveUserSettingsSettings(
-                    TargetId,
-                    new UserSettings
-                    {
-                        Revision = 3,
-                        WatchProgressMode = elevatedSecret
-                    }));
         var newlyInitializedTarget = new User(
             "New target",
             "Provider",
@@ -613,21 +601,42 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             $"{_target.Username} ({TargetId}) at revision 3.",
             log);
         Assert.Contains(
-            $"Admin elevated-principal saved settings.json for target " +
-            $"{_target.Username} ({TargetId}) at revision 4.",
-            log);
-        Assert.Contains(
             $"Admin {_actor.Username} ({ActorId}) created default settings.json for target " +
             $"{newlyInitializedTarget.Username} ({newlyInitializedTarget.Id:N}) at revision 0.",
             log);
         Assert.DoesNotContain(secretMode, log, StringComparison.Ordinal);
         Assert.DoesNotContain(secretShortcut, log, StringComparison.Ordinal);
         Assert.DoesNotContain(legacySecret, log, StringComparison.Ordinal);
-        Assert.DoesNotContain(elevatedSecret, log, StringComparison.Ordinal);
         Assert.DoesNotContain(settings.ContentHash, log, StringComparison.Ordinal);
         Assert.DoesNotContain(shortcuts.ContentHash, log, StringComparison.Ordinal);
         Assert.DoesNotContain(legacyCrossUser.ContentHash, log, StringComparison.Ordinal);
-        Assert.DoesNotContain(elevatedCrossUser.ContentHash, log, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ElevatedRoleWithoutCanonicalActorCannotWriteLegacyCrossUserRoute()
+    {
+        _manager.SaveUserConfiguration(TargetId, "settings.json", new UserSettings
+        {
+            Revision = 3,
+            WatchProgressMode = "before"
+        });
+
+        var result = Controller(
+            ifMatch: 3,
+            includeActorIdClaim: false).SaveUserSettingsSettings(
+                TargetId,
+                new UserSettings
+                {
+                    Revision = 3,
+                    WatchProgressMode = "must-not-write"
+                });
+
+        Assert.IsType<ForbidResult>(result);
+        var stored = _manager.GetUserConfigurationStrict<UserSettings>(
+            TargetId,
+            "settings.json");
+        Assert.Equal(3, stored.Revision);
+        Assert.Equal("before", stored.WatchProgressMode);
     }
 
     [Theory]

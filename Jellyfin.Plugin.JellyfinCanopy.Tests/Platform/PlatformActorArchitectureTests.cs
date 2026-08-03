@@ -94,7 +94,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var source = PlatformHostSeamTests.CodeOnly(File.ReadAllText(SourceFile("PlatformActorBoundaryFilter.cs")));
 
             Assert.DoesNotMatch(ForbiddenAuthorizationSource, source);
-            Assert.Contains("Jellyfin-UserId", source, StringComparison.Ordinal);
+            Assert.Contains("AuthenticatedUserClaimResolver.ResolveClaim(principal)", source, StringComparison.Ordinal);
             Assert.Contains("_host.Users.Find(userId)", source, StringComparison.Ordinal);
 
             // Prove the guard catches every prohibited source rather than passing due to

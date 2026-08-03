@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -25,7 +26,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal const int MaxClientNameBytes = 64;
         internal const int MaxDeviceIdBytes = 128;
 
-        private const string UserIdClaim = "Jellyfin-UserId";
         private const string IsApiKeyClaim = "Jellyfin-IsApiKey";
         private const string ClientClaim = "Jellyfin-Client";
         private const string DeviceIdClaim = "Jellyfin-DeviceId";
@@ -68,23 +68,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 return;
             }
 
-            var userClaims = principal.Claims
-                .Where(claim => string.Equals(claim.Type, UserIdClaim, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var resolvedUser = AuthenticatedUserClaimResolver.ResolveClaim(principal);
             var apiKeyClaims = principal.Claims
                 .Where(claim => string.Equals(claim.Type, IsApiKeyClaim, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             if (apiKeyClaims.Count != 1
+                || !resolvedUser.HasValue
+                || !resolvedUser.Value.Identity.Claims.Contains(apiKeyClaims[0])
                 || !bool.TryParse(apiKeyClaims[0].Value, out var isApiKey)
-                || isApiKey
-                || userClaims.Count != 1
-                || !Guid.TryParse(userClaims[0].Value, out var userId)
-                || userId == Guid.Empty)
+                || isApiKey)
             {
                 context.Result = new ForbidResult();
                 return;
             }
+
+            var userId = resolvedUser.Value.UserId;
 
             // This read is intentionally per request. A deleted user or permission
             // change must take effect without waiting for a token, catalog or actor cache

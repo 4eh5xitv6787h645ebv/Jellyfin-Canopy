@@ -107,10 +107,16 @@ Storage keys are kernel-derived, never caller-supplied
 are re-checked at invocation, using the existing fail-closed pattern that refuses
 to authorize against a truncated candidate list.
 *Residual.* **Low**, contingent on no code path accepting a caller-supplied user
-id. The pilot Platform boundary is strict, but legacy resolver divergence
-remains. Issue #638 must converge authority-relevant callers before any new
-actor, service, provider, state or event authority route; that divergence is
-exactly how this defect gets introduced.
+id. Issue #638 converges authority-relevant Jellyfin user resolution on one
+authenticated, claims-only, fail-closed parser. It rejects missing, malformed,
+zero, padded, unauthenticated and duplicate claims (including claims split
+across identities); the Platform boundary additionally requires its one
+non-API-key classification on the same authenticated identity and still performs
+a fresh host-user/elevation lookup. A production-wide source guard prevents
+legacy `NameIdentifier` / `sub` / `Sid` fallback parsers from returning and
+confines marker, cookie and IP identity ladders to non-authoritative Spoiler
+preference disambiguation. Focused controller tests pin Active Streams and
+Maintenance control sessions to the same canonical result.
 
 ### T-02 · Privilege escalation to administrator — **critical**
 

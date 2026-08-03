@@ -173,8 +173,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var controllingSessionId = string.Empty;
             try
             {
-                var adminSession = _sessionManager.Sessions.FirstOrDefault(s => s.UserId == GetCurrentUserId());
-                controllingSessionId = adminSession?.Id ?? string.Empty;
+                var userId = UserHelper.GetCurrentUserId(User);
+                if (userId.HasValue)
+                {
+                    var adminSession = _sessionManager.Sessions.FirstOrDefault(s => s.UserId == userId.Value);
+                    controllingSessionId = adminSession?.Id ?? string.Empty;
+                }
             }
             catch { /* non-fatal */ }
 

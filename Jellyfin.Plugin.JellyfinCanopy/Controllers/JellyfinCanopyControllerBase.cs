@@ -14,6 +14,7 @@ using Jellyfin.Data;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Helpers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Identity;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -145,12 +146,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // use [Authorize(Policy = Policies.RequiresElevation)] instead.
         protected bool IsAdminUser()
         {
-            if (User.IsInRole("Administrator")) return true;
+            var resolvedUser = AuthenticatedUserClaimResolver.ResolveClaim(User);
+            if (!resolvedUser.HasValue) return false;
+            if (resolvedUser.Value.IsInRole("Administrator")) return true;
             try
             {
-                var jfUserId = UserHelper.GetCurrentUserId(User);
-                if (!jfUserId.HasValue) return false;
-                var u = _userManager.GetUserById(jfUserId.Value);
+                var u = _userManager.GetUserById(resolvedUser.Value.UserId);
                 return u != null && u.HasPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator);
             }
             catch { return false; }
@@ -162,17 +163,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         /// </summary>
         protected SeerrCaller SeerrCaller()
             => new(UserHelper.GetCurrentUserId(User)?.ToString(), IsAdminUser());
-
-        protected Guid GetCurrentUserId()
-        {
-            var claim = User.FindFirst("Jellyfin-UserId")
-                     ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
-                     ?? User.FindFirst("sub")
-                     ?? User.FindFirst("Sid");
-            if (claim != null && Guid.TryParse(claim.Value, out var id))
-                return id;
-            return Guid.Empty;
-        }
 
         protected string ResolveUserDisplay(string userId)
         {

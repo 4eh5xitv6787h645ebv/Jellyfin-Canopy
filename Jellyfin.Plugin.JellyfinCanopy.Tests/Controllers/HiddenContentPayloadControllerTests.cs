@@ -568,7 +568,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
     }
 
     [Fact]
-    public void LegacyGetMaterialization_AuditsActorAndRoleOnlyPrincipalWithoutContent()
+    public void LegacyGetMaterialization_RequiresCanonicalActorAndAuditsWithoutContent()
     {
         var admin = new User("hidden-admin", "Provider", "PasswordProvider");
         admin.SetPermission(
@@ -617,8 +617,9 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
         Assert.IsType<OkObjectResult>(
             Build(includeActorClaim: true).GetUserHiddenContent(UserId));
         File.Delete(HiddenPath);
-        Assert.IsType<OkObjectResult>(
+        Assert.IsType<ForbidResult>(
             Build(includeActorClaim: false).GetUserHiddenContent(UserId));
+        Assert.False(File.Exists(HiddenPath));
 
         var text = string.Join('\n', hostProvider.Messages);
         Assert.Contains(
@@ -626,10 +627,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             $"for target {_user.Username} ({UserId}) at revision " +
             "settingsRevision=0,itemsRevision=0.",
             text);
-        Assert.Contains(
-            $"Admin elevated-principal seeded defaults in hidden-content.json for target " +
-            $"{_user.Username} ({UserId}) at revision settingsRevision=0,itemsRevision=0.",
-            text);
+        Assert.DoesNotContain("elevated-principal", text, StringComparison.Ordinal);
         Assert.DoesNotContain("HiddenContentDefault", text, StringComparison.Ordinal);
         Assert.DoesNotContain("bytes=", text, StringComparison.Ordinal);
     }

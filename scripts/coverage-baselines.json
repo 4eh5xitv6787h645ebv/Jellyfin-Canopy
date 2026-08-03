@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37685,
-        "totalLines": 47087
+        "coveredLines": 37759,
+        "totalLines": 47107
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 37685,
-        "maximumCoveredLines": 37685
+        "minimumCoveredLines": 37759,
+        "maximumCoveredLines": 37759
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The #525 EP-01 conformance-pack change adds bounded parameter-aware Accept negotiation with a canonical 406 error, exact frozen/spec authority checks, base-path-aware live smoke coverage, and response/header/log correlation evidence. Three clean local .NET 10.0.9 Coverlet runs on the identical final 47,087-line source and test scope each passed all 3,357 tests and reproduced exactly 37,685 covered lines. The reviewed observed high-water and exact clean-run floor are therefore both 37,685/47,087 (80.033%), so no instrumentation tolerance is required. Relative to the prior 37,618/47,018 high-water baseline, the change adds 69 instrumented lines, raises covered lines by 67, and increases overall coverage from 80.008% to 80.033%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #638 EP-02 caller-identity change converges authority-relevant Jellyfin user resolution on one authenticated claims-only owner, binds administrator and Platform API-key classification to that same identity, closes role-only cross-user selection, and adds behavioral session-control and negative architecture coverage. Three clean local .NET 10.0.9 Coverlet runs on the identical final 47,107-line source and test scope each passed all 3,392 tests and reproduced exactly 37,759 covered lines. The reviewed observed high-water and exact clean-run floor are therefore both 37,759/47,107 (80.156%), so no instrumentation tolerance is required. Relative to the prior 37,685/47,087 high-water baseline, the change adds 20 instrumented lines, raises covered lines by 74, and increases overall coverage from 80.033% to 80.156%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -312,11 +312,32 @@ test.describe.serial('Platform v1 native pilot — live Jellyfin 12', () => {
             ]));
 
             // Opaque prepare handles are actor-bound even when both users may
-            // access the same Jellyfin item.
+            // access the same Jellyfin item. Both requests originate from the
+            // same live test host/IP; every caller-shaped attribution source
+            // below names the admin, but the ordinary user's token remains the
+            // only authority and cannot consume the admin's handle.
             const adminSpoiler = contribution(initial, 'spoiler-guard-configure');
-            await postJson<null>(baseURL!, PREPARE_PATH, user, {
-                PrepareHandle: adminSpoiler.PrepareHandle,
-            }, 404);
+            const forgedPrepare = await apiRaw(
+                baseURL!,
+                `${PREPARE_PATH}?userId=${encodeURIComponent(admin.userId)}&deviceId=admin-device&tag=tag-jeu000000000000`,
+                user.token,
+                {
+                    method: 'POST',
+                    headers: {
+                        'X-Jellyfin-User-Id': admin.userId,
+                        'X-Emby-User-Id': admin.userId,
+                        'X-Jellyfin-Client': 'administrator',
+                        'X-Jellyfin-DeviceId': 'admin-device',
+                        Cookie: `jellyfin-userid=${admin.userId}; jc-spoiler-user=tag-jeu000000000000`,
+                    },
+                    body: JSON.stringify({ PrepareHandle: adminSpoiler.PrepareHandle }),
+                },
+            );
+            expect(forgedPrepare.status).toBe(404);
+            expect(await forgedPrepare.json()).toMatchObject({
+                Error: true,
+                Code: 'not_found',
+            });
 
             // Spoiler Guard: prepare the bounded boolean form, mutate, observe
             // normal-item refresh hints, resolve the new status, then restore.
