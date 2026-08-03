@@ -6,15 +6,17 @@ using System.Linq;
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
     /// <summary>
-    /// A device registered as running the JC client, with the user who
-    /// registered it (used to validate pushes against live sessions).
+    /// A device registered as running the JC web client or as an explicitly
+    /// participating Platform native client, with the user who registered it
+    /// (used to validate pushes against live sessions).
     /// </summary>
     public readonly record struct LiveSessionEntry(string DeviceId, Guid UserId);
 
     /// <summary>
     /// Tracks the devices (and registering users) of sessions that actually run
-    /// the Jellyfin Canopy client, so live pushes (<see cref="LiveNotifierService"/>)
-    /// reach ONLY them.
+    /// the Jellyfin Canopy web client or successfully resolve the Platform native
+    /// item-detail surface, so live pushes (<see cref="LiveNotifierService"/>)
+    /// reach ONLY those opted-in sessions.
     ///
     /// Why: the config-changed push rides a <c>GeneralCommand</c> carrier. The web
     /// client provably ignores it, but a native client (Android, Android TV, Kodi,
@@ -22,8 +24,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// control — broadcasting a playback-shaped command to every session of every
     /// user is exactly how a foreign client ends up acting on (or choking on)
     /// traffic it never asked for. JC can know precisely where it runs: every JC
-    /// boot, every hot-reload refetch AND every visible smart-refresh state check
-    /// call JC endpoints authenticated, carrying the session's device id claim.
+    /// boot, every hot-reload refetch, every visible smart-refresh state check,
+    /// and every successful Platform native item-detail resolve call JC endpoints
+    /// authenticated, carrying the session's device id claim.
     /// Recording those ids here makes the registry self-healing: a server restart
     /// empties it, visible sessions re-register on their next state check, and
     /// background WebViews re-register when resumed.
@@ -35,7 +38,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// </summary>
     public interface ILiveSessionRegistry
     {
-        /// <summary>Record (or refresh) a device id as running the JC client.</summary>
+        /// <summary>Record (or refresh) a device id as eligible for Canopy live markers.</summary>
         void Touch(string deviceId, Guid userId);
 
         /// <summary>Entries seen within the TTL window, pruning expired ones.</summary>
@@ -45,10 +48,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// <inheritdoc />
     public sealed class LiveSessionRegistry : ILiveSessionRegistry
     {
-        // A web session refetches public-config on every boot and on every
-        // config-changed push, and polls /client-refresh-state while visible, so a
-        // generous TTL only has to outlive an idle (but still open) tab
-        // between touches.
+        // A web session refetches public-config on every boot/config-changed push
+        // and polls /client-refresh-state while visible. A participating native
+        // client refreshes this on successful item-detail resolves. The generous
+        // TTL only has to outlive an eligible idle session between touches.
         internal static readonly TimeSpan EntryTtl = TimeSpan.FromHours(24);
 
         // Hard cap so a client cycling device ids can never grow this unbounded;
@@ -81,7 +84,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             if (_seen.Count > MaxEntries)
             {
-                // Rare (requires >500 distinct JC devices inside one TTL window);
+                // Rare (requires >500 eligible Canopy devices inside one TTL window);
                 // drop the stalest entries to get back under the cap. Pair-
                 // conditional removal so an entry refreshed AFTER this snapshot
                 // was taken survives (plain TryRemove(key) would delete it).

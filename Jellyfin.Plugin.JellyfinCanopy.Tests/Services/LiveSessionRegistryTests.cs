@@ -8,9 +8,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 /// <summary>
 /// Pins the JC-device registry LiveNotifierService pushes are scoped by:
 /// only devices seen within the TTL are targeted, blank ids and empty users
-/// never register, and the size cap evicts stalest-first — so a native
-/// client's device id (which never calls JC endpoints through the JC client)
-/// can never be pushed to, and the map can never grow unbounded. The
+/// never register, and the size cap evicts stalest-first. A native client is
+/// eligible only after a successful Platform item-detail resolve; other native
+/// clients never enter the map, which can never grow unbounded. The
 /// send-time (user, device) validation lives in
 /// <see cref="LiveNotifierService.SelectDeliverableDeviceIds"/>, tested in
 /// <see cref="LiveNotifierServiceTests"/>.

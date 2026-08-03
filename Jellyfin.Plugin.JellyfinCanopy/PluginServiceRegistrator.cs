@@ -187,9 +187,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // (via IPluginManager), flushes the Seerr caches and pushes a JC-marked
             // GeneralCommand to open sessions so admin saves hot-reload with no
             // manual refresh. Replaces the former SeerrCache.Instance static bridge.
-            // The registry scopes the push to devices that actually run the JC
-            // client (populated by authenticated public-config fetches) so native
-            // clients never receive the carrier command.
+            // The registry scopes the push to devices running the JC web client or
+            // explicitly participating through a successful Platform item-detail
+            // resolve. Other native clients never receive the inert carrier.
             serviceCollection.AddSingleton<Services.ILiveSessionRegistry, Services.LiveSessionRegistry>();
             serviceCollection.AddHostedService<Services.LiveNotifierService>();
             serviceCollection.AddSingleton<UserConfigurationManager>();

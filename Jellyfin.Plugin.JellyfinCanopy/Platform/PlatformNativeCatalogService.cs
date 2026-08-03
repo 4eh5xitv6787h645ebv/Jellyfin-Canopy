@@ -45,6 +45,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private readonly PlatformPrepareHandleOwner _prepareHandles;
         private readonly PlatformPreparedActionContextOwner _preparedContexts;
         private readonly PlatformNativeCatalogRevisionAuthority _revisions;
+        private readonly ILiveSessionRegistry _liveSessions;
 
         /// <summary>Initializes the fixed composer from first-party owners only.</summary>
         public PlatformNativeCatalogService(
@@ -55,7 +56,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ISeerrItemRequestPresentationOwner seerr,
             PlatformPrepareHandleOwner prepareHandles,
             PlatformPreparedActionContextOwner preparedContexts,
-            PlatformNativeCatalogRevisionAuthority revisions)
+            PlatformNativeCatalogRevisionAuthority revisions,
+            ILiveSessionRegistry liveSessions)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -65,6 +67,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             _prepareHandles = prepareHandles ?? throw new ArgumentNullException(nameof(prepareHandles));
             _preparedContexts = preparedContexts ?? throw new ArgumentNullException(nameof(preparedContexts));
             _revisions = revisions ?? throw new ArgumentNullException(nameof(revisions));
+            _liveSessions = liveSessions ?? throw new ArgumentNullException(nameof(liveSessions));
         }
 
         internal async Task<PlatformNativeCatalogOutcome> ResolveAsync(
@@ -186,6 +189,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 if (contributions.Count > PlatformNativeCatalogBounds.MaximumContributions)
                 {
                     throw new InvalidOperationException("The fixed native catalog exceeded its reviewed contribution bound.");
+                }
+
+                // A successful authenticated resolve is the native client's explicit
+                // participation signal for the existing inert config-changed marker.
+                // DeviceId remains attribution only: the registry binds it to the
+                // authoritative actor user, and LiveNotifierService later requires
+                // that same user to have a live session on the device before sending.
+                if (finalConfiguration.Configuration!.PlatformEnabled
+                    && final.Actor.DeviceId is { } deviceId)
+                {
+                    _liveSessions.Touch(deviceId, final.Actor.UserId);
                 }
 
                 return new PlatformNativeCatalogOutcome(

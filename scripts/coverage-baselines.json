@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37080,
-        "totalLines": 46434
+        "coveredLines": 37085,
+        "totalLines": 46439
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 37079,
-        "maximumCoveredLines": 37080
+        "minimumCoveredLines": 37084,
+        "maximumCoveredLines": 37085
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The completed native-platform pilot extends the reviewed prepare-handle prerequisite through the fixed `/JellyfinCanopy/Platform/v1` discovery, negotiation, catalog, resolve, prepare, and opaque-action surfaces for Spoiler Guard, Hidden Content, and Seerr. The server owns current-user authorization, item access and parental checks, feature/configuration state, bounded presentation, Seerr mapping and secret handling, action reauthorization, idempotency, revisions, cache isolation, audit/error envelopes, capability invalidation, and the live administrative disable gate. Three clean successful Coverlet runs on the identical 2026-08-03 final pilot source and 46,434-line scope each passed all 3,281 server tests and observed 37,079, 37,079, and 37,080 covered lines. The one-line aggregate spread is confined to pre-existing timing-sensitive ImageBlurService.cs:740, BookmarkStore.cs:909, and ReviewsStore.cs:216 paths; no Platform line varied. Relative to the reviewed prepare-handle high-water of 35,254/44,447 (79.317%), the completed pilot adds 1,987 instrumented lines and raises the observed high-water by 1,826 covered lines to 37,080/46,434 (79.855%). The floor is the directly observed 37,079/46,434 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The Android native live-invalidation audit reuses the bounded live-session registry after a successful authenticated Platform v1 item-detail resolve. The service records only the boundary-validated device attribution with the authoritative actor user while unsupported, not-found, unavailable, disabled, and no-device paths remain ineligible; send-time delivery still requires that same user to have a live session on the device. Three clean successful Coverlet runs on the identical 2026-08-03 source and 46,439-line scope each passed all 3,285 server tests and observed 37,085, 37,084, and 37,084 covered lines. The five added instrumented production lines are covered in the retained report; the one-line aggregate spread remains within the existing reviewed timing-sensitive tolerance and no new Platform line requires tolerance. Relative to the completed pilot baseline of 37,080/46,434 (79.855%), this change adds five instrumented lines and raises the observed high-water by five covered lines to 37,085/46,439 (79.857%). The floor is the directly observed 37,084/46,439 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

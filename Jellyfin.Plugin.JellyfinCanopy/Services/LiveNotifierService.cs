@@ -27,12 +27,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// dashboard/API save path. On each change it (1) flushes the Seerr caches
     /// (the behaviour the removed override used to provide) and (2) pushes a
     /// JC-marked <see cref="SessionMessageType.GeneralCommand"/> to the sessions
-    /// of devices REGISTERED as running the JC client (<see cref="ILiveSessionRegistry"/>,
-    /// populated by authenticated public-config fetches). The client's live hub
+    /// of devices REGISTERED as running the JC web client or as an explicitly
+    /// participating Platform native client (<see cref="ILiveSessionRegistry"/>).
+    /// The web client's live hub
     /// (src/core/live.ts) filters GeneralCommands for the marker and refetches
-    /// public-config. Native clients (Android, Android TV, Kodi, …) never receive
-    /// the carrier at all — the old broadcast to every user session delivered a
-    /// playback-shaped command to clients whose handling is outside our control.
+    /// public-config. A Platform native client becomes eligible only after a
+    /// successful authenticated item-detail resolve; all other native clients
+    /// remain excluded from the carrier that the old broadcast sent indiscriminately.
     /// </summary>
     public sealed class LiveNotifierService : IHostedService
     {
@@ -45,8 +46,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// <summary>
         /// Carrier command for JC pushes. Chosen because it is NOT handled by the
         /// web client's GeneralCommand switch (serverNotifications.js) — it hits the
-        /// default (debug-log) branch and does nothing — so native clients ignore
-        /// the message while JC's subscriber keys off <see cref="MarkerKey"/>.
+        /// default (debug-log) branch and does nothing. The carrier itself remains
+        /// inert; JC web and opted-in Platform native clients key only off
+        /// <see cref="MarkerKey"/> as a signal to refetch authoritative state.
         /// </summary>
         internal const GeneralCommandType CarrierCommand = GeneralCommandType.SetPlaybackOrder;
 
@@ -172,13 +174,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var command = BuildLegacyConfigChangedCommand(
                     JellyfinCanopy.Instance?.Version?.ToString());
 
-                // Target ONLY devices that registered as running the JC client
-                // (via authenticated JC endpoint calls). The old broadcast to
+                // Target ONLY devices that registered through authenticated JC
+                // web calls or a successful Platform native item-detail resolve.
+                // The old broadcast to
                 // every user session delivered the playback-shaped carrier to
                 // native clients (Android, Android TV, Kodi, …) whose handling of
-                // it is outside our control. An empty registry (fresh server, no
-                // JC session booted yet) means there is nobody to hot-reload —
-                // those sessions pick the new config up when they next load.
+                // it is outside our control. Native clients that never opt in to
+                // Platform remain excluded. An empty registry means there is no
+                // eligible client to nudge; clients pick up current state when they
+                // next load or resolve it.
                 //
                 // The device id claim is caller-supplied, so each entry is only
                 // honoured when its REGISTERING user has a live session on that
@@ -204,7 +208,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
 
-                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} JC device(s).", deviceIds.Count);
+                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} eligible Canopy device(s).", deviceIds.Count);
             }
             catch (Exception ex)
             {

@@ -46,6 +46,114 @@ public sealed class PlatformNativeCatalogServiceTests
         });
     }
 
+    [Fact]
+    public async Task Resolve_SuccessRegistersTheValidatedActorDeviceAndUser()
+    {
+        using var fixture = new Fixture();
+
+        var result = await fixture.Service.ResolveAsync(
+            fixture.ActorA,
+            fixture.Request(),
+            CancellationToken.None);
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+        Assert.Equal(
+            new LiveSessionEntry("device-a", Fixture.UserA),
+            Assert.Single(fixture.LiveSessions.GetActiveEntries()));
+    }
+
+    [Fact]
+    public async Task Resolve_SuccessWithoutValidatedDeviceAttributionDoesNotRegister()
+    {
+        using var fixture = new Fixture();
+
+        var result = await fixture.Service.ResolveAsync(
+            fixture.Actor(Fixture.UserA, deviceId: null),
+            fixture.Request(),
+            CancellationToken.None);
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+        Assert.Empty(fixture.LiveSessions.GetActiveEntries());
+    }
+
+    [Fact]
+    public async Task Resolve_RefusalsAndDisabledServiceBypassDoNotRegister()
+    {
+        using (var unsupported = new Fixture())
+        {
+            var result = await unsupported.Service.ResolveAsync(
+                unsupported.ActorA,
+                unsupported.Request(protocol: 2),
+                CancellationToken.None);
+
+            Assert.Equal(PlatformNativeCatalogOutcomeKind.UnsupportedProtocol, result.Kind);
+            Assert.Empty(unsupported.LiveSessions.GetActiveEntries());
+        }
+
+        using (var notFound = new Fixture())
+        {
+            notFound.Host.AccessibleUsers.Clear();
+            var result = await notFound.Service.ResolveAsync(
+                notFound.ActorA,
+                notFound.Request(),
+                CancellationToken.None);
+
+            Assert.Equal(PlatformNativeCatalogOutcomeKind.NotFound, result.Kind);
+            Assert.Empty(notFound.LiveSessions.GetActiveEntries());
+        }
+
+        using (var unavailable = new Fixture())
+        {
+            unavailable.Seerr.Resolver = call => Presentation(provider: "provider-" + call);
+            var result = await unavailable.Service.ResolveAsync(
+                unavailable.ActorA,
+                unavailable.Request(),
+                CancellationToken.None);
+
+            Assert.Equal(PlatformNativeCatalogOutcomeKind.Unavailable, result.Kind);
+            Assert.Empty(unavailable.LiveSessions.GetActiveEntries());
+        }
+
+        using (var disabled = new Fixture())
+        {
+            disabled.Configuration.Current = new PluginConfiguration
+            {
+                PlatformEnabled = false,
+                SpoilerBlurEnabled = true,
+                HiddenContentEnabled = true,
+            };
+            var result = await disabled.Service.ResolveAsync(
+                disabled.ActorA,
+                disabled.Request(),
+                CancellationToken.None);
+
+            // The HTTP availability filter normally prevents this direct service
+            // call. Defense in depth keeps the bypass ineligible for live pushes.
+            Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+            Assert.Empty(disabled.LiveSessions.GetActiveEntries());
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_RegistrationCannotTargetAnotherUsersLiveSession()
+    {
+        using var fixture = new Fixture();
+        var actor = fixture.Actor(Fixture.UserA, "shared-device");
+
+        var result = await fixture.Service.ResolveAsync(
+            actor,
+            fixture.Request(),
+            CancellationToken.None);
+        var registered = fixture.LiveSessions.GetActiveEntries();
+        var deliverable = LiveNotifierService.SelectDeliverableDeviceIds(
+            registered,
+            [new LiveSessionEntry("shared-device", Fixture.UserB)]);
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+        Assert.Equal(new LiveSessionEntry("shared-device", Fixture.UserA), Assert.Single(registered));
+        Assert.Empty(deliverable);
+    }
+
     [Theory]
     [InlineData(0, 1)]
     [InlineData(2, 1)]
@@ -437,6 +545,7 @@ public sealed class PlatformNativeCatalogServiceTests
                 clock,
                 Enumerable.Repeat((byte)0x42, 32).ToArray());
             _revisions = new PlatformNativeCatalogRevisionAuthority(Enumerable.Repeat((byte)0x43, 32).ToArray());
+            LiveSessions = new LiveSessionRegistry();
             Service = new PlatformNativeCatalogService(
                 Host,
                 Configuration,
@@ -445,7 +554,8 @@ public sealed class PlatformNativeCatalogServiceTests
                 Seerr,
                 _handles,
                 _contexts,
-                _revisions);
+                _revisions,
+                LiveSessions);
             ActorA = Actor(UserA);
             ActorB = Actor(UserB);
         }
@@ -461,6 +571,8 @@ public sealed class PlatformNativeCatalogServiceTests
         internal FakeSeerrPresentationOwner Seerr { get; }
 
         internal PlatformNativeCatalogService Service { get; }
+
+        internal LiveSessionRegistry LiveSessions { get; }
 
         internal PlatformActor ActorA { get; }
 
@@ -506,8 +618,8 @@ public sealed class PlatformNativeCatalogServiceTests
             _revisions.Dispose();
         }
 
-        private static PlatformActor Actor(Guid userId)
-            => new(userId, false, "catalog-test", "Android TV", "device-a");
+        internal PlatformActor Actor(Guid userId, string? deviceId = "device-a")
+            => new(userId, false, "catalog-test", "Android TV", deviceId);
     }
 
     private sealed class FakeHost : IPlatformHost, IHostUsers, IHostLibrary, IHostSessions, IHostPlugins
