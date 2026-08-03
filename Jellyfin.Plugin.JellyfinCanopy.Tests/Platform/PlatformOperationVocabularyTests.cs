@@ -20,6 +20,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     Id = definition.Id.Value,
                     definition.Family,
                     definition.Authority,
+                    ActorKinds = string.Join(",", definition.AllowedActorKinds),
                     definition.ItemScope,
                     Kinds = string.Join(",", definition.SupportedItemKinds),
                     definition.IsMutation,
@@ -36,6 +37,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                         Id = "jellyfin.canopy.spoiler-guard.configure-item",
                         Family = PlatformOperationFamily.SpoilerGuard,
                         Authority = PlatformAuthorityLevel.Authenticated,
+                        ActorKinds = "JellyfinUserClient",
                         ItemScope = PlatformItemScope.ExactItem,
                         Kinds = "Movie,Series",
                         IsMutation = true,
@@ -47,6 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                         Id = "jellyfin.canopy.hidden-content.configure-item",
                         Family = PlatformOperationFamily.HiddenContent,
                         Authority = PlatformAuthorityLevel.Authenticated,
+                        ActorKinds = "JellyfinUserClient",
                         ItemScope = PlatformItemScope.ExactItem,
                         Kinds = "Movie,Series,Episode",
                         IsMutation = true,
@@ -58,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                         Id = "jellyfin.canopy.seerr.request-item",
                         Family = PlatformOperationFamily.Seerr,
                         Authority = PlatformAuthorityLevel.Authenticated,
+                        ActorKinds = "JellyfinUserClient",
                         ItemScope = PlatformItemScope.ExactItem,
                         Kinds = "Movie,Series",
                         IsMutation = true,
@@ -83,6 +87,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Assert.InRange(definition.Id.Value.Length, 1, PlatformOperationVocabulary.MaximumIdentifierLength);
                 Assert.InRange(definition.InputSchemaId.Value.Length, 1, PlatformOperationVocabulary.MaximumIdentifierLength);
                 Assert.Equal(PlatformAuthorityLevel.Authenticated, definition.Authority);
+                Assert.Equal(new[] { PlatformActorKind.JellyfinUserClient }, definition.AllowedActorKinds);
                 Assert.Equal(PlatformItemScope.ExactItem, definition.ItemScope);
                 Assert.True(definition.IsMutation);
                 Assert.True(definition.InvalidationGeneration > 0);
@@ -155,31 +160,37 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var id = ConstructPrivately<PlatformOperationId>("vendor.extension.operation");
             var schema = ConstructPrivately<PlatformInputSchemaId>("vendor.extension.input.v1");
             var kinds = ImmutableArray.Create(HostItemKind.Movie);
+            var actorKinds = ImmutableArray.Create(PlatformActorKind.JellyfinUserClient);
 
-            Assert.Throws<ArgumentException>(() => New(default, kinds: kinds));
-            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, family: (PlatformOperationFamily)99, kinds: kinds));
-            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, authority: (PlatformAuthorityLevel)99, kinds: kinds));
-            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, itemScope: (PlatformItemScope)99, kinds: kinds));
-            Assert.Throws<ArgumentException>(() => New(id, kinds: default));
-            Assert.Throws<ArgumentException>(() => New(id, kinds: [HostItemKind.Other]));
-            Assert.Throws<ArgumentException>(() => New(id, kinds: [(HostItemKind)99]));
-            Assert.Throws<ArgumentException>(() => New(id, kinds: [HostItemKind.Movie, HostItemKind.Movie]));
-            Assert.Throws<ArgumentException>(() => New(id, kinds: kinds, isMutation: false));
+            Assert.Throws<ArgumentException>(() => New(default, actorKinds: actorKinds, kinds: kinds));
+            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, family: (PlatformOperationFamily)99, actorKinds: actorKinds, kinds: kinds));
+            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, authority: (PlatformAuthorityLevel)99, actorKinds: actorKinds, kinds: kinds));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: default, kinds: kinds));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: [(PlatformActorKind)99], kinds: kinds));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: [PlatformActorKind.JellyfinUserClient, PlatformActorKind.JellyfinUserClient], kinds: kinds));
+            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, actorKinds: actorKinds, itemScope: (PlatformItemScope)99, kinds: kinds));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: actorKinds, kinds: default));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: actorKinds, kinds: [HostItemKind.Other]));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: actorKinds, kinds: [(HostItemKind)99]));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: actorKinds, kinds: [HostItemKind.Movie, HostItemKind.Movie]));
+            Assert.Throws<ArgumentException>(() => New(id, actorKinds: actorKinds, kinds: kinds, isMutation: false));
             Assert.Throws<ArgumentException>(() => ConstructPrivately<PlatformOperationDefinition>(
                 id,
                 PlatformOperationFamily.Seerr,
                 PlatformAuthorityLevel.Authenticated,
+                actorKinds,
                 PlatformItemScope.ExactItem,
                 kinds,
                 true,
                 default,
                 1));
-            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, kinds: kinds, invalidationGeneration: 0));
+            Assert.Throws<ArgumentOutOfRangeException>(() => New(id, actorKinds: actorKinds, kinds: kinds, invalidationGeneration: 0));
 
             PlatformOperationDefinition New(
                 PlatformOperationId operationId,
                 PlatformOperationFamily family = PlatformOperationFamily.Seerr,
                 PlatformAuthorityLevel authority = PlatformAuthorityLevel.Authenticated,
+                ImmutableArray<PlatformActorKind> actorKinds = default,
                 PlatformItemScope itemScope = PlatformItemScope.ExactItem,
                 ImmutableArray<HostItemKind> kinds = default,
                 bool isMutation = true,
@@ -188,11 +199,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     operationId,
                     family,
                     authority,
+                    actorKinds,
                     itemScope,
                     kinds,
                     isMutation,
                     schema,
                     invalidationGeneration);
+        }
+
+        [Fact]
+        public void AuthorityPolicyTreatsElevationAsAUserCeilingNotAnotherKind()
+        {
+            var id = ConstructPrivately<PlatformOperationId>("vendor.extension.operation");
+            var schema = ConstructPrivately<PlatformInputSchemaId>("vendor.extension.input.v1");
+            var definition = ConstructPrivately<PlatformOperationDefinition>(
+                id,
+                PlatformOperationFamily.Seerr,
+                PlatformAuthorityLevel.Elevated,
+                ImmutableArray.Create(PlatformActorKind.JellyfinUserClient),
+                PlatformItemScope.ExactItem,
+                ImmutableArray.Create(HostItemKind.Movie),
+                true,
+                schema,
+                1L);
+            var userId = Guid.NewGuid();
+
+            Assert.False(definition.Allows(PlatformActorTestFactory.Create(userId, false, "ordinary", null, null).Authority));
+            Assert.True(definition.Allows(PlatformActorTestFactory.Create(userId, true, "elevated", null, null).Authority));
+            Assert.False(definition.Allows(PlatformActorAuthorityTests.Provider(Guid.NewGuid(), new string('a', 64)).Authority));
+            Assert.False(definition.Allows(PlatformActorAuthorityTests.Service(Guid.NewGuid(), 1).Authority));
         }
 
         private static T ConstructPrivately<T>(params object?[] arguments)

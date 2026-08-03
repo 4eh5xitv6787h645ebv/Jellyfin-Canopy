@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -261,7 +262,7 @@ public sealed class MonitorSubscriptionLifecycleTests
     public async Task ConfigurationSaveSynchronouslyRevokesNativeAuthorityAndReenableCannotReviveIt()
     {
         var fixture = new Fixture(new PluginConfiguration { PlatformEnabled = true });
-        var actor = new PlatformActor(
+        var actor = PlatformActorTestFactory.Create(
             Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
             isElevated: false,
             "correlation",

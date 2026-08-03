@@ -608,7 +608,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         {
             Span<byte> bytes = stackalloc byte[16];
             BitConverter.TryWriteBytes(bytes, index + 1);
-            return new PlatformActor(new Guid(bytes), false, new string('b', 32), null, null);
+            return PlatformActorTestFactory.Create(new Guid(bytes), false, new string('b', 32), null, null);
         }
 
         private static PlatformIdempotencyRequest IdempotencyRequest(
@@ -750,7 +750,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             internal PlatformActor Actor(Guid userId)
             {
-                return new PlatformActor(
+                return PlatformActorTestFactory.Create(
                     userId,
                     userId == UserA,
                     new string('c', 32),

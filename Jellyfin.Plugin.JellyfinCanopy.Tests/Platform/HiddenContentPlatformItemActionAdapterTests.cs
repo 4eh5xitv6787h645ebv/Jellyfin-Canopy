@@ -16,7 +16,7 @@ public sealed class HiddenContentPlatformItemActionAdapterTests
         var adapter = new HiddenContentPlatformItemActionAdapter(owner);
         var userId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
-        var actor = new PlatformActor(userId, false, "correlation", null, null);
+        var actor = PlatformActorTestFactory.Create(userId, false, "correlation", null, null);
         var item = new HostAccessibleItem(
             itemId,
             HostItemKind.Movie,
@@ -45,7 +45,7 @@ public sealed class HiddenContentPlatformItemActionAdapterTests
         var adapter = new HiddenContentPlatformItemActionAdapter(owner);
 
         adapter.GetState(
-            new PlatformActor(Guid.NewGuid(), false, "correlation", null, null),
+            PlatformActorTestFactory.Create(Guid.NewGuid(), false, "correlation", null, null),
             new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Episode, Guid.NewGuid(), []),
             HiddenContentItemScope.Global);
 
@@ -58,7 +58,7 @@ public sealed class HiddenContentPlatformItemActionAdapterTests
     {
         var owner = new RecordingOwner();
         var adapter = new HiddenContentPlatformItemActionAdapter(owner);
-        var actor = new PlatformActor(Guid.NewGuid(), false, "correlation", null, null);
+        var actor = PlatformActorTestFactory.Create(Guid.NewGuid(), false, "correlation", null, null);
         var item = new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Other, null, []);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => adapter.Configure(

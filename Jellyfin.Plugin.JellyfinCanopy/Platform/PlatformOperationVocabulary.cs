@@ -104,6 +104,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformOperationId id,
             PlatformOperationFamily family,
             PlatformAuthorityLevel authority,
+            ImmutableArray<PlatformActorKind> allowedActorKinds,
             PlatformItemScope itemScope,
             ImmutableArray<HostItemKind> supportedItemKinds,
             bool isMutation,
@@ -123,6 +124,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             if (!Enum.IsDefined(authority))
             {
                 throw new ArgumentOutOfRangeException(nameof(authority));
+            }
+
+            if (allowedActorKinds.IsDefaultOrEmpty
+                || allowedActorKinds.Any(kind => !PlatformActorKindVocabulary.IsDefined(kind))
+                || allowedActorKinds.Distinct().Count() != allowedActorKinds.Length)
+            {
+                throw new ArgumentException(
+                    "An operation must declare distinct closed actor kinds.",
+                    nameof(allowedActorKinds));
             }
 
             if (!Enum.IsDefined(itemScope))
@@ -161,6 +171,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             Id = id;
             Family = family;
             Authority = authority;
+            AllowedActorKinds = allowedActorKinds;
             ItemScope = itemScope;
             SupportedItemKinds = supportedItemKinds;
             IsMutation = isMutation;
@@ -176,6 +187,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Gets the current Jellyfin authority required from the actor.</summary>
         public PlatformAuthorityLevel Authority { get; }
+
+        /// <summary>Gets the exact closed actor kinds eligible for this operation.</summary>
+        public ImmutableArray<PlatformActorKind> AllowedActorKinds { get; }
 
         /// <summary>Gets the bounded item context this operation accepts.</summary>
         public PlatformItemScope ItemScope { get; }
@@ -195,10 +209,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         public long InvalidationGeneration { get; }
 
+        /// <summary>
+        /// Applies the single actor-kind and current-authority policy for this operation.
+        /// Unknown/default actors and all kind/ceiling mismatches fail closed.
+        /// </summary>
+        internal bool Allows(PlatformActorAuthority authority)
+        {
+            if (!authority.IsValid
+                || !AllowedActorKinds.Contains(authority.Kind)
+                || authority.Kind != PlatformActorKind.JellyfinUserClient)
+            {
+                return false;
+            }
+
+            return Authority switch
+            {
+                PlatformAuthorityLevel.Authenticated => true,
+                PlatformAuthorityLevel.Elevated => authority.IsElevated,
+                _ => false,
+            };
+        }
+
         internal static PlatformOperationDefinition SpoilerGuardConfigureItem { get; } = new PlatformOperationDefinition(
             PlatformOperationId.SpoilerGuardConfigureItem,
             PlatformOperationFamily.SpoilerGuard,
             PlatformAuthorityLevel.Authenticated,
+            [PlatformActorKind.JellyfinUserClient],
             PlatformItemScope.ExactItem,
             [HostItemKind.Movie, HostItemKind.Series],
             true,
@@ -209,6 +245,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformOperationId.HiddenContentConfigureItem,
             PlatformOperationFamily.HiddenContent,
             PlatformAuthorityLevel.Authenticated,
+            [PlatformActorKind.JellyfinUserClient],
             PlatformItemScope.ExactItem,
             [HostItemKind.Movie, HostItemKind.Series, HostItemKind.Episode],
             true,
@@ -219,6 +256,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformOperationId.SeerrRequestItem,
             PlatformOperationFamily.Seerr,
             PlatformAuthorityLevel.Authenticated,
+            [PlatformActorKind.JellyfinUserClient],
             PlatformItemScope.ExactItem,
             [HostItemKind.Movie, HostItemKind.Series],
             true,

@@ -53,9 +53,15 @@ body, cookie, header, marker, IP, client-name and device-id values cannot select
 elevate an actor. Client and device values are bounded attribution only. A missing,
 malformed or deleted authenticated user fails closed with a bare `403`. The
 completed native-first surface still accepts no service/API-key actor. The
-post-pilot server tranche may add independently authenticated service actors
-only through additive routes and contracts; it does not widen authority on any
-existing operation.
+runtime actor domain is now closed over exactly `jellyfin-user-client`,
+`installed-provider`, and `companion-service`. Administrator authority is the
+current elevation bit on the same user actor, never a fourth kind. Provider and
+service actors have distinct typed registry/credential-generation proofs and no
+user projection, but those proof issuers are deliberately dormant: this change
+adds no provider/service authentication, credential, route, grant, registry,
+state, event, or invocation surface. Later work may activate them only through
+additive owners and contracts; it does not widen authority on any existing
+operation.
 
 Before the first service route ships, the authored contract must add its
 deny-by-default service authentication scheme and exact actor metadata. Missing,
@@ -70,13 +76,17 @@ registration, grant, operation, or denial detail. Service routes never use
 `[AllowAnonymous]` and never accept Jellyfin authentication.
 
 Every current OpenAPI operation publishes `x-canopy-authority` as `anonymous`,
-`authenticated`, or `elevated`. The first service operation additively extends
-that vocabulary with `service` and adds an exact `x-canopy-actor-kinds` allowlist;
-existing operations gain their current anonymous/user actor metadata without
-widening eligibility. CI compares that value with the live controller attributes, and the live
-conformance matrix exercises anonymous, ordinary-user, and administrator callers for
-every operation in `frozen.json`. A newly added operation cannot omit either its frozen
-inventory entry or its authorization class.
+`authenticated`, or `elevated` and an exact `x-canopy-actor-kinds` allowlist.
+Anonymous discovery publishes `[]`; every current authenticated operation
+publishes only `["jellyfin-user-client"]`. The authored top-level vocabulary,
+runtime enum/tokens, and the separate frozen operation-metadata map must agree
+exactly. Existing authority strings remain unchanged. A future service operation
+must extend the contract additively and can admit only the separately authenticated
+no-user service actor. CI compares authority with live controller attributes,
+checks the exact actor metadata, and the live conformance matrix exercises anonymous,
+ordinary-user, and administrator callers for every operation in `frozen.json`.
+A newly added operation cannot omit its inventory entry, authorization class, actor
+allowlist, or frozen metadata.
 
 **Branch on `Code`, never on `Message`.** The message is human-readable and may be
 reworded or translated at any time. The code set is enumerated in the spec, and each code

@@ -150,6 +150,54 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     : "authenticated";
         }
 
+        private static IReadOnlyList<string> LiveActorKinds(MethodInfo action) =>
+            string.Equals(LiveAuthority(action), "anonymous", StringComparison.Ordinal)
+                ? Array.Empty<string>()
+                : new[] { PlatformActorKindVocabulary.TokenFor(PlatformActorKind.JellyfinUserClient)! };
+
+        private static string OperationKey(string path, string method) => $"{method} {path}";
+
+        private static IReadOnlyList<string> OperationMetadataDrift(JsonElement frozen, JsonElement spec)
+        {
+            var drift = new List<string>();
+            var specified = SpecOperations(spec)
+                .ToDictionary(
+                    operation => OperationKey(operation.Path, operation.Method),
+                    operation => operation.Operation,
+                    StringComparer.Ordinal);
+            var frozenMetadata = frozen.GetProperty("operationMetadata");
+
+            foreach (var operation in specified)
+            {
+                if (!frozenMetadata.TryGetProperty(operation.Key, out var metadata))
+                {
+                    drift.Add($"{operation.Key} has no frozen authority metadata");
+                    continue;
+                }
+
+                var specAuthority = operation.Value.GetProperty("x-canopy-authority").GetString();
+                var frozenAuthority = metadata.GetProperty("authority").GetString();
+                if (!string.Equals(specAuthority, frozenAuthority, StringComparison.Ordinal))
+                {
+                    drift.Add($"{operation.Key} authority changed from {frozenAuthority} to {specAuthority}");
+                }
+
+                var specKinds = operation.Value.GetProperty("x-canopy-actor-kinds")
+                    .EnumerateArray().Select(value => value.GetString()).ToArray();
+                var frozenKinds = metadata.GetProperty("actorKinds")
+                    .EnumerateArray().Select(value => value.GetString()).ToArray();
+                if (!specKinds.SequenceEqual(frozenKinds, StringComparer.Ordinal))
+                {
+                    drift.Add($"{operation.Key} actor kinds changed");
+                }
+            }
+
+            drift.AddRange(frozenMetadata.EnumerateObject()
+                .Where(operation => !specified.ContainsKey(operation.Name))
+                .Select(operation => $"{operation.Name} has frozen metadata but no published operation"));
+            return drift.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        }
+
         private static IEnumerable<(string Path, string Method, JsonElement Operation)> SpecOperations(JsonElement spec)
         {
             foreach (var path in spec.GetProperty("paths").EnumerateObject())
@@ -720,6 +768,85 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Assert.Contains(published, new[] { "anonymous", "authenticated", "elevated" });
                 Assert.Equal(LiveAuthority(action), published);
             }
+        }
+
+        [Fact]
+        public void ActorKindTokensMatchTheClosedRuntimeAndFrozenVocabulary()
+        {
+            var runtime = PlatformActorKindVocabulary.All
+                .Select(kind => PlatformActorKindVocabulary.TokenFor(kind)!)
+                .ToArray();
+            var authored = Spec.RootElement.GetProperty("x-canopy-actor-kind-vocabulary")
+                .EnumerateArray().Select(value => value.GetString()).ToArray();
+            var frozen = Frozen.RootElement.GetProperty("actorKindVocabulary")
+                .EnumerateArray().Select(value => value.GetString()).ToArray();
+
+            Assert.Equal(new[] { "jellyfin-user-client", "installed-provider", "companion-service" }, runtime);
+            Assert.Equal(runtime, authored);
+            Assert.Equal(runtime, frozen);
+            Assert.Equal(runtime.Length, runtime.Distinct(StringComparer.Ordinal).Count());
+        }
+
+        [Fact]
+        public void EveryOperationPublishesItsExactRuntimeActorKinds()
+        {
+            foreach (var (path, method, action) in LiveRoutes())
+            {
+                var operation = SpecOperations().Single(entry =>
+                    string.Equals(entry.Path, path, StringComparison.Ordinal)
+                    && string.Equals(entry.Method, method, StringComparison.Ordinal)).Operation;
+                var published = operation.GetProperty("x-canopy-actor-kinds")
+                    .EnumerateArray().Select(value => value.GetString()!).ToArray();
+
+                Assert.Equal(LiveActorKinds(action), published);
+                Assert.DoesNotContain("installed-provider", published);
+                Assert.DoesNotContain("companion-service", published);
+            }
+        }
+
+        [Fact]
+        public void FrozenOperationAuthorityMetadataMatchesTheAuthoredSpec()
+        {
+            var drift = OperationMetadataDrift(Frozen.RootElement, Spec.RootElement);
+
+            Assert.True(
+                drift.Count == 0,
+                "Frozen Platform authority metadata drifted: " + string.Join("; ", drift));
+            Assert.Equal(
+                SpecOperations().Count(),
+                Frozen.RootElement.GetProperty("operationMetadata").EnumerateObject().Count());
+        }
+
+        [Fact]
+        public void ActorMetadataDriftGateNamesMissingRemovedAndWidenedPolicy()
+        {
+            using var missingFrozen = JsonDocument.Parse("""
+                {"operationMetadata":{}}
+                """);
+            using var oneUserOperation = JsonDocument.Parse("""
+                {"paths":{"/operation":{"post":{
+                  "x-canopy-authority":"authenticated",
+                  "x-canopy-actor-kinds":["jellyfin-user-client"]
+                }}}}
+                """);
+            Assert.Equal(
+                new[] { "post /operation has no frozen authority metadata" },
+                OperationMetadataDrift(missingFrozen.RootElement, oneUserOperation.RootElement));
+
+            using var widenedFrozen = JsonDocument.Parse("""
+                {"operationMetadata":{"post /operation":{
+                  "authority":"authenticated",
+                  "actorKinds":["jellyfin-user-client","companion-service"]
+                }}}
+                """);
+            Assert.Equal(
+                new[] { "post /operation actor kinds changed" },
+                OperationMetadataDrift(widenedFrozen.RootElement, oneUserOperation.RootElement));
+
+            using var removedSpec = JsonDocument.Parse("""{"paths":{}}""");
+            Assert.Equal(
+                new[] { "post /operation has frozen metadata but no published operation" },
+                OperationMetadataDrift(widenedFrozen.RootElement, removedSpec.RootElement));
         }
 
         [Fact]

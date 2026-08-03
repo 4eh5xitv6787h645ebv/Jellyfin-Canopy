@@ -538,9 +538,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         private CurrentAuthority? ResolveCurrent(PlatformActor boundaryActor, Guid itemId)
         {
-            var actor = PlatformActorBoundaryFilter.Reauthorize(
+            var actor = PlatformActorBoundaryFilter.ReauthorizeUserActor(
                 boundaryActor,
-                _host.Users.Find(boundaryActor.UserId));
+                _host);
             if (actor is null)
             {
                 return null;

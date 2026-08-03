@@ -227,7 +227,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 return new PlatformCapabilityMintOutcome(PlatformCapabilityMintOutcomeKind.InvalidRequest);
             }
 
-            if (!HasRequiredAuthority(definition, actor))
+            if (!definition.Allows(actor.Authority))
             {
                 return new PlatformCapabilityMintOutcome(PlatformCapabilityMintOutcomeKind.NotAuthorized);
             }
@@ -444,7 +444,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     return new PlatformCapabilityValidation(PlatformCapabilityValidationKind.StaleAuthority);
                 }
 
-                if (!HasRequiredAuthority(definition, actor))
+                if (!definition.Allows(actor.Authority))
                 {
                     return new PlatformCapabilityValidation(PlatformCapabilityValidationKind.NotAuthorized);
                 }
@@ -562,10 +562,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 _disposed = true;
             }
         }
-
-        private static bool HasRequiredAuthority(PlatformOperationDefinition definition, PlatformActor actor) =>
-            definition.Authority == PlatformAuthorityLevel.Authenticated
-            || (definition.Authority == PlatformAuthorityLevel.Elevated && actor.IsElevated);
 
         private static bool IsBoundedDeviceAttribution(string? value)
         {

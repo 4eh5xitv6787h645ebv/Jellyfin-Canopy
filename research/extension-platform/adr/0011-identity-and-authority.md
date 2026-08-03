@@ -1,6 +1,6 @@
 # ADR-0011 — Identity and authority
 
-Status: **accepted** (pilot subset implemented; ADR-0013 server-tranche remainder pending) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted** (pilot, canonical user boundary, and closed actor domain implemented; grants/credentials/provider-service activation pending) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 
@@ -33,6 +33,11 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
    only from the unforgeable internal result of the full Platform boundary after
    explicit API-key rejection, a unique canonical user claim, live host-user
    lookup and current elevation; never from a parser GUID or `ClaimsPrincipal`.
+   The runtime kind vocabulary is closed over exactly Jellyfin user client,
+   registry-approved installed provider, and credential-bound companion service.
+   The latter two have distinct dormant proof and actor types with no user or
+   elevation projection; no production proof issuer exists until its owning
+   registry or credential boundary lands.
 2. **Attribution is not authority.** Client, device and extension identifiers are
    recorded for audit and never consulted for access decisions unless bound to an
    approved cryptographic credential.
@@ -96,6 +101,13 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
     makes the admin-only reference capability in
     [`v1-capability-freeze.md`](../v1-capability-freeze.md#c9--reference-capability-families)
     expressible.
+    The current implementation centralizes that decision on the operation
+    definition: all three native-pilot operations admit only the Jellyfin-user
+    kind, elevated users remain eligible for ordinary authenticated operations,
+    and default, unknown, provider, and service projections deny. The authored
+    OpenAPI and frozen metadata publish the same exact allowlists without
+    changing the existing `x-canopy-authority` tokens. Grant intersection remains
+    owned by #639 and is not implemented here.
 12. **v1 has no per-user consent.** Grants are administrator-approved and
     server-wide; a user cannot decline an approved extension. The admin and user
     kill switches in [ADR-0007](0007-declarative-web-contributions.md) turn a

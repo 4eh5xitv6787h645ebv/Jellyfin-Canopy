@@ -116,7 +116,13 @@ a fresh host-user/elevation lookup. A production-wide source guard prevents
 legacy `NameIdentifier` / `sub` / `Sid` fallback parsers from returning and
 confines marker, cookie and IP identity ladders to non-authoritative Spoiler
 preference disambiguation. Focused controller tests pin Active Streams and
-Maintenance control sessions to the same canonical result.
+Maintenance control sessions to the same canonical result. Issue #640 adds an
+exact nonzero actor-kind domain and kernel-only typed construction: current
+operations admit only the Jellyfin-user kind, elevation remains current state on
+that same actor, and provider/service actors have no user projection or production
+proof issuer. Source and reflection guards reject raw/caller-shaped construction,
+cross-kind conversion, default/unknown authority and service entry into the
+existing per-user operation surface.
 
 ### T-02 · Privilege escalation to administrator — **critical**
 
@@ -414,6 +420,8 @@ trust browser origin or caller-supplied URLs.
    generation-fences all kernel-owned commits/delivery, but cannot stop or roll
    back a provider-owned or external effect already begun; late/revoked outcomes
    are discarded and audited.
-5. Issue [#638](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/638)
-   owns convergence of authority-relevant callers on one authenticated,
-   claims-only, fail-closed resolver (**T-01**).
+5. Completed by [#638](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/638)
+   and [#640](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/640):
+   authority-relevant callers converge on one authenticated claims-only resolver,
+   then enter a closed typed actor domain with exact operation-kind ceilings
+   (**T-01**, **T-02**, **T-13**).

@@ -341,14 +341,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformActor boundaryActor,
             PlatformPreparedActionContext prepared)
         {
-            var user = _host.Users.Find(boundaryActor.UserId);
-            var actor = PlatformActorBoundaryFilter.Reauthorize(boundaryActor, user);
+            var actor = PlatformActorBoundaryFilter.ReauthorizeUserActor(boundaryActor, _host);
             if (actor is null)
             {
                 return null;
             }
 
-            if (!HasRequiredAuthority(prepared.Definition, actor))
+            if (!prepared.Definition.Allows(actor.Authority))
             {
                 return null;
             }
@@ -366,12 +365,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
             return new CurrentAuthority(actor, item);
         }
-
-        private static bool HasRequiredAuthority(
-            PlatformOperationDefinition definition,
-            PlatformActor actor)
-            => definition.Authority == PlatformAuthorityLevel.Authenticated
-                || (definition.Authority == PlatformAuthorityLevel.Elevated && actor.IsElevated);
 
         private static PlatformSemanticFingerprint CreateFingerprint(
             PlatformPreparedActionContext prepared,

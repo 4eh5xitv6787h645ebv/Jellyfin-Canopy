@@ -54,16 +54,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Equal(new[] { "PlatformOperationVocabulary.cs" }, constructionOwners);
             Assert.True(HasVocabularyTypeConstruction(
-                "var planted = new PlatformOperationDefinition(id, family, authority, scope, kinds, true, schema, 1);"));
+                "var planted = new PlatformOperationDefinition(id, family, authority, actorKinds, scope, kinds, true, schema, 1);"));
             Assert.True(HasVocabularyTypeConstruction(
                 "var planted = new global::Jellyfin.Plugin.JellyfinCanopy.Platform.PlatformOperationId(value);"));
             Assert.True(HasVocabularyTypeConstruction(
                 "var planted = new Jellyfin.Plugin.JellyfinCanopy.Platform.PlatformInputSchemaId(value);"));
             Assert.True(HasVocabularyTypeConstruction(
-                "PlatformOperationDefinition planted = new(id, family, authority, scope, kinds, true, schema, 1);"));
+                "PlatformOperationDefinition planted = new(id, family, authority, actorKinds, scope, kinds, true, schema, 1);"));
             Assert.True(HasVocabularyTypeConstruction(
                 "using Definition = global::Jellyfin.Plugin.JellyfinCanopy.Platform.PlatformOperationDefinition;\n"
-                + "Definition planted = new(id, family, authority, scope, kinds, true, schema, 1);"));
+                + "Definition planted = new(id, family, authority, actorKinds, scope, kinds, true, schema, 1);"));
         }
 
         [Fact]
@@ -105,6 +105,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         {
             var expectedProperties = new Dictionary<string, Type>(StringComparer.Ordinal)
             {
+                [nameof(PlatformOperationDefinition.AllowedActorKinds)] = typeof(System.Collections.Immutable.ImmutableArray<PlatformActorKind>),
                 [nameof(PlatformOperationDefinition.Authority)] = typeof(PlatformAuthorityLevel),
                 [nameof(PlatformOperationDefinition.Family)] = typeof(PlatformOperationFamily),
                 [nameof(PlatformOperationDefinition.Id)] = typeof(PlatformOperationId),
@@ -126,6 +127,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.All(PlatformOperationVocabulary.All, definition =>
             {
+                Assert.Equal(new[] { PlatformActorKind.JellyfinUserClient }, definition.AllowedActorKinds);
                 Assert.DoesNotContain('/', definition.Id.Value);
                 Assert.DoesNotContain(':', definition.Id.Value);
                 Assert.DoesNotContain("controller", definition.Id.Value, StringComparison.Ordinal);
@@ -154,6 +156,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             })
             {
                 Assert.DoesNotContain(forbidden, code, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void CapabilityAndInvocationDelegateToTheSingleOperationPolicyOwner()
+        {
+            foreach (var fileName in new[]
+            {
+                "PlatformActionCapabilityService.cs",
+                "PlatformActionInvocationCoordinator.cs",
+            })
+            {
+                var code = PlatformHostSeamTests.CodeOnly(File.ReadAllText(SourceFile(fileName)));
+                Assert.Contains(".Allows(actor.Authority)", code, StringComparison.Ordinal);
+                Assert.DoesNotContain("HasRequiredAuthority", code, StringComparison.Ordinal);
+                Assert.DoesNotContain("definition.Authority ==", code, StringComparison.Ordinal);
             }
         }
 

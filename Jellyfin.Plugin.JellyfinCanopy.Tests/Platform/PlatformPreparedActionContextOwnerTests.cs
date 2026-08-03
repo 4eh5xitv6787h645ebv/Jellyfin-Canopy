@@ -139,9 +139,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 ImmutableArray<HostProviderReference>.Empty);
 
         private static PlatformActor Actor()
-            => new(
+            => PlatformActorTestFactory.Create(
                 Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-                isElevated: false,
+                false,
                 new string('a', 32),
                 "android-tv",
                 "device-a");

@@ -579,7 +579,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     NullLogger<PlatformAuditStore>.Instance,
                     Clock,
                     Enumerable.Repeat((byte)9, 32).ToArray());
-                BoundaryActor = new PlatformActor(
+                BoundaryActor = PlatformActorTestFactory.Create(
                     FakeHost.UserId,
                     boundaryElevated,
                     new string('a', 32),

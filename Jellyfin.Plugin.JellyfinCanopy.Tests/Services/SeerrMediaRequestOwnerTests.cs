@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Model.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -526,7 +527,7 @@ public sealed class SeerrMediaRequestOwnerTests
             Provider = new FakePluginConfigProvider(Config);
             Admission.Resolutions.Add(Found());
             Handler.AddResponse("/api/v1/request", "{}", status);
-            Actor = new PlatformActor(
+            Actor = PlatformActorTestFactory.Create(
                 Guid.NewGuid(),
                 isElevated,
                 "correlation",

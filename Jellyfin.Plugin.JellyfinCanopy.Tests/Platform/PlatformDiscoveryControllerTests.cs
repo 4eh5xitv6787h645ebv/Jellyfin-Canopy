@@ -156,7 +156,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
             };
-            controller.HttpContext.Items["JellyfinCanopy.Platform.Actor"] = new PlatformActor(
+            controller.HttpContext.Items["JellyfinCanopy.Platform.Actor"] = PlatformActorTestFactory.Create(
                 userId,
                 false,
                 "correlation",

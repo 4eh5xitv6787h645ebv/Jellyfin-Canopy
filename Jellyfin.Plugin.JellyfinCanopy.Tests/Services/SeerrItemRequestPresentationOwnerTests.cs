@@ -719,7 +719,7 @@ public sealed class SeerrItemRequestPresentationOwnerTests
             Provider = new GenerationConfigProvider(Config);
             Admission.SetResolutions(Found());
             Admission.SetCapabilities(new Seerr4kCapability(true, true, true, true));
-            Actor = new PlatformActor(
+            Actor = PlatformActorTestFactory.Create(
                 actorId ?? Guid.NewGuid(),
                 isElevated,
                 "correlation",

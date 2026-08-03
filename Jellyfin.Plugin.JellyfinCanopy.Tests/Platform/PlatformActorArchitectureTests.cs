@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         private static readonly Regex ActorReference = new(@"\bPlatformActor\b", RegexOptions.Compiled);
 
         private static readonly Regex ActorConstruction = new(
-            @"\bnew\s+PlatformActor\s*\(",
+            @"\bnew\s+(?:PlatformActor|PlatformInstalledProviderActor|PlatformCompanionServiceActor)\s*\(",
             RegexOptions.Compiled);
 
         [Fact]
@@ -45,7 +45,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
             Assert.Equal(
-                new[] { "ClientName", "CorrelationId", "DeviceId", "IsElevated", "UserId" },
+                new[] { "ClientName", "CorrelationId", "DeviceId", "IsElevated", "Kind", "UserId" },
                 properties.Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal));
             Assert.All(properties, property =>
             {
@@ -56,6 +56,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Equal(typeof(Guid), type.GetProperty(nameof(PlatformActor.UserId))!.PropertyType);
             Assert.Equal(typeof(bool), type.GetProperty(nameof(PlatformActor.IsElevated))!.PropertyType);
+            Assert.Equal(typeof(PlatformActorKind), type.GetProperty(nameof(PlatformActor.Kind))!.PropertyType);
             Assert.Equal(typeof(string), type.GetProperty(nameof(PlatformActor.CorrelationId))!.PropertyType);
             Assert.Equal(typeof(string), type.GetProperty(nameof(PlatformActor.ClientName))!.PropertyType);
             Assert.Equal(typeof(string), type.GetProperty(nameof(PlatformActor.DeviceId))!.PropertyType);
@@ -147,7 +148,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
-        public void OnlyTheControllerBoundaryCanConstructAnActor()
+        public void OnlyTheActorDomainFactoryCanConstructActors()
         {
             var constructors = SourceFiles()
                 .Where(file => ActorConstruction.IsMatch(
@@ -156,7 +157,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToList();
 
-            Assert.Equal(new[] { "PlatformActorBoundaryFilter.cs" }, constructors);
+            Assert.Equal(new[] { "PlatformActorDomain.cs" }, constructors);
 
             Assert.Matches(
                 ActorConstruction,

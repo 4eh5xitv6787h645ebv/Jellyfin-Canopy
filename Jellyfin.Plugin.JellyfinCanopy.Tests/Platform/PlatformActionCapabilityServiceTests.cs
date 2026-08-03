@@ -492,7 +492,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             new(clock, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray(), new SequentialNonceSource().GetBytes);
 
         private static PlatformActor Actor(Guid userId, string? deviceId = "device-a", bool elevated = false) =>
-            new(userId, elevated, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "TestClient", deviceId);
+            PlatformActorTestFactory.Create(
+                userId,
+                elevated,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "TestClient",
+                deviceId);
 
         private static byte[] Digest(string value) => SHA256.HashData(Encoding.UTF8.GetBytes(value));
 

@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -1577,7 +1578,7 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             hiddenContentItemActionOwner: owner)
             .HideFromContinueWatching(legacyItemId.ToString());
         var platformResult = new HiddenContentPlatformItemActionAdapter(owner).Configure(
-            new PlatformActor(platformUserId, false, "correlation", null, null),
+            PlatformActorTestFactory.Create(platformUserId, false, "correlation", null, null),
             new HostAccessibleItem(
                 platformItemId,
                 HostItemKind.Movie,
