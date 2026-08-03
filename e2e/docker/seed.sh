@@ -441,10 +441,59 @@ api() { # <method> <path> [json-body]
     fi
 }
 
+library_refresh_completed_successfully() { # <state> <last-result-status>
+    [ "${1:-}" = Idle ] && [ "${2:-}" = Completed ]
+}
+
+startup_library_task_json() { # <maximum-seconds>
+    local maximum_seconds="${1:?startup library task request requires a deadline}"
+    # Keep this timeout local to cold-start readiness: other seed API calls
+    # retain their established semantics. --max-time bounds the complete
+    # transfer, including a peer that connects and then never sends a byte.
+    curl -fsS --connect-timeout "${maximum_seconds}" --max-time "${maximum_seconds}" \
+        "${BASE}/ScheduledTasks" -H "${AUTHED}"
+}
+
 log "verifying the plugin loaded"
 api GET /Plugins | jq -e --arg id "${PLUGIN_ID}" \
     'map(select((.Id // "" | ascii_downcase | gsub("-"; "")) == ($id | ascii_downcase | gsub("-"; "")))) | length > 0' >/dev/null \
     || fail "Jellyfin Canopy plugin did not load (check config/log/)"
+
+# System/Info/Public, startup completion, authentication, and even /Plugins
+# can all succeed while Jellyfin 12's clean-server RefreshLibrary task still
+# owns startup database statements. Fail closed before the first virtual-folder
+# mutation instead of overlapping that host-owned work. A wall-clock deadline
+# bounds both polling and each transport to two minutes in total, and only the
+# task's explicit successful terminal state is accepted.
+log "waiting for Jellyfin startup library activity to settle before library creation"
+STARTUP_LIBRARY_READY=false
+STARTUP_LIBRARY_STATE=""
+STARTUP_LIBRARY_STATUS=""
+STARTUP_LIBRARY_WAIT_SECONDS=120
+STARTUP_LIBRARY_DEADLINE=$((SECONDS + STARTUP_LIBRARY_WAIT_SECONDS))
+while [ "${SECONDS}" -lt "${STARTUP_LIBRARY_DEADLINE}" ]; do
+    STARTUP_LIBRARY_REMAINING=$((STARTUP_LIBRARY_DEADLINE - SECONDS))
+    STARTUP_LIBRARY_TASK=""
+    if STARTUP_LIBRARY_TASK_RESPONSE="$(startup_library_task_json "${STARTUP_LIBRARY_REMAINING}")"; then
+        STARTUP_LIBRARY_TASK="$(printf '%s' "${STARTUP_LIBRARY_TASK_RESPONSE}" | jq -ec \
+            '[.[] | select(.Key == "RefreshLibrary")][0] // empty' || true)"
+    fi
+    if [ -n "${STARTUP_LIBRARY_TASK}" ]; then
+        STARTUP_LIBRARY_STATE="$(printf '%s' "${STARTUP_LIBRARY_TASK}" | jq -r '.State // ""')"
+        STARTUP_LIBRARY_STATUS="$(printf '%s' "${STARTUP_LIBRARY_TASK}" | jq -r \
+            '.LastExecutionResult.Status // ""')"
+        if library_refresh_completed_successfully \
+            "${STARTUP_LIBRARY_STATE}" "${STARTUP_LIBRARY_STATUS}"; then
+            STARTUP_LIBRARY_READY=true
+            break
+        fi
+    fi
+    [ "${SECONDS}" -lt "${STARTUP_LIBRARY_DEADLINE}" ] || break
+    sleep 1
+done
+[ "${STARTUP_LIBRARY_READY}" = true ] \
+    || fail "Jellyfin startup Scan Media Library task did not complete successfully before library creation (state=${STARTUP_LIBRARY_STATE:-missing}, status=${STARTUP_LIBRARY_STATUS:-missing})"
+log "Jellyfin startup library activity completed successfully"
 
 log "creating the Movies library"
 api POST "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=false" \
