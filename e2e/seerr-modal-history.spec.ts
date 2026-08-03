@@ -413,7 +413,7 @@ test.describe('Seerr modal history ownership', () => {
             await loginAs(page, 'admin', consoleErrors);
             await prepareModalRoute(page);
 
-            await page.evaluate((asyncScheduler) => {
+            await page.evaluate(async (asyncScheduler) => {
                 const stableHref = location.href;
                 History.prototype.replaceState.call(
                     history,
@@ -435,11 +435,18 @@ test.describe('Seerr modal history ownership', () => {
                 window.removeEventListener('popstate', modalListener, true);
                 const proof = {
                     laterStates: [] as Array<string | null>,
+                    recoveryForwardQueued: false,
                     rewriteRuns: 0,
                     rewriteSettled: false,
                 };
                 const originalForward = history.forward.bind(history);
                 const retainedMessageChannels = new Set<MessageChannel>();
+                let resolveScheduler: (() => void) | null = null;
+                let rejectScheduler: ((reason?: unknown) => void) | null = null;
+                const schedulerSettled = new Promise<void>((resolve, reject) => {
+                    resolveScheduler = resolve;
+                    rejectScheduler = reject;
+                });
                 let queuedRecoveryForward = false;
                 history.forward = () => {
                     if (proof.rewriteRuns > 0 && !proof.rewriteSettled) {
@@ -449,6 +456,7 @@ test.describe('Seerr modal history ownership', () => {
                         // after B is already current and become an ordinary B
                         // replacement rather than a recovery-time rewrite.
                         queuedRecoveryForward = true;
+                        proof.recoveryForwardQueued = true;
                         return;
                     }
                     originalForward();
@@ -460,18 +468,23 @@ test.describe('Seerr modal history ownership', () => {
                             !== 'async-canonical-route-a') return;
                     proof.rewriteRuns += 1;
                     const rewrite = () => {
-                        history.replaceState(
-                            {
-                                ...(event.state as Record<string, unknown>),
-                                canonicalizedBy: asyncScheduler,
-                            },
-                            '',
-                            stableHref
-                        );
-                        proof.rewriteSettled = true;
-                        if (queuedRecoveryForward) {
-                            queuedRecoveryForward = false;
-                            originalForward();
+                        try {
+                            history.replaceState(
+                                {
+                                    ...(event.state as Record<string, unknown>),
+                                    canonicalizedBy: asyncScheduler,
+                                },
+                                '',
+                                stableHref
+                            );
+                            proof.rewriteSettled = true;
+                            if (queuedRecoveryForward) {
+                                queuedRecoveryForward = false;
+                                originalForward();
+                            }
+                            resolveScheduler?.();
+                        } catch (error) {
+                            rejectScheduler?.(error);
                         }
                     };
                     if (asyncScheduler === 'setTimeout') {
@@ -509,6 +522,13 @@ test.describe('Seerr modal history ownership', () => {
                         stableHref
                     );
                 }, 0);
+
+                // Keep this Playwright step attached to the browser task until
+                // the selected scheduler actually delivers, instead of starting
+                // an independent polling task while delivery remains queued.
+                // Recovery is still held above, so this does not make the
+                // canonicalization synchronous or weaken the interleaving.
+                await schedulerSettled;
             }, scheduler);
 
             await page.waitForFunction(() => {
@@ -523,6 +543,7 @@ test.describe('Seerr modal history ownership', () => {
             }, undefined, { polling: 50, timeout: 30_000 });
             expect(await page.evaluate(() => (window as any).__jcAsyncCanonicalProof)).toEqual({
                 laterStates: ['async-canonical-route-b'],
+                recoveryForwardQueued: true,
                 rewriteRuns: 1,
                 rewriteSettled: true,
             });
