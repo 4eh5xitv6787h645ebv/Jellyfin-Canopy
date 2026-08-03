@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37479,
-        "totalLines": 46859
+        "coveredLines": 37618,
+        "totalLines": 47018
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 37479,
-        "maximumCoveredLines": 37479
+        "cleanRuns": 4,
+        "minimumCoveredLines": 37616,
+        "maximumCoveredLines": 37618
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The #627-#632 native Seerr compatibility change adds the typed request-outcome contract, bounded upstream error classification, watchlist and per-season 4K projections, authenticated per-user negotiation availability, and exact-generation last-known request settings. Three clean .NET 10.0.9 Coverlet runs on the identical final 46,859-line source and test scope each passed all 3,316 tests and reproduced exactly 37,479 covered lines. The reviewed high-water and exact clean-run floor are therefore both 37,479/46,859 (79.983%), so no instrumentation tolerance is needed. Relative to the prior 37,095/46,442 baseline, the change adds 417 instrumented lines, raises the high-water by 384 covered lines, and increases overall coverage from 79.874% to 79.983%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The #524 Platform deprecation-policy change adds a strict embedded operation registry, bounded immutable lookup, MVC action-identity resolution, RFC 9745 Deprecation and RFC 8594 Sunset response headers, and frozen-route/version-window enforcement. Four clean .NET 10.0.9 Coverlet runs on the identical final 47,018-line source and test scope each passed all 3,329 tests: three local runs reproduced 37,616 covered lines and the Linux GitHub Actions run measured 37,618. The reviewed observed high-water is therefore 37,618/47,018 (80.008%), while the exact clean-run floor is 37,616/47,018 (80.003%); the two-line tolerance records only that observed instrumentation envelope. Relative to the prior 37,479/46,859 baseline, the change adds 159 instrumented lines, raises the high-water by 139 covered lines, and increases overall coverage from 79.983% to 80.008%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -324,6 +324,19 @@
         "schema": {
           "$ref": "#/components/schemas/PlatformEntityTag"
         }
+      },
+      "Deprecation": {
+        "description": "RFC 9745 structured-field date announcing when the operation was deprecated. Present only for operations listed in deprecations.json.",
+        "schema": {
+          "type": "string",
+          "pattern": "^@[0-9]+$"
+        }
+      },
+      "Sunset": {
+        "description": "RFC 8594 HTTP-date naming the earliest time the deprecated operation may be removed, subject also to the Canopy release window.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "securitySchemes": {

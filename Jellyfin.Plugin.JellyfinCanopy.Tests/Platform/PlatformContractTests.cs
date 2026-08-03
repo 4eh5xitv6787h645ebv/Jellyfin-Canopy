@@ -97,6 +97,63 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             }
         }
 
+        private static IReadOnlyList<string> RemovedFrozenOperations(JsonElement frozen, JsonElement spec)
+        {
+            var live = SpecOperations(spec)
+                .Select(entry => $"{entry.Method} {entry.Path}")
+                .ToHashSet(StringComparer.Ordinal);
+            var removed = new List<string>();
+
+            foreach (var path in frozen.GetProperty("paths").EnumerateObject())
+            {
+                foreach (var method in path.Value.EnumerateArray())
+                {
+                    var entry = $"{method.GetString()} {path.Name}";
+                    if (!live.Contains(entry))
+                    {
+                        removed.Add(entry);
+                    }
+                }
+            }
+
+            return removed;
+        }
+
+        private static IEnumerable<(string Path, string Method, JsonElement Operation)> SpecOperations(JsonElement spec)
+        {
+            foreach (var path in spec.GetProperty("paths").EnumerateObject())
+            {
+                foreach (var operation in path.Value.EnumerateObject())
+                {
+                    yield return (path.Name, operation.Name, operation.Value);
+                }
+            }
+        }
+
+        private static IReadOnlyList<string> DeprecationsWithoutPublishedAnsweringOperation(
+            PlatformDeprecationRegistry registry,
+            JsonElement frozen,
+            JsonElement spec,
+            IEnumerable<string> liveOperations)
+        {
+            var frozenOperations = frozen.GetProperty("paths").EnumerateObject()
+                .SelectMany(path => path.Value.EnumerateArray()
+                    .Select(method => $"{method.GetString()!.ToUpperInvariant()} {path.Name}"))
+                .ToHashSet(StringComparer.Ordinal);
+            var specifiedOperations = SpecOperations(spec)
+                .Select(operation => $"{operation.Method.ToUpperInvariant()} {operation.Path}")
+                .ToHashSet(StringComparer.Ordinal);
+            var live = liveOperations.ToHashSet(StringComparer.Ordinal);
+
+            return registry.Operations
+                .Select(operation => $"{operation.Method} {operation.Path}")
+                .Where(operation => !frozenOperations.Contains(operation)
+                    || !specifiedOperations.Contains(operation)
+                    || !live.Contains(operation))
+                .OrderBy(operation => operation, StringComparer.Ordinal)
+                .ToList();
+        }
+
         [Fact]
         public void EveryLiveRouteIsDescribedBySpec()
         {
@@ -571,29 +628,98 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         {
             // ADR-0010: changes within v1 are additive only. Enforced here rather than
             // left to a reviewer noticing a deletion in a large diff.
-            var live = SpecOperations()
-                .Select(entry => $"{entry.Method} {entry.Path}")
-                .ToHashSet(StringComparer.Ordinal);
-
-            var removed = new List<string>();
-
-            foreach (var path in Frozen.RootElement.GetProperty("paths").EnumerateObject())
-            {
-                foreach (var method in path.Value.EnumerateArray())
-                {
-                    var entry = $"{method.GetString()} {path.Name}";
-                    if (!live.Contains(entry))
-                    {
-                        removed.Add(entry);
-                    }
-                }
-            }
+            var removed = RemovedFrozenOperations(Frozen.RootElement, Spec.RootElement);
 
             Assert.True(
                 removed.Count == 0,
                 "Published Platform v1 route(s) were removed or renamed: " + string.Join(", ", removed) + ".\n"
                 + "Within v1 the surface may only grow (ADR-0010). An incompatible change belongs in a v2 "
                 + "route family, which can coexist, rather than mutating v1 under existing consumers.");
+        }
+
+        [Fact]
+        public void DriftGateNamesAFrozenOperationRemovedEvenWhenDeprecated()
+        {
+            using var plantedFrozen = JsonDocument.Parse("""
+                {"paths":{"/JellyfinCanopy/Platform/v1/discovery":["get"]}}
+                """);
+            using var plantedSpec = JsonDocument.Parse("""{"paths":{}}""");
+
+            var removed = RemovedFrozenOperations(plantedFrozen.RootElement, plantedSpec.RootElement);
+
+            Assert.Equal(new[] { "get /JellyfinCanopy/Platform/v1/discovery" }, removed);
+        }
+
+        [Fact]
+        public void EveryDeprecationNamesAFrozenSpecifiedOperationThatStillAnswers()
+        {
+            var live = LiveRoutes().Select(route => $"{route.Method.ToUpperInvariant()} {route.Path}");
+            var missing = DeprecationsWithoutPublishedAnsweringOperation(
+                PlatformDeprecationRegistry.Shipped,
+                Frozen.RootElement,
+                Spec.RootElement,
+                live);
+
+            Assert.True(
+                missing.Count == 0,
+                "Platform deprecation entries do not name a frozen, specified, live operation: "
+                    + string.Join(", ", missing));
+        }
+
+        [Fact]
+        public void OpenApiDefinesTheLifecycleHeaderFormatsUsedByTheRegistry()
+        {
+            var headers = Spec.RootElement.GetProperty("components").GetProperty("headers");
+
+            Assert.Equal(
+                "^@[0-9]+$",
+                headers.GetProperty("Deprecation").GetProperty("schema").GetProperty("pattern").GetString());
+            Assert.Equal(
+                "string",
+                headers.GetProperty("Sunset").GetProperty("schema").GetProperty("type").GetString());
+        }
+
+        [Fact]
+        public void DriftGateNamesADeprecationForAnOperationThatDoesNotAnswer()
+        {
+            var registry = PlatformDeprecationRegistry.Parse("""
+                {
+                  "schemaVersion": 1,
+                  "operations": [{
+                    "method": "GET",
+                    "path": "/JellyfinCanopy/Platform/v1/missing",
+                    "deprecatedAtUtc": "2026-08-04T00:00:00Z",
+                    "sunsetAtUtc": "2026-11-02T00:00:00Z",
+                    "deprecatedInCanopyVersion": "2.4.0.0",
+                    "removalNotBeforeCanopyVersion": "2.5.0.0"
+                  }]
+                }
+                """);
+            var live = LiveRoutes().Select(route => $"{route.Method.ToUpperInvariant()} {route.Path}");
+
+            var missing = DeprecationsWithoutPublishedAnsweringOperation(
+                registry,
+                Frozen.RootElement,
+                Spec.RootElement,
+                live);
+
+            Assert.Equal(new[] { "GET /JellyfinCanopy/Platform/v1/missing" }, missing);
+        }
+
+        [Fact]
+        public void PlatformRoutesAreVersionLiteralAndNeverExposeALatestAlias()
+        {
+            Assert.Equal("JellyfinCanopy/Platform/v1", PlatformConstants.RoutePrefix);
+            Assert.All(LiveRoutes(), route =>
+            {
+                Assert.StartsWith("/JellyfinCanopy/Platform/v1/", route.Path, StringComparison.Ordinal);
+                Assert.DoesNotContain("/latest", route.Path, StringComparison.OrdinalIgnoreCase);
+            });
+            Assert.All(SpecOperations(), operation =>
+            {
+                Assert.StartsWith("/JellyfinCanopy/Platform/v1/", operation.Path, StringComparison.Ordinal);
+                Assert.DoesNotContain("/latest", operation.Path, StringComparison.OrdinalIgnoreCase);
+            });
         }
 
         [Fact]

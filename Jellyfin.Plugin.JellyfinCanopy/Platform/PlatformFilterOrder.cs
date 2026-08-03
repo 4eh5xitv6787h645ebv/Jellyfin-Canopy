@@ -18,10 +18,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// <summary>Start the model-binding/action deadline after body acquisition.</summary>
         internal const int RequestLifecycle = int.MinValue + 4;
 
+        /// <summary>Add in-band lifecycle metadata before the representation executes.</summary>
+        internal const int Deprecation = int.MinValue + 5;
+
         /// <summary>Serialize Platform results to their exact bytes outside the deadline.</summary>
-        internal const int JsonResult = int.MinValue + 5;
+        internal const int JsonResult = int.MinValue + 6;
 
         /// <summary>Evaluate representation preconditions after exact serialization.</summary>
-        internal const int Concurrency = int.MinValue + 6;
+        internal const int Concurrency = int.MinValue + 7;
     }
 }

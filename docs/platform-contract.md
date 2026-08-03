@@ -83,6 +83,9 @@ The `v1` in the path is a **major** version. Within it, changes are additive onl
 An incompatible change becomes a `v2` route family that coexists with `v1`, so you upgrade
 on your own schedule rather than on ours.
 
+The [Platform support and deprecation policy](platform-support-policy.md) defines the
+N/N-1 support window, machine-readable registry, and in-band lifecycle headers.
+
 ## The handshake
 
 An administrator can turn the native Platform surface off with **Advanced → Native
