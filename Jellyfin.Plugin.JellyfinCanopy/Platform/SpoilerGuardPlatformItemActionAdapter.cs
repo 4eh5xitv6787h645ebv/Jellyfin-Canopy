@@ -18,15 +18,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
         }
 
+        /// <summary>Reads one exact accessible item's closed state and revision evidence.</summary>
+        public SpoilerGuardItemState GetState(
+            PlatformActor actor,
+            HostAccessibleItem item)
+        {
+            var mapped = Map(actor, item);
+            return _owner.GetState(mapped.Actor, mapped.Item);
+        }
+
         /// <summary>Configures one exact accessible item with one owner invocation.</summary>
         public SpoilerGuardItemActionResult Configure(
             PlatformActor actor,
             HostAccessibleItem item,
             SpoilerGuardItemConfiguration configuration)
         {
-            ArgumentNullException.ThrowIfNull(actor);
             ArgumentNullException.ThrowIfNull(configuration);
+            if (!configuration.ExpectedOverridesRevision.HasValue)
+            {
+                throw new ArgumentException(
+                    "The Platform mutation requires an override-revision precondition.",
+                    nameof(configuration));
+            }
 
+            var mapped = Map(actor, item);
+            return _owner.Configure(mapped.Actor, mapped.Item, configuration);
+        }
+
+        private static (SpoilerGuardActorProjection Actor, SpoilerGuardItemProjection Item) Map(
+            PlatformActor actor,
+            HostAccessibleItem item)
+        {
+            ArgumentNullException.ThrowIfNull(actor);
             var kind = item.Kind switch
             {
                 HostItemKind.Movie => SpoilerGuardItemKind.Movie,
@@ -36,10 +59,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     "The accessible item kind is not supported by Spoiler Guard."),
             };
 
-            return _owner.Configure(
+            return (
                 new SpoilerGuardActorProjection(actor.UserId),
-                SpoilerGuardItemProjection.CurrentAccessible(item.Id, kind, displayName: null),
-                configuration);
+                SpoilerGuardItemProjection.CurrentAccessible(
+                    item.Id,
+                    kind,
+                    displayName: null));
         }
     }
 }

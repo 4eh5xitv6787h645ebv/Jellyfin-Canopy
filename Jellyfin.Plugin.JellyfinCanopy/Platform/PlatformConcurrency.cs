@@ -18,6 +18,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     {
     }
 
+    /// <summary>
+    /// Marks a successful Platform representation that receives a strong validator
+    /// without acquiring GET cache or conditional-request semantics.
+    /// </summary>
+    /// <remarks>
+    /// Item-detail resolve is a POST because its bounded client capabilities are part
+    /// of the representation key. Its ETag still names the exact returned bytes, but a
+    /// matching <c>If-None-Match</c> must never turn that POST into a bodyless 304.
+    /// </remarks>
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
+    public sealed class PlatformValidatedRepresentationAttribute : Attribute
+    {
+    }
+
     /// <summary>The result of evaluating one conditional request header.</summary>
     internal enum PlatformPreconditionDecision
     {
@@ -54,7 +68,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ArgumentNullException.ThrowIfNull(context);
             ArgumentNullException.ThrowIfNull(next);
 
-            if (!IsCacheableAction(context.ActionDescriptor)
+            var cacheable = IsCacheableAction(context.ActionDescriptor);
+            var validated = IsValidatedRepresentationAction(context.ActionDescriptor);
+            if ((!cacheable && !validated)
                 || context.Result is not PlatformJsonBodyResult { StatusCode: StatusCodes.Status200OK } result)
             {
                 await next().ConfigureAwait(false);
@@ -62,6 +78,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
 
             var entityTag = CreateStrongEntityTag(result.Body);
+            if (validated && !cacheable)
+            {
+                context.HttpContext.Response.GetTypedHeaders().ETag = entityTag;
+                await next().ConfigureAwait(false);
+                return;
+            }
+
             var ifMatch = EvaluateIfMatch(context.HttpContext.Request.Headers.IfMatch, entityTag);
             if (ifMatch == PlatformPreconditionDecision.Invalid)
             {
@@ -172,6 +195,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private static bool IsCacheableAction(ActionDescriptor descriptor) =>
             descriptor is ControllerActionDescriptor controller
             && controller.MethodInfo.IsDefined(typeof(PlatformCacheableAttribute), inherit: true);
+
+        private static bool IsValidatedRepresentationAction(ActionDescriptor descriptor) =>
+            descriptor is ControllerActionDescriptor controller
+            && controller.MethodInfo.IsDefined(typeof(PlatformValidatedRepresentationAttribute), inherit: true);
 
         private static ParsedEntityTags Parse(StringValues header)
         {

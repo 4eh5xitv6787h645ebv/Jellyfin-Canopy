@@ -437,6 +437,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(PlatformAuditResultCode.AuthorityDenied, fixture.Audit.Snapshot()[^1].ResultCode);
         }
 
+        [Fact]
+        public async Task CurrentProviderProjectionDriftFailsBeforeSeerrOwnerOrReplay()
+        {
+            using var fixture = new Fixture();
+            var prepared = fixture.Prepare(PlatformOperationDefinition.SeerrRequestItem);
+            fixture.Host.ReturnedItem = new HostAccessibleItem(
+                fixture.Host.Item.Id,
+                fixture.Host.Item.Kind,
+                fixture.Host.Item.SeriesId,
+                [new HostProviderReference("Tmdb", "999")]);
+
+            var result = await fixture.Coordinator.InvokeAsync(
+                fixture.BoundaryActor,
+                fixture.Request(prepared.Capability!, "provider-drift", true),
+                NoCancellation());
+
+            Assert.Equal(404, result.Result.StatusCode);
+            Assert.Equal(0, fixture.Port.OwnerCalls);
+            Assert.Equal(PlatformAuditResultCode.AuthorityDenied, fixture.Audit.Snapshot()[^1].ResultCode);
+        }
+
         [Theory]
         [InlineData("caller", (int)PlatformAuditResultCode.CallerCancelled)]
         [InlineData("deadline", (int)PlatformAuditResultCode.DeadlineExceeded)]
@@ -707,6 +728,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 return PlatformActionPortAdmission.Admit(
                     new BooleanInput(enabled),
                     new[] { enabled ? (byte)1 : (byte)0 });
+            }
+
+            public Task<PlatformActionPortAdmission> ValidateCurrentAsync(
+                PlatformActor actor,
+                HostAccessibleItem item,
+                PlatformPreparedActionContext prepared,
+                ImmutableArray<PlatformActionAnswer> answers,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(ValidateCurrent(actor, item, prepared, answers));
             }
 
             public async Task<PlatformActionOwnerResult> InvokeAsync(

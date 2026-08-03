@@ -11,8 +11,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 /// <see cref="LiveNotifierService"/>. The marker key/value and the carrier
 /// command are the contract the client live hub (src/core/live.ts) filters on —
 /// the client only reacts to GeneralCommands whose Arguments carry
-/// <c>JellyfinCanopy = config-changed</c>, and native web clients must ignore
-/// the carrier command. The full StartAsync → ConfigurationChanged → send wiring
+/// <c>JellyfinCanopy = config-changed</c>, and Jellyfin web must ignore the
+/// carrier command itself. Opted-in Platform clients consume only the marker.
+/// The full StartAsync → ConfigurationChanged → send wiring
 /// is verified live (ISessionManager has 66 members; a full fake is impractical).
 /// </summary>
 public class LiveNotifierServiceTests
@@ -22,7 +23,7 @@ public class LiveNotifierServiceTests
     {
         var command = LiveNotifierService.BuildConfigChangedCommand("1.2.3.0");
 
-        // Carrier command must be the inert one native clients ignore.
+        // The command itself must remain inert; eligible clients consume the marker.
         Assert.Equal(LiveNotifierService.CarrierCommand, command.Name);
         // Marker the client filters on.
         Assert.Equal(LiveNotifierService.ConfigChangedValue, command.Arguments[LiveNotifierService.MarkerKey]);
@@ -58,7 +59,7 @@ public class LiveNotifierServiceTests
     /// triggers as of Jellyfin 12.0-rc2). The config-changed push rides a carrier command
     /// purely to smuggle its <c>JellyfinCanopy = config-changed</c> marker; it must NOT
     /// be any of these, or every config save would drive real UI (a toast, a nav, a volume
-    /// change, ...) on every connected client. Over-inclusive by design — a broader set only
+    /// change, ...) on every eligible client. Over-inclusive by design — a broader set only
     /// makes the guard stricter. <c>SetPlaybackOrder</c> is deliberately absent: it has no
     /// web handler, which is exactly why it is the inert carrier.
     /// </summary>
@@ -98,7 +99,7 @@ public class LiveNotifierServiceTests
         // DISJOINT from the set of commands jellyfin-web actually acts on. If a future
         // web version starts handling the carrier — or someone repoints CarrierCommand at
         // a handled command like DisplayMessage — the config-changed push would fire real
-        // client UI on every save, and this fails.
+        // client UI on eligible sessions instead of acting as an inert refetch marker.
         Assert.DoesNotContain(LiveNotifierService.CarrierCommand, WebHandledCommands);
     }
 

@@ -30,6 +30,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             public IActionResult Get() => new OkObjectResult(new { Value = 1 });
         }
 
+        private sealed class ValidatedPostController : PlatformControllerBase
+        {
+            [PlatformValidatedRepresentation]
+            public IActionResult Post() => new OkObjectResult(new { Value = 1 });
+        }
+
         [Fact]
         public async Task CacheableSuccessUsesStrongSha256OfExactWireBytes()
         {
@@ -71,6 +77,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Equal(StatusCodes.Status200OK, response.StatusCode);
             Assert.NotEmpty(Assert.IsType<MemoryStream>(response.Body).ToArray());
+        }
+
+        [Fact]
+        public async Task AvailabilityTransitionsProduceNewStrongRepresentationsInsteadOfStale304s()
+        {
+            var enabled = await RunDiscoveryAsync();
+            var disabled = await RunDiscoveryAsync(
+                ifNoneMatch: enabled.Headers.ETag.ToString(),
+                enabled: false);
+            var reenabled = await RunDiscoveryAsync(
+                ifNoneMatch: disabled.Headers.ETag.ToString(),
+                enabled: true);
+
+            Assert.Equal(StatusCodes.Status200OK, disabled.StatusCode);
+            Assert.Equal(StatusCodes.Status200OK, reenabled.StatusCode);
+            Assert.NotEqual(enabled.Headers.ETag.ToString(), disabled.Headers.ETag.ToString());
+            Assert.Equal(enabled.Headers.ETag.ToString(), reenabled.Headers.ETag.ToString());
+            using var disabledBody = JsonDocument.Parse(Assert.IsType<MemoryStream>(disabled.Body).ToArray());
+            using var enabledBody = JsonDocument.Parse(Assert.IsType<MemoryStream>(reenabled.Body).ToArray());
+            Assert.False(disabledBody.RootElement.GetProperty(nameof(PlatformDiscoveryResponse.Available)).GetBoolean());
+            Assert.True(enabledBody.RootElement.GetProperty(nameof(PlatformDiscoveryResponse.Available)).GetBoolean());
         }
 
         [Fact]
@@ -222,6 +249,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public async Task ValidatedPostGetsExactEtagButNeverGetStyleConditionalSemantics()
+        {
+            var controller = new ValidatedPostController();
+            var method = typeof(ValidatedPostController).GetMethod(nameof(ValidatedPostController.Post))!;
+            var first = await RunAsync(method, controller.Post());
+            var tag = first.Headers.ETag.ToString();
+
+            var matching = await RunAsync(
+                method,
+                controller.Post(),
+                ifMatch: "\"different\"",
+                ifNoneMatch: tag);
+
+            Assert.Equal(StatusCodes.Status200OK, first.StatusCode);
+            Assert.Matches("^\"sha256-[0-9a-f]{64}\"$", tag);
+            Assert.Equal(StatusCodes.Status200OK, matching.StatusCode);
+            Assert.Equal(tag, matching.Headers.ETag.ToString());
+            Assert.NotEmpty(Assert.IsType<MemoryStream>(matching.Body).ToArray());
+        }
+
+        [Fact]
         public async Task ErrorResultDoesNotGainAValidator()
         {
             var method = typeof(PlatformDiscoveryController).GetMethod(nameof(PlatformDiscoveryController.GetDiscovery))!;
@@ -264,6 +312,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             app.Run(async http =>
             {
                 var controller = new PlatformDiscoveryController();
+                controller.ControllerContext = new ControllerContext { HttpContext = http };
+                PlatformAvailabilityFilter.Record(http, enabled: true);
                 var result = Assert.IsType<OkObjectResult>(controller.GetDiscovery().Result);
                 var method = typeof(PlatformDiscoveryController)
                     .GetMethod(nameof(PlatformDiscoveryController.GetDiscovery))!;
@@ -286,9 +336,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             string? ifMatch = null,
             string? ifNoneMatch = null,
             string[]? ifMatchValues = null,
-            string[]? ifNoneMatchValues = null)
+            string[]? ifNoneMatchValues = null,
+            bool enabled = true)
         {
             var controller = new PlatformDiscoveryController();
+            var http = new DefaultHttpContext();
+            controller.ControllerContext = new ControllerContext { HttpContext = http };
+            PlatformAvailabilityFilter.Record(http, enabled);
             var action = Assert.IsType<OkObjectResult>(controller.GetDiscovery().Result);
             var method = typeof(PlatformDiscoveryController).GetMethod(nameof(PlatformDiscoveryController.GetDiscovery))!;
             return await RunAsync(method, action, ifMatch, ifNoneMatch, ifMatchValues, ifNoneMatchValues);

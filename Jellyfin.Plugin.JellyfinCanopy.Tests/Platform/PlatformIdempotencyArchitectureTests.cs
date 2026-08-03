@@ -23,6 +23,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             ["PlatformActionAdmissionLimiter.cs:_gates"] = "The reviewed fixed-cap actor/operation admission owner.",
             ["PlatformErrorCode.cs:Definitions"] = "Immutable error-code definition table, not request state.",
             ["PlatformIdempotencyStore.cs:_entries"] = "The sole reviewed bounded idempotency state owner.",
+            ["PlatformPrepareHandleOwner.cs:_byActor"] = "The reviewed 24-per-actor prepare-handle eviction index.",
+            ["PlatformPrepareHandleOwner.cs:_byHandle"] = "The reviewed fixed-cap opaque prepare-handle owner.",
+            ["PlatformPrepareHandleOwner.cs:_bySemantic"] = "The reviewed stable semantic prepare-handle reuse index.",
             ["PlatformPreparedActionContextOwner.cs:_entries"] = "The reviewed fixed-cap prepared action context owner.",
         };
 

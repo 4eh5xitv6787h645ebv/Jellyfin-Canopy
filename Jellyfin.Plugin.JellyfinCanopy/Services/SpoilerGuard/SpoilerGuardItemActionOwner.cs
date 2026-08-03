@@ -90,10 +90,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// <summary>The validated desired state for the v1 installed-item configuration owner.</summary>
     public sealed class SpoilerGuardItemConfiguration
     {
-        internal SpoilerGuardItemConfiguration(bool enabled) => Enabled = enabled;
+        internal SpoilerGuardItemConfiguration(bool enabled)
+            : this(enabled, expectedOverridesRevision: null)
+        {
+        }
+
+        private SpoilerGuardItemConfiguration(bool enabled, long? expectedOverridesRevision)
+        {
+            Enabled = enabled;
+            ExpectedOverridesRevision = expectedOverridesRevision;
+        }
 
         /// <summary>Gets whether Spoiler Guard should be enabled for the item.</summary>
         public bool Enabled { get; }
+
+        /// <summary>Gets the exact override-resource revision required by a native mutation.</summary>
+        public long? ExpectedOverridesRevision { get; }
+
+        /// <summary>Creates one revision-checked native item configuration.</summary>
+        internal static SpoilerGuardItemConfiguration Exact(
+            bool enabled,
+            long expectedOverridesRevision)
+        {
+            if (expectedOverridesRevision < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(expectedOverridesRevision));
+            }
+
+            return new SpoilerGuardItemConfiguration(enabled, expectedOverridesRevision);
+        }
     }
 
     /// <summary>The closed semantic outcomes returned by the shared item owner.</summary>
@@ -104,6 +129,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         /// <summary>A new entry could not be admitted because its dictionary is full.</summary>
         CapacityExceeded,
+
+        /// <summary>The current override revision did not match the native precondition.</summary>
+        RevisionConflict,
     }
 
     /// <summary>HTTP-independent evidence returned by one owner invocation.</summary>
@@ -167,6 +195,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 removed: false,
                 revision,
                 category);
+
+        internal static SpoilerGuardItemActionResult RevisionConflict(
+            bool enabled,
+            long revision)
+            => new(
+                SpoilerGuardItemActionOutcome.RevisionConflict,
+                enabled,
+                changed: false,
+                removed: false,
+                revision,
+                capacityCategory: null);
+    }
+
+    /// <summary>Minimal closed state released for one current accessible item.</summary>
+    public sealed class SpoilerGuardItemState
+    {
+        internal SpoilerGuardItemState(bool enabled, long overridesRevision)
+        {
+            Enabled = enabled;
+            OverridesRevision = overridesRevision;
+        }
+
+        /// <summary>Gets whether the exact item is currently protected.</summary>
+        public bool Enabled { get; }
+
+        /// <summary>Gets the actor's monotonic override-resource revision.</summary>
+        public long OverridesRevision { get; }
     }
 
     /// <summary>
@@ -176,6 +231,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// </summary>
     public interface ISpoilerGuardItemActionOwner
     {
+        /// <summary>Reads one current accessible item's closed state and revision evidence.</summary>
+        SpoilerGuardItemState GetState(
+            SpoilerGuardActorProjection actor,
+            SpoilerGuardItemProjection item);
+
         /// <summary>Applies one validated desired state for the authoritative actor and item.</summary>
         SpoilerGuardItemActionResult Configure(
             SpoilerGuardActorProjection actor,
@@ -205,13 +265,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         /// <inheritdoc />
+        public SpoilerGuardItemState GetState(
+            SpoilerGuardActorProjection actor,
+            SpoilerGuardItemProjection item)
+        {
+            ValidateArguments(actor, item);
+            if (item.ActorOwnedRemovalOnly)
+            {
+                throw new ArgumentException(
+                    "A current state read requires an accessible item projection.",
+                    nameof(item));
+            }
+
+            var userKey = actor.UserId.ToString("N");
+            var read = _userConfigurationManager.ReadUserConfiguration<UserSpoilerBlur>(
+                userKey,
+                SpoilerBlurImageFilter.SpoilerBlurFileName);
+            if (!read.HasUsableValue
+                || read.Value == null
+                || !PersistedPayloadPolicy.ValidateMutationSource(read.Value).IsValid)
+            {
+                throw new System.IO.IOException("Spoiler Guard state is unavailable.");
+            }
+
+            var state = read.Value;
+            return new SpoilerGuardItemState(
+                IsEnabled(state, item),
+                state.OverridesRevision);
+        }
+
+        /// <inheritdoc />
         public SpoilerGuardItemActionResult Configure(
             SpoilerGuardActorProjection actor,
             SpoilerGuardItemProjection item,
             SpoilerGuardItemConfiguration configuration)
         {
-            ArgumentNullException.ThrowIfNull(actor);
-            ArgumentNullException.ThrowIfNull(item);
+            ValidateArguments(actor, item);
             ArgumentNullException.ThrowIfNull(configuration);
 
             if (item.ActorOwnedRemovalOnly && configuration.Enabled)
@@ -221,11 +310,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     nameof(item));
             }
 
+            if (item.ActorOwnedRemovalOnly && configuration.ExpectedOverridesRevision.HasValue)
+            {
+                throw new ArgumentException(
+                    "A revision-checked mutation requires an accessible item projection.",
+                    nameof(item));
+            }
+
             var userKey = actor.UserId.ToString("N");
             var itemKey = item.ItemId.ToString("N");
             var changed = false;
             var removed = false;
             var capacityExceeded = false;
+            var revisionConflict = false;
+            var currentEnabled = false;
             var revision = 0L;
 
             _userConfigurationManager.RmwUserConfiguration<UserSpoilerBlur>(
@@ -233,6 +331,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 SpoilerBlurImageFilter.SpoilerBlurFileName,
                 state =>
                 {
+                    currentEnabled = IsEnabled(state, item);
+                    revision = state.OverridesRevision;
+                    if (configuration.ExpectedOverridesRevision is long expectedRevision
+                        && revision != expectedRevision)
+                    {
+                        revisionConflict = true;
+                        return 0;
+                    }
+
                     if (configuration.Enabled)
                     {
                         changed = Enable(state, item, itemKey, ref capacityExceeded);
@@ -264,6 +371,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     item.Kind == SpoilerGuardItemKind.Series ? "series" : "movies");
             }
 
+            if (revisionConflict)
+            {
+                return SpoilerGuardItemActionResult.RevisionConflict(currentEnabled, revision);
+            }
+
             // A completed strict RMW proves the policy graph is currently readable and
             // valid. Invalidate even for an idempotent no-op so stale fail-closed/LKG
             // enforcement state cannot linger after a successful mutation probe.
@@ -273,6 +385,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 changed,
                 removed,
                 revision);
+        }
+
+        private static bool IsEnabled(
+            UserSpoilerBlur state,
+            SpoilerGuardItemProjection item)
+        {
+            var itemKey = item.ItemId.ToString("N");
+            return item.Kind switch
+            {
+                SpoilerGuardItemKind.Series => state.Series.ContainsKey(itemKey),
+                SpoilerGuardItemKind.Movie => state.Movies.ContainsKey(itemKey),
+                _ => throw new ArgumentOutOfRangeException(nameof(item)),
+            };
+        }
+
+        private static void ValidateArguments(
+            SpoilerGuardActorProjection actor,
+            SpoilerGuardItemProjection item)
+        {
+            ArgumentNullException.ThrowIfNull(actor);
+            ArgumentNullException.ThrowIfNull(item);
         }
 
         private bool Enable(

@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 34753,
-        "totalLines": 43927
+        "coveredLines": 37095,
+        "totalLines": 46442
       },
       "observations": {
-        "cleanRuns": 6,
-        "minimumCoveredLines": 34751,
-        "maximumCoveredLines": 34753
+        "cleanRuns": 4,
+        "minimumCoveredLines": 37095,
+        "maximumCoveredLines": 37095
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The rebased combined #592 and #595 tree retains the transport-neutral first-party invocation coordinator and installed Hidden Content, Spoiler Guard, and typed Seerr owners, then adds a test-owned native pilot conformance matrix over the real actor, body, lifecycle, capability, prepared-context, idempotency, admission, audit, fixed-dispatch, and coordinator components. The matrix includes authentic wrong-operation mismatch, lifecycle-filter cancellation arbitration, observable redaction surfaces, and direct capability-ledger, idempotency, and admission capacity negatives without adding production lines or changing the 43,927-line instrumented plugin scope. Three clean local Coverlet runs on the identical 2026-08-03 combined server source each passed all 3,075 server tests and reproduced exactly 34,752/43,927 covered lines (79.113%); the clean GitHub Actions Linux run passed the same 3,075 tests and measured 34,751/43,927 (79.111%). Rebasing onto #613 changes only client TypeScript, leaving the instrumented server source, server tests, and total-line scope identical; two additional clean .NET 10.0.9 runs passed all 3,075 tests and observed 34,753/43,927 and 34,752/43,927 covered lines, including the new 34,753 high-water (79.115%). Relative to merged #595 main's reviewed high-water of 34,744/43,927 (79.095%), #592 raises the covered-line high-water by nine at fixed scope. The exact observed six-run envelope is 34,751-34,753, so the two-line instrumentation tolerance retains the existing floor of 34,751/43,927 (79.111%) rather than lowering it. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "The previous 37,089-37,091/46,435 envelope was disproved by GitHub Actions Unit tests job 91614321192 at exact head 3517a2f0e43efe975852b571899c8002e763b436: all 3,288 tests passed, but Coverlet measured 37,080/46,435. A retained constrained reproduction compared with a retained 37,089 report on the identical source and scope found exactly nine missing lines and no gains: SpoilerSeerrPendingPromoter.cs lines 769 and 771-777, whose exception contract had only incidental coverage when a lifecycle fake happened to throw, and ReviewsStore.cs line 216, whose inner readiness return depended on initialization contenders accidentally passing the outer check together. An explicit library-lookup-failure test now pins the promoter's fail-closed StillPending result. A test-only post-check seam plus a two-caller barrier deterministically makes the second review-store caller observe completed initialization under the lock. The previously documented ImageBlurService.cs line 740 race is also fixed as coverage evidence: its test-only cancellation seam holds the final participant until the background flight completes, then exercises the cancellation-completion disposal branch on every run. Four clean .NET 10.0.9 Coverlet runs on the final identical 46,442-line scope each passed all 3,290 tests and reproduced exactly 37,095/46,442 (79.874%); three used the ordinary unconstrained runner, and the fourth reproduced the former low condition with DOTNET_PROCESSOR_COUNT=2 on one pinned CPU. The two narrow concurrency seams account for the seven-line scope increase; the meaningful exception, double-check, and cancellation outcomes are now explicit deterministic tests rather than scheduler side effects. The maintained floor and reviewed high-water are both 37,095/46,442 with zero tolerance. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

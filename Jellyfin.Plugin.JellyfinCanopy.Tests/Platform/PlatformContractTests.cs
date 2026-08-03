@@ -169,6 +169,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         [Theory]
         [InlineData(nameof(PlatformDiscoveryResponse), typeof(PlatformDiscoveryResponse))]
         [InlineData(nameof(PlatformNegotiationResponse), typeof(PlatformNegotiationResponse))]
+        [InlineData(nameof(PlatformItemDetailResolveResponse), typeof(PlatformItemDetailResolveResponse))]
+        [InlineData(nameof(PlatformNativeContribution), typeof(PlatformNativeContribution))]
+        [InlineData(nameof(PlatformActionPrepareResponse), typeof(PlatformActionPrepareResponse))]
+        [InlineData(nameof(PlatformNativeField), typeof(PlatformNativeField))]
+        [InlineData(nameof(PlatformNativeOption), typeof(PlatformNativeOption))]
         [InlineData(nameof(PlatformError), typeof(PlatformError))]
         public void SchemasDoNotDriftFromTheTypesTheyDescribe(string schemaName, Type type)
         {
@@ -239,6 +244,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public void NativeInvokeBodyIdempotencyContractMatchesTheSharedParserBounds()
+        {
+            var schema = Spec.RootElement.GetProperty("components").GetProperty("schemas")
+                .GetProperty("PlatformActionInvokeRequest").GetProperty("properties")
+                .GetProperty("IdempotencyKey");
+
+            Assert.Equal(1, schema.GetProperty("minLength").GetInt32());
+            Assert.Equal(PlatformIdempotencyKey.MaximumLength, schema.GetProperty("maxLength").GetInt32());
+            Assert.Equal("^[A-Za-z0-9._~-]+$", schema.GetProperty("pattern").GetString());
+
+            var operation = Spec.RootElement.GetProperty("paths")
+                .GetProperty("/JellyfinCanopy/Platform/v1/actions/invoke")
+                .GetProperty("post");
+            Assert.False(operation.TryGetProperty("parameters", out var parameters)
+                && parameters.EnumerateArray().Any(parameter =>
+                    parameter.TryGetProperty("$ref", out var reference)
+                    && reference.GetString() == "#/components/parameters/IdempotencyKey"));
+        }
+
+        [Fact]
+        public void NativeCatalogSchemaPinsTheReviewedCollectionBounds()
+        {
+            var schemas = Spec.RootElement.GetProperty("components").GetProperty("schemas");
+            Assert.Equal(
+                PlatformNativeCatalogBounds.MaximumContributions,
+                schemas.GetProperty("PlatformItemDetailResolveResponse")
+                    .GetProperty("properties").GetProperty("Contributions")
+                    .GetProperty("maxItems").GetInt32());
+            Assert.Equal(
+                PlatformNativeCatalogBounds.MaximumFields,
+                schemas.GetProperty("PlatformActionPrepareResponse")
+                    .GetProperty("properties").GetProperty("Fields")
+                    .GetProperty("maxItems").GetInt32());
+            Assert.Equal(
+                PlatformNativeCatalogBounds.MaximumOptions,
+                schemas.GetProperty("PlatformNativeField")
+                    .GetProperty("properties").GetProperty("Options")
+                    .GetProperty("maxItems").GetInt32());
+            Assert.Equal(
+                PlatformActionInvokeRequestConverter.MaximumAnswers,
+                schemas.GetProperty("PlatformActionInvokeRequest")
+                    .GetProperty("properties").GetProperty("Answers")
+                    .GetProperty("maxItems").GetInt32());
+        }
+
+        [Fact]
         public void EveryPlatformOperationDocumentsTheKernelTimeoutResponse()
         {
             var timeout = Spec.RootElement.GetProperty("components").GetProperty("responses")
@@ -266,6 +317,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .Select(route => $"{route.Method} {route.Path}")
                 .OrderBy(route => route, StringComparer.Ordinal);
             var documentedCacheable = SpecOperations()
+                .Where(entry => !entry.Operation.TryGetProperty(
+                    "x-canopy-validated-representation",
+                    out var validated)
+                    || !validated.GetBoolean())
                 .Where(entry => entry.Operation.GetProperty("responses").GetProperty("200")
                     .TryGetProperty("headers", out var headers)
                     && headers.TryGetProperty("ETag", out _))
@@ -308,6 +363,47 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.True(components.TryGetProperty("IdempotencyAtCapacity", out _));
         }
 
+        [Fact]
+        public void ValidatedPostRepresentationsDocumentExactByteValidatorsWithoutGetSemantics()
+        {
+            var validated = LiveRoutes()
+                .Where(route => route.Action.GetCustomAttribute<PlatformValidatedRepresentationAttribute>() is not null)
+                .ToList();
+            Assert.NotEmpty(validated);
+            Assert.All(validated, route => Assert.Equal("post", route.Method));
+
+            var liveValidated = validated
+                .Select(route => $"{route.Method} {route.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            var documentedValidated = SpecOperations()
+                .Where(entry => entry.Operation.TryGetProperty(
+                    "x-canopy-validated-representation",
+                    out var marker)
+                    && marker.GetBoolean())
+                .Select(entry => $"{entry.Method} {entry.Path}")
+                .OrderBy(route => route, StringComparer.Ordinal);
+            Assert.Equal(liveValidated, documentedValidated);
+
+            foreach (var route in validated)
+            {
+                var operation = SpecOperations().Single(entry =>
+                    string.Equals(entry.Path, route.Path, StringComparison.Ordinal)
+                    && string.Equals(entry.Method, route.Method, StringComparison.Ordinal)).Operation;
+                var responses = operation.GetProperty("responses");
+                Assert.Equal(
+                    "#/components/headers/PlatformEntityTag",
+                    responses.GetProperty("200").GetProperty("headers")
+                        .GetProperty("ETag").GetProperty("$ref").GetString());
+                Assert.False(responses.TryGetProperty("304", out _));
+                Assert.False(operation.TryGetProperty("parameters", out var parameters)
+                    && parameters.EnumerateArray().Any(parameter =>
+                        parameter.TryGetProperty("$ref", out var reference)
+                        && reference.GetString()!.StartsWith(
+                            "#/components/parameters/If",
+                            StringComparison.Ordinal)));
+            }
+        }
+
         [Theory]
         [InlineData("IdempotencyConflict")]
         [InlineData("IdempotencyAtCapacity")]
@@ -324,6 +420,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
         [Theory]
         [InlineData("discovery.200.json", typeof(PlatformDiscoveryResponse))]
+        [InlineData("discovery.disabled.200.json", typeof(PlatformDiscoveryResponse))]
         [InlineData("negotiate.200.compatible.json", typeof(PlatformNegotiationResponse))]
         [InlineData("negotiate.200.incompatible.json", typeof(PlatformNegotiationResponse))]
         [InlineData("error.413.json", typeof(PlatformError))]
@@ -349,6 +446,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public void EveryAuthenticatedPlatformOperationDocumentsTheAdministrativeUnavailableGate()
+        {
+            var unavailable = Spec.RootElement.GetProperty("components").GetProperty("responses")
+                .GetProperty("Unavailable");
+            Assert.Equal(
+                "no-store",
+                unavailable.GetProperty("headers").GetProperty("Cache-Control")
+                    .GetProperty("schema").GetProperty("const").GetString());
+            Assert.Equal(
+                "^[0-9a-f]{32}$",
+                unavailable.GetProperty("headers").GetProperty("X-Correlation-Id")
+                    .GetProperty("schema").GetProperty("pattern").GetString());
+
+            var authenticated = SpecOperations().Where(operation =>
+                !operation.Operation.TryGetProperty("security", out var security)
+                || security.GetArrayLength() != 0);
+
+            Assert.All(authenticated, operation => Assert.Equal(
+                "#/components/responses/Unavailable",
+                operation.Operation.GetProperty("responses").GetProperty("503").GetProperty("$ref").GetString()));
+        }
+
+        [Fact]
         public void TheErrorFixtureUsesADocumentedCodeAndAConformingCorrelationId()
         {
             var error = JsonSerializer.Deserialize<PlatformError>(
@@ -362,6 +482,88 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             // The example must satisfy the pattern the spec advertises, or a consumer
             // validating against the spec rejects our own documentation.
             Assert.Matches("^[0-9a-f]{32}$", error.CorrelationId);
+        }
+
+        [Fact]
+        public void NativeInvokeFixturePinsTheExactAndroidSuccessShape()
+        {
+            using var fixture = JsonDocument.Parse(File.ReadAllText(ContractPath(
+                Path.Combine("fixtures", "invoke.native-action.200.json"))));
+            var root = fixture.RootElement;
+            Assert.Equal("succeeded", root.GetProperty("Outcome").GetString());
+            Assert.Equal("Item hidden", root.GetProperty("Message").GetProperty("Text").GetString());
+            Assert.Equal("positive", root.GetProperty("Message").GetProperty("Tone").GetString());
+            Assert.Equal(
+                new[] { "jellyfin_item", "item_detail_surface" },
+                root.GetProperty("Refresh").GetProperty("Targets")
+                    .EnumerateArray().Select(value => value.GetString()));
+            Assert.Equal(3, root.EnumerateObject().Count());
+        }
+
+        [Fact]
+        public void NativeResolveFixtureMatchesTheRealServerSerializer()
+        {
+            var response = new PlatformItemDetailResolveResponse(
+                "catalog-v1-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                [
+                    PlatformNativeContribution.Action(
+                        "spoiler-guard-configure",
+                        "Configure Spoiler Guard",
+                        "Choose whether Canopy protects this item.",
+                        "shield",
+                        enabled: true,
+                        "opaque-prepare-handle"),
+                    PlatformNativeContribution.Status(
+                        "seerr-status",
+                        "Seerr: Standard pending",
+                        "warning"),
+                ]);
+
+            AssertFixtureEqualsSerialized("resolve.item-detail.200.json", response);
+        }
+
+        [Fact]
+        public void NativePrepareFixtureMatchesTheRealServerSerializer()
+        {
+            var response = new PlatformActionPrepareResponse(
+                "opaque-invoke-capability",
+                DateTimeOffset.Parse("2026-08-03T00:00:00Z"),
+                "Configure Hidden Content",
+                "Apply",
+                "Cancel",
+                [
+                    PlatformNativeField.Boolean(
+                        "hidden",
+                        "Hide this item",
+                        "Canopy applies this only to the selected filtering scope.",
+                        required: true,
+                        defaultChecked: false),
+                    PlatformNativeField.SingleSelect(
+                        "scope",
+                        "Filtering scope",
+                        null,
+                        required: true,
+                        [
+                            new PlatformNativeOption("global", "Every enabled surface"),
+                            new PlatformNativeOption("continue_watching", "Continue Watching"),
+                        ],
+                        "global"),
+                ]);
+
+            AssertFixtureEqualsSerialized("prepare.native-action.200.json", response);
+        }
+
+        private static void AssertFixtureEqualsSerialized<T>(string fixtureName, T value)
+        {
+            using var expected = JsonDocument.Parse(File.ReadAllText(ContractPath(
+                Path.Combine("fixtures", fixtureName))));
+            using var actual = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(
+                value,
+                PlatformJson.SerializerOptions));
+            Assert.True(
+                JsonElement.DeepEquals(expected.RootElement, actual.RootElement),
+                $"{fixtureName} does not match the exact Platform serializer output.\nExpected: "
+                    + expected.RootElement + "\nActual: " + actual.RootElement);
         }
 
         [Fact]

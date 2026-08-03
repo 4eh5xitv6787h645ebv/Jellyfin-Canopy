@@ -1,0 +1,20 @@
+{
+  "CatalogRevision": "catalog-v1-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "Contributions": [
+    {
+      "Id": "spoiler-guard-configure",
+      "Kind": "action",
+      "Label": "Configure Spoiler Guard",
+      "Description": "Choose whether Canopy protects this item.",
+      "SemanticIcon": "shield",
+      "Enabled": true,
+      "PrepareHandle": "opaque-prepare-handle"
+    },
+    {
+      "Id": "seerr-status",
+      "Kind": "status",
+      "Label": "Seerr: Standard pending",
+      "Tone": "warning"
+    }
+  ]
+}

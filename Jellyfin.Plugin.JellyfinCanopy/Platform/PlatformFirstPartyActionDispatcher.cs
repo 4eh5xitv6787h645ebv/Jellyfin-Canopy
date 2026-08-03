@@ -127,11 +127,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
     internal interface ISeerrPlatformActionPort
     {
-        PlatformActionPortAdmission ValidateCurrent(
+        Task<PlatformActionPortAdmission> ValidateCurrentAsync(
             PlatformActor actor,
             HostAccessibleItem item,
             PlatformPreparedActionContext prepared,
-            System.Collections.Immutable.ImmutableArray<PlatformActionAnswer> answers);
+            System.Collections.Immutable.ImmutableArray<PlatformActionAnswer> answers,
+            CancellationToken cancellationToken);
 
         Task<PlatformActionOwnerResult> InvokeAsync(
             PlatformActor actor,
@@ -161,29 +162,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             _seerr = seerr ?? throw new ArgumentNullException(nameof(seerr));
         }
 
-        internal PlatformActionPortAdmission ValidateCurrent(
+        internal Task<PlatformActionPortAdmission> ValidateCurrentAsync(
             PlatformOperationDefinition definition,
             PlatformActor actor,
             HostAccessibleItem item,
             PlatformPreparedActionContext prepared,
-            System.Collections.Immutable.ImmutableArray<PlatformActionAnswer> answers)
+            System.Collections.Immutable.ImmutableArray<PlatformActionAnswer> answers,
+            CancellationToken cancellationToken)
         {
             if (ReferenceEquals(definition, PlatformOperationDefinition.SpoilerGuardConfigureItem))
             {
-                return _spoilerGuard.ValidateCurrent(actor, item, prepared, answers);
+                return Task.FromResult(_spoilerGuard.ValidateCurrent(actor, item, prepared, answers));
             }
 
             if (ReferenceEquals(definition, PlatformOperationDefinition.HiddenContentConfigureItem))
             {
-                return _hiddenContent.ValidateCurrent(actor, item, prepared, answers);
+                return Task.FromResult(_hiddenContent.ValidateCurrent(actor, item, prepared, answers));
             }
 
             if (ReferenceEquals(definition, PlatformOperationDefinition.SeerrRequestItem))
             {
-                return _seerr.ValidateCurrent(actor, item, prepared, answers);
+                return _seerr.ValidateCurrentAsync(actor, item, prepared, answers, cancellationToken);
             }
 
-            return PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.UnknownOwner);
+            return Task.FromResult(PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.UnknownOwner));
         }
 
         internal Task<PlatformActionOwnerResult> InvokeAsync(

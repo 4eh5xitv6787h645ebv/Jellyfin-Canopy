@@ -263,7 +263,7 @@ If a settings, shortcuts, Elsewhere, or Hidden Content write ends without proof 
 
 The first installation over a Canopy version that predates Smart Client Refresh cannot add automatic safety logic to JavaScript already running in an open page. Those legacy pages keep their existing update prompt: while visible, their compatibility heartbeat notices the replacement within its 15-minute interval and asks the user to refresh once. After that one reload, future changes use the automatic safe-point behavior above. A legacy page that is fully suspended cannot receive any browser-side signal until it runs again.
 
-This applies wherever the Canopy web client is actually loaded: desktop/mobile browsers and Jellyfin app WebViews. A fully native client UI that does not execute Canopy has no Canopy page for the plugin to refresh.
+This applies wherever the Canopy web client is actually loaded: desktop/mobile browsers and Jellyfin app WebViews. A fully native client UI that does not execute Canopy has no Canopy page for the plugin to refresh. A native client that explicitly participates in the Platform item-detail surface may receive the existing inert config-changed marker solely as a signal to refetch authoritative catalog state; it does not gain a Canopy page or Smart Refresh behavior.
 
 ### Client Layout Enforcement
 

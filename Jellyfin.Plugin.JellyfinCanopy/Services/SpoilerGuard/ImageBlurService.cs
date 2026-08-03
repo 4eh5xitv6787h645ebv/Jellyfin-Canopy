@@ -142,7 +142,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             while (true)
             {
-                var candidate = new TransformFlight();
+                var candidate = new TransformFlight(AfterFlightCancellationForTest);
                 var flight = _transformFlights.GetOrAdd(transformKey, candidate);
                 if (!ReferenceEquals(flight, candidate))
                 {
@@ -605,6 +605,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         internal int RejectedSourceCountForTest => Volatile.Read(ref _rejectedSourceCount);
 
+        /// <summary>Test seam for fixing cancellation-completion ordering before disposal.</summary>
+        internal Action? AfterFlightCancellationForTest { get; set; }
+
         private void StoreInCache(string key, byte[] bytes)
         {
             var entry = new CacheEntry
@@ -676,12 +679,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             private readonly object _gate = new();
             private readonly CancellationTokenSource _cancellation = new();
+            private readonly Action? _afterCancellationForTest;
             private int _participants;
             private bool _accepting = true;
             private bool _complete;
             private bool _disposed;
             private bool _cancellationRequested;
             private bool _cancellationCompleted;
+
+            public TransformFlight(Action? afterCancellationForTest)
+            {
+                _afterCancellationForTest = afterCancellationForTest;
+            }
 
             public TaskCompletionSource<SpoilerTransformResult> Completion { get; } = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -732,6 +741,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (cancel)
                 {
                     _cancellation.Cancel();
+                    _afterCancellationForTest?.Invoke();
                     lock (_gate)
                     {
                         _cancellationCompleted = true;

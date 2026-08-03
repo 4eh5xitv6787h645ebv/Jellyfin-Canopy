@@ -28,6 +28,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         private volatile bool _ready;
         private Exception? _initializationError;
 
+        /// <summary>Test seam for pausing callers after the lock-free readiness check.</summary>
+        internal Action? BeforeInitializationLockForTest { get; set; }
+
         public ReviewsStore(string configBaseDir, ILogger logger)
         {
             _configBaseDir = configBaseDir;
@@ -209,6 +212,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 return;
             }
 
+            BeforeInitializationLockForTest?.Invoke();
             lock (InitializationLock)
             {
                 if (_ready)
@@ -711,17 +715,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             => Directory.GetFiles(_configBaseDir, DatabaseFileName + ".backup-*")
                 .Any(path => !path.EndsWith(".tmp", StringComparison.Ordinal));
 
-        private string NextCorruptGroupSuffix()
-        {
-            var suffix = ".corrupt-" + UtcStamp();
-            while (new[] { DatabasePath, DatabasePath + "-wal", DatabasePath + "-shm" }
-                   .Any(path => File.Exists(path + suffix)))
-            {
-                suffix = ".corrupt-" + UtcStamp() + "-" + Guid.NewGuid().ToString("N");
-            }
-
-            return suffix;
-        }
+        private static string NextCorruptGroupSuffix()
+            => ".corrupt-" + UtcStamp() + "-" + Guid.NewGuid().ToString("N");
 
         private bool TryRestoreLatestBackup()
         {

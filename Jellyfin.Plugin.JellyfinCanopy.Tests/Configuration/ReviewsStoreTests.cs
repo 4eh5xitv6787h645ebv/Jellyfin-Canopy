@@ -146,6 +146,34 @@ public sealed class ReviewsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentFirstReads_SecondCallerObservesCompletedInitializationUnderLock()
+    {
+        var store = new ReviewsStore(ConfigDir, NullLogger<ReviewsStore>.Instance);
+        using var callersPastOuterCheck = new CountdownEvent(2);
+        using var releaseInitialization = new ManualResetEventSlim();
+        store.BeforeInitializationLockForTest = () =>
+        {
+            callersPastOuterCheck.Signal();
+            if (!releaseInitialization.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Concurrent review-store initialization was not released.");
+            }
+        };
+
+        var first = Task.Run(store.GetStatus);
+        var second = Task.Run(store.GetStatus);
+        Assert.True(
+            callersPastOuterCheck.Wait(TimeSpan.FromSeconds(5)),
+            "Both callers must pass the outer readiness check before either acquires the initialization lock.");
+
+        releaseInitialization.Set();
+        var statuses = await Task.WhenAll(first, second);
+
+        Assert.All(statuses, status => Assert.Equal(0, status.TotalReviews));
+        Assert.True(File.Exists(Path.Combine(ConfigDir, "reviews.db")));
+    }
+
+    [Fact]
     public void ItemAndModerationPages_AreBoundedStableAndComplete()
     {
         const int count = 205;
@@ -164,6 +192,54 @@ public sealed class ReviewsStoreTests : IDisposable
         Assert.Equal(count, itemReviews.Count);
         Assert.Equal(count, itemReviews.Select(review => review.UserId).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(count, moderationReviews.Count);
+    }
+
+    [Fact]
+    public void ImmediateQuarantineGroups_AreUniqueAndRetainNewestFive()
+    {
+        Directory.CreateDirectory(ConfigDir);
+        var manager = Manager();
+        var store = typeof(UserConfigurationManager)
+            .GetField("_reviews", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(manager)!;
+        var quarantine = store.GetType()
+            .GetMethod("MoveCorruptDatabaseGroup", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var database = Path.Combine(ConfigDir, "reviews.db");
+        var observedSuffixes = new List<string>();
+
+        for (var index = 0; index < ReviewLimits.RetainedBackups + 2; index++)
+        {
+            var before = Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*")
+                .ToHashSet(StringComparer.Ordinal);
+            File.WriteAllText(database, $"primary-{index}");
+            File.WriteAllText(database + "-wal", $"wal-{index}");
+            File.WriteAllText(database + "-shm", $"shm-{index}");
+            var modified = DateTime.UnixEpoch.AddMinutes(index);
+            File.SetLastWriteTimeUtc(database, modified);
+            File.SetLastWriteTimeUtc(database + "-wal", modified);
+            File.SetLastWriteTimeUtc(database + "-shm", modified);
+
+            quarantine.Invoke(store, null);
+
+            var after = Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*");
+            var created = Assert.Single(after, path => !before.Contains(path));
+            var suffix = created[database.Length..];
+            Assert.Matches(@"^\.corrupt-\d{17}-[0-9a-f]{32}$", suffix);
+            Assert.DoesNotContain(suffix, observedSuffixes);
+            observedSuffixes.Add(suffix);
+            Assert.True(File.Exists(database + "-wal" + suffix));
+            Assert.True(File.Exists(database + "-shm" + suffix));
+        }
+
+        Assert.Equal(ReviewLimits.RetainedBackups + 2, observedSuffixes.Count);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*").Length);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db-wal.corrupt-*").Length);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db-shm.corrupt-*").Length);
+        Assert.Equal(
+            observedSuffixes.Skip(2).Order(StringComparer.Ordinal),
+            Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*")
+                .Select(path => path[database.Length..])
+                .Order(StringComparer.Ordinal));
     }
 
     [Fact]

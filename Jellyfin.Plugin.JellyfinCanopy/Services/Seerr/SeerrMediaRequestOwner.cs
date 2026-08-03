@@ -132,12 +132,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             CancellationToken cancellationToken);
     }
 
-    internal enum SeerrMediaRequestKind
-    {
-        Movie,
-        Series,
-    }
-
     internal enum SeerrRequestIdentityStatus
     {
         Found,
@@ -242,7 +236,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (!TryProjectTarget(item, out var target))
+            if (!SeerrMediaTargetPolicy.TryProject(item, out var target))
             {
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.InvalidTarget);
             }
@@ -375,7 +369,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 || (actor.IsElevated && !currentUser.Value.IsAdministrator)
                 || currentAccess.Item is not HostAccessibleItem currentItem
                 || !SameAuthoritativeItem(item, currentItem)
-                || !TryProjectTarget(currentItem, out var currentTarget)
+                || !SeerrMediaTargetPolicy.TryProject(currentItem, out var currentTarget)
                 || !target.Equals(currentTarget))
             {
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.HostAuthorizationChanged);
@@ -462,7 +456,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         private static SeerrMediaRequestResult? ValidateIdentity(
             SeerrRequestIdentityResolution resolution,
             string[] configuredSources,
-            RequestTarget target,
+            SeerrMediaTarget target,
             SeerrMediaRequestVariant variant,
             bool isAdministrator,
             out SeerrRequestIdentity identity)
@@ -488,7 +482,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.IdentityUnavailable);
             }
 
-            if (!isAdministrator && !HasPermission(identity.Permissions, target.Kind, variant))
+            if (!isAdministrator && !SeerrMediaTargetPolicy.HasPermission(identity.Permissions, target.Kind, variant))
             {
                 return SeerrMediaRequestResult.Refused(SeerrMediaRequestOutcome.PermissionDenied);
             }
@@ -496,69 +490,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
             return null;
         }
 
-        private static bool HasPermission(
-            SeerrPermission permissions,
-            SeerrMediaRequestKind kind,
-            SeerrMediaRequestVariant variant)
-        {
-            if (SeerrPermissionHelper.HasPermission(permissions, SeerrPermission.ADMIN))
-            {
-                return true;
-            }
-
-            if (variant == SeerrMediaRequestVariant.FourK)
-            {
-                return SeerrPermissionHelper.CanRequest4k(
-                    permissions,
-                    isTv: kind == SeerrMediaRequestKind.Series);
-            }
-
-            var mediaPermission = kind == SeerrMediaRequestKind.Series
-                ? SeerrPermission.REQUEST_TV
-                : SeerrPermission.REQUEST_MOVIE;
-            return SeerrPermissionHelper.HasAnyPermission(
-                permissions,
-                SeerrPermission.REQUEST | mediaPermission);
-        }
-
-        private static bool TryProjectTarget(HostAccessibleItem item, out RequestTarget target)
-        {
-            target = default;
-            if (item.Id == Guid.Empty
-                || item.Kind is not (HostItemKind.Movie or HostItemKind.Series)
-                || item.ProviderReferences.IsDefaultOrEmpty)
-            {
-                return false;
-            }
-
-            var tmdbValues = item.ProviderReferences
-                .Where(reference => string.Equals(reference.Provider, "Tmdb", StringComparison.Ordinal))
-                .Select(reference => reference.Value)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            if (tmdbValues.Length != 1
-                || !int.TryParse(
-                    tmdbValues[0],
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out var tmdbId)
-                || tmdbId <= 0)
-            {
-                return false;
-            }
-
-            var kind = item.Kind == HostItemKind.Series
-                ? SeerrMediaRequestKind.Series
-                : SeerrMediaRequestKind.Movie;
-            target = new RequestTarget(
-                kind,
-                tmdbId,
-                kind == SeerrMediaRequestKind.Series ? "tv" : "movie");
-            return true;
-        }
-
         private static string BuildRequestBody(
-            RequestTarget target,
+            SeerrMediaTarget target,
             SeerrMediaRequestVariant variant)
         {
             object body = target.Kind == SeerrMediaRequestKind.Series
@@ -577,10 +510,5 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
                 };
             return JsonSerializer.Serialize(body);
         }
-
-        private readonly record struct RequestTarget(
-            SeerrMediaRequestKind Kind,
-            int TmdbId,
-            string MediaType);
     }
 }

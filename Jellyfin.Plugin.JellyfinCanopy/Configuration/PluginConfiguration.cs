@@ -30,6 +30,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             // by default; the flags are kill-switches for troubleshooting.
             DisableScriptInjectionMiddleware = false;
             DisableBrandingMiddleware = false;
+            PlatformEnabled = true;
 
             // Client layout enforcement. Jellyfin 12's modern-vs-legacy layout is a
             // per-DEVICE choice stored in each browser's localStorage; "None" leaves
@@ -1111,6 +1112,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             => GetInstancesForAuthoritativeSnapshot(
                 RadarrInstances,
                 GetRadarrInstances);
+
+        // Master availability switch for the versioned native Platform surface.
+        // Declared after the pre-existing property set so adding this private-only
+        // setting does not renumber distinctive public-config test values.
+        // Default true preserves upgrades; the request boundary reads it live.
+        public bool PlatformEnabled { get; set; } = true;
 
         private static List<ArrInstance> GetInstancesForAuthoritativeSnapshot(
             string? storedJson,

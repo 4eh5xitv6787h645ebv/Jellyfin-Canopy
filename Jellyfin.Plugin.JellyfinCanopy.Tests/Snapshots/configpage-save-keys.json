@@ -147,6 +147,7 @@
   "PauseScreenDelaySeconds",
   "PauseScreenEnabled",
   "PeopleTagsEnabled",
+  "PlatformEnabled",
   "PluginIconsEnabled",
   "PreventWatchlistReAddition",
   "QualityTagsEnabled",

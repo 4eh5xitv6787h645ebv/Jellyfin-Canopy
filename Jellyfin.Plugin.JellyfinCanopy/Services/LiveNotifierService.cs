@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Session;
@@ -26,12 +27,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// dashboard/API save path. On each change it (1) flushes the Seerr caches
     /// (the behaviour the removed override used to provide) and (2) pushes a
     /// JC-marked <see cref="SessionMessageType.GeneralCommand"/> to the sessions
-    /// of devices REGISTERED as running the JC client (<see cref="ILiveSessionRegistry"/>,
-    /// populated by authenticated public-config fetches). The client's live hub
+    /// of devices REGISTERED as running the JC web client or as an explicitly
+    /// participating Platform native client (<see cref="ILiveSessionRegistry"/>).
+    /// The web client's live hub
     /// (src/core/live.ts) filters GeneralCommands for the marker and refetches
-    /// public-config. Native clients (Android, Android TV, Kodi, …) never receive
-    /// the carrier at all — the old broadcast to every user session delivered a
-    /// playback-shaped command to clients whose handling is outside our control.
+    /// public-config. A Platform native client becomes eligible only after a
+    /// successful authenticated item-detail resolve; all other native clients
+    /// remain excluded from the carrier that the old broadcast sent indiscriminately.
     /// </summary>
     public sealed class LiveNotifierService : IHostedService
     {
@@ -44,8 +46,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// <summary>
         /// Carrier command for JC pushes. Chosen because it is NOT handled by the
         /// web client's GeneralCommand switch (serverNotifications.js) — it hits the
-        /// default (debug-log) branch and does nothing — so native clients ignore
-        /// the message while JC's subscriber keys off <see cref="MarkerKey"/>.
+        /// default (debug-log) branch and does nothing. The carrier itself remains
+        /// inert; JC web and opted-in Platform native clients key only off
+        /// <see cref="MarkerKey"/> as a signal to refetch authoritative state.
         /// </summary>
         internal const GeneralCommandType CarrierCommand = GeneralCommandType.SetPlaybackOrder;
 
@@ -58,6 +61,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly WatchlistMonitor _watchlistMonitor;
         private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
         private readonly AutoSeasonRequestMonitor _autoSeasonRequestMonitor;
+        private readonly PlatformPrepareHandleOwner _platformPrepareHandles;
+        private readonly PlatformPreparedActionContextOwner _platformPreparedContexts;
         private readonly ILogger<LiveNotifierService> _logger;
 
         private BasePlugin<PluginConfiguration>? _plugin;
@@ -71,6 +76,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             WatchlistMonitor watchlistMonitor,
             AutoMovieRequestMonitor autoMovieRequestMonitor,
             AutoSeasonRequestMonitor autoSeasonRequestMonitor,
+            PlatformPrepareHandleOwner platformPrepareHandles,
+            PlatformPreparedActionContextOwner platformPreparedContexts,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -80,6 +87,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _watchlistMonitor = watchlistMonitor;
             _autoMovieRequestMonitor = autoMovieRequestMonitor;
             _autoSeasonRequestMonitor = autoSeasonRequestMonitor;
+            _platformPrepareHandles = platformPrepareHandles ?? throw new ArgumentNullException(nameof(platformPrepareHandles));
+            _platformPreparedContexts = platformPreparedContexts ?? throw new ArgumentNullException(nameof(platformPreparedContexts));
             _logger = logger;
         }
 
@@ -138,6 +147,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
         {
+            // A saved configuration is a new native authority generation. Revoke every
+            // server-retained prepare handle and prepared capability synchronously,
+            // before session I/O can yield, so disabling and re-enabling Platform v1
+            // can never revive an action issued under an earlier configuration.
+            InvalidatePlatformAuthority();
+
             // Reconcile monitor subscriptions + invalidate cached Seerr state BEFORE
             // the first await, so the fire-and-forget ConfigurationChanged callback
             // applies subscription ownership synchronously and cannot be delayed by
@@ -159,13 +174,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var command = BuildLegacyConfigChangedCommand(
                     JellyfinCanopy.Instance?.Version?.ToString());
 
-                // Target ONLY devices that registered as running the JC client
-                // (via authenticated JC endpoint calls). The old broadcast to
+                // Target ONLY devices that registered through authenticated JC
+                // web calls or a successful Platform native item-detail resolve.
+                // The old broadcast to
                 // every user session delivered the playback-shaped carrier to
                 // native clients (Android, Android TV, Kodi, …) whose handling of
-                // it is outside our control. An empty registry (fresh server, no
-                // JC session booted yet) means there is nobody to hot-reload —
-                // those sessions pick the new config up when they next load.
+                // it is outside our control. Native clients that never opt in to
+                // Platform remain excluded. An empty registry means there is no
+                // eligible client to nudge; clients pick up current state when they
+                // next load or resolve it.
                 //
                 // The device id claim is caller-supplied, so each entry is only
                 // honoured when its REGISTERING user has a live session on that
@@ -191,11 +208,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                 }
 
-                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} JC device(s).", deviceIds.Count);
+                _logger.LogInformation("LiveNotifier: pushed config-changed to {Count} eligible Canopy device(s).", deviceIds.Count);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "LiveNotifier: failed to push config-changed to sessions.");
+            }
+        }
+
+        private void InvalidatePlatformAuthority()
+        {
+            try
+            {
+                _platformPrepareHandles.InvalidateOutstanding();
+            }
+            catch (Exception error)
+            {
+                _logger.LogWarning(error, "LiveNotifier: failed to invalidate native prepare handles on config change.");
+            }
+
+            try
+            {
+                // The context owner atomically advances the capability authority too.
+                // Platform idempotency is deliberately independent and is not cleared:
+                // terminal tombstones must continue suppressing duplicate mutations.
+                _platformPreparedContexts.InvalidateOutstanding();
+            }
+            catch (Exception error)
+            {
+                _logger.LogWarning(error, "LiveNotifier: failed to invalidate native prepared actions on config change.");
             }
         }
 

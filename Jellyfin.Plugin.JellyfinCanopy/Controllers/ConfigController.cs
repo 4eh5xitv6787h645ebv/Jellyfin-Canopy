@@ -285,7 +285,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // Every JC client boot AND every config-changed hot-reload refetches
             // this endpoint authenticated — record the session's device id so
             // LiveNotifierService pushes reach ONLY devices that actually run JC
-            // (never native clients). Anonymous login-image fetches carry no
+            // or explicitly participate in Platform native item-detail resolves.
+            // Anonymous login-image fetches carry no
             // device claim and are skipped. Visible long-lived clients also touch
             // the registry through /client-refresh-state; that endpoint is the
             // post-restart heartbeat and foreground-resume catch-up path.

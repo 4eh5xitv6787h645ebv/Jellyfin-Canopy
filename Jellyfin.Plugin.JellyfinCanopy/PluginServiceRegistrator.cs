@@ -40,6 +40,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // One process-local 256-bit authority and nonce ledger for short-lived
             // native action capabilities. Restart intentionally invalidates every token.
             serviceCollection.AddSingleton<PlatformActionCapabilityService>();
+            // Five-minute random handles let repeated item-detail resolves reuse an
+            // exact server-derived semantic snapshot without exposing those claims.
+            // This process-local owner is separate from one-shot invoke capability.
+            serviceCollection.AddSingleton<PlatformPrepareHandleOwner>();
             // Server-private prepared preconditions remain process-local and expire no
             // later than their opaque capability. Invocation concurrency is bounded by
             // authoritative actor and the closed operation vocabulary.
@@ -48,6 +52,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // One process-wide, fixed-capacity owner for redacted terminal Platform
             // action audit. It exposes no route and retains no caller payload.
             serviceCollection.AddSingleton<PlatformAuditStore>();
+            // The native pilot has one closed three-family composition and dispatch
+            // graph. There is intentionally no handler registry or enumerable plugin
+            // surface: adding another contribution of an existing native shape changes
+            // Canopy's fixed composer, not Android networking or authentication.
+            serviceCollection.AddSingleton<PlatformNativeCatalogRevisionAuthority>();
+            serviceCollection.AddSingleton<PlatformNativeCatalogService>();
+            serviceCollection.AddSingleton<ISpoilerGuardPlatformActionPort, SpoilerGuardPlatformActionPort>();
+            serviceCollection.AddSingleton<IHiddenContentPlatformActionPort, HiddenContentPlatformActionPort>();
+            serviceCollection.AddSingleton<ISeerrPlatformActionPort, SeerrPlatformActionPort>();
+            serviceCollection.AddSingleton(serviceProvider => new PlatformFirstPartyActionDispatcher(
+                serviceProvider.GetRequiredService<ISpoilerGuardPlatformActionPort>(),
+                serviceProvider.GetRequiredService<IHiddenContentPlatformActionPort>(),
+                serviceProvider.GetRequiredService<ISeerrPlatformActionPort>()));
+            serviceCollection.AddSingleton(serviceProvider => new PlatformActionInvocationCoordinator(
+                serviceProvider.GetRequiredService<Platform.Hosting.IPlatformHost>(),
+                serviceProvider.GetRequiredService<PlatformPreparedActionContextOwner>(),
+                serviceProvider.GetRequiredService<PlatformActionCapabilityService>(),
+                serviceProvider.GetRequiredService<PlatformIdempotencyStore>(),
+                serviceProvider.GetRequiredService<PlatformActionAdmissionLimiter>(),
+                serviceProvider.GetRequiredService<PlatformFirstPartyActionDispatcher>(),
+                serviceProvider.GetRequiredService<PlatformAuditStore>()));
 
             // a named HttpClient with AllowAutoRedirect=false so
             // forward-auth proxies (Authelia / Pangolin / Authentik) returning
@@ -162,9 +187,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // (via IPluginManager), flushes the Seerr caches and pushes a JC-marked
             // GeneralCommand to open sessions so admin saves hot-reload with no
             // manual refresh. Replaces the former SeerrCache.Instance static bridge.
-            // The registry scopes the push to devices that actually run the JC
-            // client (populated by authenticated public-config fetches) so native
-            // clients never receive the carrier command.
+            // The registry scopes the push to devices running the JC web client or
+            // explicitly participating through a successful Platform item-detail
+            // resolve. Other native clients never receive the inert carrier.
             serviceCollection.AddSingleton<Services.ILiveSessionRegistry, Services.LiveSessionRegistry>();
             serviceCollection.AddHostedService<Services.LiveNotifierService>();
             serviceCollection.AddSingleton<UserConfigurationManager>();
@@ -233,6 +258,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Seerr.ISeerrSpoilerIntentStore>(services =>
                 services.GetRequiredService<SpoilerPendingService>());
             serviceCollection.AddSingleton<Services.Seerr.ISeerrMediaRequestOwner, Services.Seerr.SeerrMediaRequestOwner>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrItemPresentationRevisionAuthority, Services.Seerr.SeerrItemPresentationRevisionAuthority>();
+            serviceCollection.AddSingleton<Services.Seerr.ISeerrItemRequestPresentationOwner, Services.Seerr.SeerrItemRequestPresentationOwner>();
             serviceCollection.AddHostedService<SpoilerSeerrPendingPromoter>();
             serviceCollection.AddScoped<IEventConsumer<PlaybackStartEventArgs>, SpoilerAutoEnableOnFirstPlayConsumer>();
             // Identity-cache invalidation on user create/delete — the

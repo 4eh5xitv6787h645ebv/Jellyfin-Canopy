@@ -1,0 +1,13 @@
+{
+  "Outcome": "succeeded",
+  "Message": {
+    "Text": "Item hidden",
+    "Tone": "positive"
+  },
+  "Refresh": {
+    "Targets": [
+      "jellyfin_item",
+      "item_detail_surface"
+    ]
+  }
+}

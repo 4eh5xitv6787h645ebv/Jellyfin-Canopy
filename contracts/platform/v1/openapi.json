@@ -17,7 +17,7 @@
       "get": {
         "operationId": "getDiscovery",
         "summary": "Whether the platform is present, and which protocol versions it speaks.",
-      "description": "The ONLY anonymous route in Platform v1. A client must be able to learn the platform exists before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
+      "description": "The ONLY anonymous route in Platform v1. A client must be able to learn whether the native platform is serving requests before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed. Available=false means the administrator has disabled Platform v1; the protocol range remains present so a client can distinguish a disabled compatible host from an unknown route. Disabled discovery responses use Cache-Control: no-store.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
       "security": [],
       "parameters": [
         {
@@ -29,10 +29,17 @@
       ],
       "responses": {
         "200": {
-          "description": "The platform is present.",
+          "description": "The platform discovery representation. Check Available before authenticating or using another Platform route.",
           "headers": {
             "ETag": {
               "$ref": "#/components/headers/PlatformEntityTag"
+            },
+            "Cache-Control": {
+              "description": "Present as no-store when Available is false, so disabled state is never retained as a reusable representation.",
+              "schema": {
+                "type": "string"
+              },
+              "example": "no-store"
             }
           },
           "content": {
@@ -125,6 +132,183 @@
         "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/JellyfinCanopy/Platform/v1/surfaces/item-detail/resolve": {
+      "post": {
+        "operationId": "resolveNativeItemDetail",
+        "summary": "Resolve the current actor's bounded native item-detail contributions.",
+        "description": "Canopy re-authorizes the Jellyfin item and composes only the fixed Spoiler Guard, Hidden Content, and Seerr pilot families. Unknown or unavailable families are omitted. The response is capped at twelve contributions, retaining bounded headroom for another native-safe family. Opaque prepare handles carry no client-interpretable authority. This POST receives a strong ETag over its exact response bytes, but intentionally has no conditional-GET or 304 behavior because the bounded client capability body is part of the representation key.",
+        "x-canopy-validated-representation": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformItemDetailResolveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The current authorized native contribution catalog, including an empty catalog when no pilot family applies.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/PlatformEntityTag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformItemDetailResolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/BareUnauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/BareForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/JellyfinCanopy/Platform/v1/actions/prepare": {
+      "post": {
+        "operationId": "prepareNativeAction",
+        "summary": "Re-authorize an opaque catalog action and mint a short-lived invocation capability.",
+        "description": "The prepare handle is resolved only for the current Jellyfin user. Canopy rechecks the user, item, configuration, feature state, client field support, and owner authorization before returning a bounded native form. Expired, restarted, cross-user, stale, or unauthorized handles are deliberately indistinguishable as not_found.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformActionPrepareRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A short-lived capability and bounded native form for one exact prepared action.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformActionPrepareResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/BareUnauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/BareForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/JellyfinCanopy/Platform/v1/actions/invoke": {
+      "post": {
+        "operationId": "invokeNativeAction",
+        "summary": "Invoke one prepared first-party action through Canopy's fixed dispatcher.",
+        "description": "The idempotency key is carried exactly once in the JSON body; the Idempotency-Key header is forbidden on this route. Canopy consumes the opaque capability only after fresh Jellyfin and owning-service authorization, validates answers against the server-bound form and feature variant, and executes only one of the three fixed pilot ports. Clients must treat refresh targets as allowlisted hints and ignore unknown targets.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformActionInvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A stored semantic action outcome. A replay returns the same semantic body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformActionInvokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/BareUnauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/BareForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/IdempotencyAtCapacity"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
           "504": {
             "$ref": "#/components/responses/Timeout"
           }
@@ -175,7 +359,7 @@
         "name": "Idempotency-Key",
         "in": "header",
         "required": true,
-        "description": "Required on Platform mutation routes. One case-sensitive value identifies a retry together with the authenticated acting user and operation. Reusing it with the same semantic payload replays the stored semantic outcome; reusing it with different semantics conflicts. Current v1 routes are reads, so none references this component yet.",
+        "description": "Reusable header carrier for future Platform mutation routes. One case-sensitive value identifies a retry together with the authenticated acting user and operation. The native actions/invoke route deliberately uses the same bounded value in its JSON body and forbids this header, so that route does not reference this component.",
         "schema": {
           "type": "string",
           "minLength": 1,
@@ -193,6 +377,62 @@
       },
       "PayloadTooLarge": {
         "description": "A kernel-owned request bound was exceeded. The message names which axis, so a client knows whether to send fewer items, shorter strings, or a flatter shape.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "InvalidRequest": {
+        "description": "The authenticated JSON request is malformed, incomplete, duplicated, self-contradictory, or uses an unsupported protocol or surface schema.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The item, opaque handle, capability, action, or current authorization is unavailable. The same response deliberately covers absent, expired, stale, cross-user, and denied resources.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "An internal failure occurred after authorization. No provider, host, path, credential, or exception detail crosses the platform boundary.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "Platform v1 is administratively disabled, or a required first-party owner or provider is temporarily unavailable. The response is retryable; clients must keep ordinary Jellyfin behavior usable. Administrative-gate responses include Cache-Control: no-store, while an owner/provider failure is not required to include that optional header.",
+        "headers": {
+          "Cache-Control": {
+            "description": "Present as no-store when the administrative availability gate selected this response.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          },
+          "X-Correlation-Id": {
+            "description": "The same bounded correlation identifier carried in the PlatformError body.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            }
+          }
+        },
         "content": {
           "application/json": {
             "schema": {
@@ -276,6 +516,491 @@
       }
     },
     "schemas": {
+      "PlatformItemReference": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "Id"
+        ],
+        "properties": {
+          "Id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The non-empty Jellyfin item id. Canopy resolves it again under the current actor."
+          }
+        }
+      },
+      "PlatformNativeClientCapabilities": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ContributionKinds",
+          "FieldKinds",
+          "InputModes",
+          "Accessibility",
+          "Locale"
+        ],
+        "properties": {
+          "ContributionKinds": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "description": "Recognized v1 values are action and status. Unknown values are ignored."
+          },
+          "FieldKinds": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "description": "Recognized v1 values are confirmation, boolean, single_select, and multi_select. Unknown values are ignored."
+          },
+          "InputModes": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "description": "The native item-detail pilot requires dpad. Unknown values are ignored."
+          },
+          "Accessibility": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "description": "Recognized v1 value is screen_reader. Unknown values are ignored."
+          },
+          "Locale": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9-]+$"
+          }
+        }
+      },
+      "PlatformItemDetailResolveRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "Protocol",
+          "SurfaceSchema",
+          "Item",
+          "Client"
+        ],
+        "properties": {
+          "Protocol": {
+            "type": "integer",
+            "format": "int32",
+            "const": 1
+          },
+          "SurfaceSchema": {
+            "type": "integer",
+            "format": "int32",
+            "const": 1
+          },
+          "Item": {
+            "$ref": "#/components/schemas/PlatformItemReference"
+          },
+          "Client": {
+            "$ref": "#/components/schemas/PlatformNativeClientCapabilities"
+          }
+        }
+      },
+      "PlatformItemDetailResolveResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "CatalogRevision",
+          "Contributions"
+        ],
+        "properties": {
+          "CatalogRevision": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "description": "A process-keyed revision of the caller-visible semantic catalog. Prepare-handle rotation does not change it."
+          },
+          "Contributions": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/components/schemas/PlatformNativeContribution"
+            }
+          }
+        }
+      },
+      "PlatformNativeContribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Id",
+          "Kind",
+          "Label"
+        ],
+        "properties": {
+          "Id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "Kind": {
+            "type": "string",
+            "enum": [
+              "action",
+              "status"
+            ]
+          },
+          "Label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "Description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "SemanticIcon": {
+            "type": "string",
+            "enum": [
+              "shield",
+              "visibility_off",
+              "add",
+              "check",
+              "settings"
+            ]
+          },
+          "Enabled": {
+            "type": "boolean"
+          },
+          "PrepareHandle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[!-~]+$"
+          },
+          "Tone": {
+            "type": "string",
+            "enum": [
+              "neutral",
+              "positive",
+              "warning",
+              "negative"
+            ]
+          }
+        },
+        "description": "Flat discriminated wire shape. action requires SemanticIcon and Enabled and requires PrepareHandle when enabled; status requires Tone. A client must omit an unknown Kind rather than inventing behavior."
+      },
+      "PlatformActionPrepareRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "PrepareHandle"
+        ],
+        "properties": {
+          "PrepareHandle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[!-~]+$"
+          }
+        }
+      },
+      "PlatformActionPrepareResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Capability",
+          "ExpiresAtUtc",
+          "Title",
+          "SubmitLabel",
+          "CancelLabel",
+          "Fields"
+        ],
+        "properties": {
+          "Capability": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[!-~]+$"
+          },
+          "ExpiresAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "SubmitLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "CancelLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "Fields": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/PlatformNativeField"
+            }
+          }
+        }
+      },
+      "PlatformNativeField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Id",
+          "Kind",
+          "Label",
+          "Required",
+          "Options",
+          "DefaultOptionIds"
+        ],
+        "properties": {
+          "Id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "Kind": {
+            "type": "string",
+            "enum": [
+              "confirmation",
+              "boolean",
+              "single_select",
+              "multi_select"
+            ]
+          },
+          "Label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "Description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "Required": {
+            "type": "boolean"
+          },
+          "DefaultChecked": {
+            "type": "boolean"
+          },
+          "Options": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/PlatformNativeOption"
+            }
+          },
+          "DefaultOptionIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.-]+$"
+            }
+          },
+          "MinimumSelections": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "maximum": 32
+          },
+          "MaximumSelections": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0,
+            "maximum": 32
+          }
+        }
+      },
+      "PlatformNativeOption": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Id",
+          "Label",
+          "Disabled"
+        ],
+        "properties": {
+          "Id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "Label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "Description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "Disabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PlatformActionInvokeRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "Capability",
+          "IdempotencyKey",
+          "Answers"
+        ],
+        "properties": {
+          "Capability": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[!-~]+$"
+          },
+          "IdempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]+$"
+          },
+          "Answers": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/PlatformActionAnswer"
+            }
+          }
+        }
+      },
+      "PlatformActionAnswer": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "FieldId"
+        ],
+        "properties": {
+          "FieldId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]+$"
+          },
+          "BooleanValue": {
+            "type": "boolean"
+          },
+          "OptionIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._~-]+$"
+            }
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "BooleanValue"
+            ]
+          },
+          {
+            "required": [
+              "OptionIds"
+            ]
+          }
+        ],
+        "description": "Exactly one of BooleanValue and OptionIds is present. Field ids are unique within one invocation."
+      },
+      "PlatformActionInvokeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Outcome"
+        ],
+        "properties": {
+          "Outcome": {
+            "type": "string",
+            "enum": [
+              "succeeded"
+            ]
+          },
+          "Message": {
+            "$ref": "#/components/schemas/PlatformNativeMessage"
+          },
+          "Refresh": {
+            "$ref": "#/components/schemas/PlatformNativeRefresh"
+          }
+        }
+      },
+      "PlatformNativeMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Text"
+        ],
+        "properties": {
+          "Text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "Tone": {
+            "type": "string",
+            "enum": [
+              "neutral",
+              "positive",
+              "warning",
+              "negative"
+            ]
+          }
+        }
+      },
+      "PlatformNativeRefresh": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "Targets"
+        ],
+        "properties": {
+          "CatalogRevision": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "Targets": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.-]+$"
+            },
+            "description": "Known Android targets are jellyfin_item and item_detail_surface. Unknown targets are ignored."
+          }
+        }
+      },
       "PlatformDiscoveryResponse": {
         "type": "object",
         "additionalProperties": false,

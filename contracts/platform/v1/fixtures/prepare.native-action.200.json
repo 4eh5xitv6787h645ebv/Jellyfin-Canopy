@@ -1,0 +1,40 @@
+{
+  "Capability": "opaque-invoke-capability",
+  "ExpiresAtUtc": "2026-08-03T00:00:00.0000000+00:00",
+  "Title": "Configure Hidden Content",
+  "SubmitLabel": "Apply",
+  "CancelLabel": "Cancel",
+  "Fields": [
+    {
+      "Id": "hidden",
+      "Kind": "boolean",
+      "Label": "Hide this item",
+      "Description": "Canopy applies this only to the selected filtering scope.",
+      "Required": true,
+      "DefaultChecked": false,
+      "Options": [],
+      "DefaultOptionIds": []
+    },
+    {
+      "Id": "scope",
+      "Kind": "single_select",
+      "Label": "Filtering scope",
+      "Required": true,
+      "Options": [
+        {
+          "Id": "global",
+          "Label": "Every enabled surface",
+          "Disabled": false
+        },
+        {
+          "Id": "continue_watching",
+          "Label": "Continue Watching",
+          "Disabled": false
+        }
+      ],
+      "DefaultOptionIds": [
+        "global"
+      ]
+    }
+  ]
+}

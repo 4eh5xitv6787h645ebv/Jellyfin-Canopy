@@ -114,7 +114,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 return Reject(PlatformErrorCode.NotFound);
             }
 
-            var prepared = _preparedContexts.Resolve(request.Capability, inspection);
+            using var prepared = _preparedContexts.Resolve(request.Capability, inspection);
             if (cancellation.ExecutionToken.IsCancellationRequested)
             {
                 using var canceled = _audit.BeginUnresolved(boundaryActor);
@@ -153,12 +153,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     return CompleteCapabilityValidation(attempt, capabilityValidation.Kind);
                 }
 
-                var admittedInput = _dispatcher.ValidateCurrent(
+                var admittedInput = await _dispatcher.ValidateCurrentAsync(
                     prepared.Definition,
                     current.Actor,
                     current.Item,
                     prepared,
-                    request.Answers);
+                    request.Answers,
+                    cancellation.ExecutionToken).ConfigureAwait(false);
                 cancellation.ExecutionToken.ThrowIfCancellationRequested();
                 if (admittedInput.Decision != PlatformActionPortDecision.Admitted)
                 {
@@ -209,12 +210,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                             return execution.AbandonBeforeSideEffect(ErrorResult(ErrorFor(refreshedCapability.Kind)));
                         }
 
-                        var refreshedInput = _dispatcher.ValidateCurrent(
+                        var refreshedInput = await _dispatcher.ValidateCurrentAsync(
                             prepared.Definition,
                             refreshed.Actor,
                             refreshed.Item,
                             prepared,
-                            request.Answers);
+                            request.Answers,
+                            executionToken).ConfigureAwait(false);
                         executionToken.ThrowIfCancellationRequested();
                         if (refreshedInput.Decision != PlatformActionPortDecision.Admitted)
                         {
@@ -292,12 +294,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         return CompleteCapabilityValidation(attempt, replayCapability.Kind);
                     }
 
-                    var replayInput = _dispatcher.ValidateCurrent(
+                    var replayInput = await _dispatcher.ValidateCurrentAsync(
                         prepared.Definition,
                         replayCurrent.Actor,
                         replayCurrent.Item,
                         prepared,
-                        request.Answers);
+                        request.Answers,
+                        cancellation.ExecutionToken).ConfigureAwait(false);
                     cancellation.ExecutionToken.ThrowIfCancellationRequested();
                     if (replayInput.Decision != PlatformActionPortDecision.Admitted)
                     {
@@ -355,6 +358,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 || item.Id != prepared.Item.Id
                 || item.Kind != prepared.Item.Kind
                 || item.SeriesId != prepared.Item.SeriesId
+                || !item.ProviderReferences.SequenceEqual(prepared.Item.ProviderReferences)
                 || !prepared.Definition.SupportedItemKinds.Contains(item.Kind))
             {
                 return null;

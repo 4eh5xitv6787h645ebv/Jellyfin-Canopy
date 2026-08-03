@@ -6,8 +6,10 @@ using System.Net;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -17,6 +19,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
@@ -111,6 +114,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 HttpContext context,
                 string? scheme,
                 AuthenticationProperties? properties) => throw new NotSupportedException();
+        }
+
+        private sealed class CountingConfigProvider : IPluginConfigProvider
+        {
+            internal int Reads { get; private set; }
+
+            public PluginConfiguration Configuration => new() { PlatformEnabled = false };
+
+            public PluginConfiguration? ConfigurationOrNull => Configuration;
+
+            public long ConfigurationRevision => 1;
+
+            public PluginConfigurationSnapshot GetSnapshot()
+            {
+                Reads++;
+                return new PluginConfigurationSnapshot(Configuration, ConfigurationRevision);
+            }
         }
 
         private sealed record RunResult(ResourceExecutingContext Context, bool Continued, PlatformActor? Actor);
@@ -502,6 +522,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Assert.Null(rejected.Context.HttpContext.Response.ContentType);
                 Assert.False(rejected.Context.HttpContext.Response.Headers.ContainsKey(PlatformCorrelation.HeaderName));
             }
+        }
+
+        [Fact]
+        public async Task DeletedActorBareForbiddenWinsBeforeDisabledAvailabilityIsConsulted()
+        {
+            var userId = Guid.NewGuid();
+            var http = Request(Principal(new Claim("Jellyfin-UserId", userId.ToString())));
+            var descriptor = new ActionDescriptor();
+            var filters = new List<IFilterMetadata>();
+            var context = new ResourceExecutingContext(
+                new ActionContext(http, new RouteData(), descriptor),
+                filters,
+                new List<IValueProviderFactory>());
+            var configuration = new CountingConfigProvider();
+            var availability = new PlatformAvailabilityFilter(
+                configuration,
+                NullLogger<PlatformAvailabilityFilter>.Instance);
+
+            await new PlatformActorBoundaryFilter(new StubHost(_ => null))
+                .OnResourceExecutionAsync(context, async () =>
+                {
+                    await availability.OnResourceExecutionAsync(
+                        context,
+                        () => Task.FromResult(new ResourceExecutedContext(context, filters)));
+                    return new ResourceExecutedContext(context, filters);
+                });
+
+            Assert.IsType<ForbidResult>(context.Result);
+            Assert.Equal(0, configuration.Reads);
+            Assert.False(context.Result is ObjectResult);
+
+            await ExecuteThroughPlatformResultFilterAsync(
+                Assert.IsAssignableFrom<ActionResult>(context.Result),
+                http);
+            Assert.Equal(StatusCodes.Status403Forbidden, http.Response.StatusCode);
+            Assert.Equal(0, http.Response.Body.Length);
+            Assert.Null(http.Response.ContentType);
         }
     }
 }
