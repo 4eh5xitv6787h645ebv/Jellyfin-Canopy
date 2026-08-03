@@ -420,6 +420,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
         [Theory]
         [InlineData("discovery.200.json", typeof(PlatformDiscoveryResponse))]
+        [InlineData("discovery.disabled.200.json", typeof(PlatformDiscoveryResponse))]
         [InlineData("negotiate.200.compatible.json", typeof(PlatformNegotiationResponse))]
         [InlineData("negotiate.200.incompatible.json", typeof(PlatformNegotiationResponse))]
         [InlineData("error.413.json", typeof(PlatformError))]
@@ -442,6 +443,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .ToDictionary(property => property.Name, property => property.Value.ToString(), StringComparer.Ordinal);
 
             Assert.Equal(beforeProperties, afterProperties);
+        }
+
+        [Fact]
+        public void EveryAuthenticatedPlatformOperationDocumentsTheAdministrativeUnavailableGate()
+        {
+            var unavailable = Spec.RootElement.GetProperty("components").GetProperty("responses")
+                .GetProperty("Unavailable");
+            Assert.Equal(
+                "no-store",
+                unavailable.GetProperty("headers").GetProperty("Cache-Control")
+                    .GetProperty("schema").GetProperty("const").GetString());
+            Assert.Equal(
+                "^[0-9a-f]{32}$",
+                unavailable.GetProperty("headers").GetProperty("X-Correlation-Id")
+                    .GetProperty("schema").GetProperty("pattern").GetString());
+
+            var authenticated = SpecOperations().Where(operation =>
+                !operation.Operation.TryGetProperty("security", out var security)
+                || security.GetArrayLength() != 0);
+
+            Assert.All(authenticated, operation => Assert.Equal(
+                "#/components/responses/Unavailable",
+                operation.Operation.GetProperty("responses").GetProperty("503").GetProperty("$ref").GetString()));
         }
 
         [Fact]

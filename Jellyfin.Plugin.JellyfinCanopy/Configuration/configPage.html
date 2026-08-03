@@ -2422,6 +2422,16 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Native Platform</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer"><label><input id="platformEnabled" data-config-key="PlatformEnabled" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Enable the native client platform</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="platformEnabled">
+                                <div class="fieldDescription">Allows compatible native clients to discover and use Canopy actions. Turning this off takes effect immediately, invalidates prepared native actions, and leaves ordinary Jellyfin client behavior unchanged. Default: ON.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">Smart Client Refresh</legend>
                         <div class="configSection">
                             <div class="inputContainer">

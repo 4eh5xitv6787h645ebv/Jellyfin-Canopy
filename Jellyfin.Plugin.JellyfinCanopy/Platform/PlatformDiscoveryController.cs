@@ -25,10 +25,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         [HttpGet("discovery")]
         [AllowAnonymous]
+        [PlatformDiscoveryProbe]
         [PlatformCacheable]
         public ActionResult<PlatformDiscoveryResponse> GetDiscovery() => Ok(new PlatformDiscoveryResponse
         {
-            Available = true,
+            Available = PlatformAvailabilityFilter.IsEnabled(HttpContext),
             ProtocolMinimum = PlatformConstants.ProtocolMinimum,
             ProtocolMaximum = PlatformConstants.ProtocolMaximum,
         });

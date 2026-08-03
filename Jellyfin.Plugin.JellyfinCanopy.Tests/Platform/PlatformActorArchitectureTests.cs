@@ -176,12 +176,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
             Assert.Contains(typeof(PlatformActorBoundaryFilter), attributes.Keys);
             Assert.Equal(PlatformFilterOrder.ActorBoundary, attributes[typeof(PlatformActorBoundaryFilter)]);
+            Assert.Equal(PlatformFilterOrder.Availability, attributes[typeof(PlatformAvailabilityFilter)]);
             Assert.Equal(PlatformFilterOrder.JsonMediaType, attributes[typeof(PlatformJsonMediaTypeFilter)]);
             Assert.Equal(PlatformFilterOrder.BoundedBody, attributes[typeof(PlatformBoundedBodyFilter)]);
             Assert.Equal(PlatformFilterOrder.RequestLifecycle, attributes[typeof(PlatformRequestLifecycleFilter)]);
             Assert.Equal(PlatformFilterOrder.JsonResult, attributes[typeof(PlatformJsonResultFilter)]);
             Assert.Equal(PlatformFilterOrder.Concurrency, attributes[typeof(PlatformConcurrency)]);
-            Assert.True(attributes[typeof(PlatformActorBoundaryFilter)] < attributes[typeof(PlatformJsonMediaTypeFilter)]);
+            Assert.True(attributes[typeof(PlatformActorBoundaryFilter)] < attributes[typeof(PlatformAvailabilityFilter)]);
+            Assert.True(attributes[typeof(PlatformAvailabilityFilter)] < attributes[typeof(PlatformJsonMediaTypeFilter)]);
             Assert.True(attributes[typeof(PlatformJsonMediaTypeFilter)] < attributes[typeof(PlatformBoundedBodyFilter)]);
             Assert.True(attributes[typeof(PlatformBoundedBodyFilter)] < attributes[typeof(PlatformRequestLifecycleFilter)]);
             Assert.True(attributes[typeof(PlatformRequestLifecycleFilter)] < attributes[typeof(PlatformJsonResultFilter)]);
@@ -190,6 +192,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(PlatformFilterOrder.BoundedBody, new PlatformBoundedBodyFilter().Order);
             Assert.Equal(PlatformFilterOrder.RequestLifecycle, new PlatformRequestLifecycleFilter().Order);
             Assert.True(typeof(IAsyncResourceFilter).IsAssignableFrom(typeof(PlatformActorBoundaryFilter)));
+            Assert.True(typeof(IAsyncResourceFilter).IsAssignableFrom(typeof(PlatformAvailabilityFilter)));
             Assert.False(typeof(IAsyncAuthorizationFilter).IsAssignableFrom(typeof(PlatformActorBoundaryFilter)));
 
             var controllers = typeof(PlatformControllerBase).Assembly
@@ -199,6 +202,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.All(controllers, controller => Assert.Contains(
                 controller.GetCustomAttributes(typeof(TypeFilterAttribute), inherit: true).Cast<TypeFilterAttribute>(),
                 attribute => attribute.ImplementationType == typeof(PlatformActorBoundaryFilter)));
+            Assert.All(controllers, controller => Assert.Contains(
+                controller.GetCustomAttributes(typeof(TypeFilterAttribute), inherit: true).Cast<TypeFilterAttribute>(),
+                attribute => attribute.ImplementationType == typeof(PlatformAvailabilityFilter)));
         }
 
         private static IEnumerable<string> SourceFiles()

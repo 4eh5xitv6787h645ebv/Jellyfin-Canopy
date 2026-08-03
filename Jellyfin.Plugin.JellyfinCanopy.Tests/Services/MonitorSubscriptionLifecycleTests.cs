@@ -1,4 +1,10 @@
+using System.Collections.Immutable;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -55,6 +61,9 @@ public sealed class MonitorSubscriptionLifecycleTests
                 null!,
                 NullLogger<AutoSeasonRequestMonitor>.Instance,
                 Provider);
+            Capabilities = new PlatformActionCapabilityService();
+            PrepareHandles = new PlatformPrepareHandleOwner();
+            PreparedContexts = new PlatformPreparedActionContextOwner(Capabilities);
             Notifier = new LiveNotifierService(
                 null!,
                 Sessions,
@@ -63,6 +72,8 @@ public sealed class MonitorSubscriptionLifecycleTests
                 Watchlist,
                 AutoMovie,
                 AutoSeason,
+                PrepareHandles,
+                PreparedContexts,
                 NullLogger<LiveNotifierService>.Instance);
         }
 
@@ -77,6 +88,12 @@ public sealed class MonitorSubscriptionLifecycleTests
         public AutoMovieRequestMonitor AutoMovie { get; }
 
         public AutoSeasonRequestMonitor AutoSeason { get; }
+
+        public PlatformActionCapabilityService Capabilities { get; }
+
+        public PlatformPrepareHandleOwner PrepareHandles { get; }
+
+        public PlatformPreparedActionContextOwner PreparedContexts { get; }
 
         public LiveNotifierService Notifier { get; }
 
@@ -117,6 +134,9 @@ public sealed class MonitorSubscriptionLifecycleTests
             AutoSeason.Dispose();
             AutoMovie.Dispose();
             Watchlist.Dispose();
+            PreparedContexts.Dispose();
+            Capabilities.Dispose();
+            PrepareHandles.Dispose();
         }
     }
 
@@ -234,6 +254,95 @@ public sealed class MonitorSubscriptionLifecycleTests
         await fixture.Notifier.HandleConfigurationChangedAsync(CancellationToken.None);
 
         fixture.AssertNoneSubscribed();
+        fixture.DisposeMonitors();
+    }
+
+    [Fact]
+    public async Task ConfigurationSaveSynchronouslyRevokesNativeAuthorityAndReenableCannotReviveIt()
+    {
+        var fixture = new Fixture(new PluginConfiguration { PlatformEnabled = true });
+        var actor = new PlatformActor(
+            Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            isElevated: false,
+            "correlation",
+            "android-tv",
+            "device-a");
+        var item = new HostAccessibleItem(
+            Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            HostItemKind.Episode,
+            Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+            ImmutableArray<HostProviderReference>.Empty);
+        var handle = fixture.PrepareHandles.IssueOrReuse(new PlatformPrepareSnapshot(
+            actor,
+            item,
+            PlatformOperationDefinition.HiddenContentConfigureItem,
+            new PlatformPrepareClientContext(
+                ["action"],
+                ["confirmation"],
+                ["dpad"],
+                ["screen_reader"],
+                "en-AU"),
+            [new PlatformPrepareStateRevision("owner", 1)],
+            configurationRevision: 1,
+            catalogRevision: "sha256-catalog",
+            privateState: [1, 2, 3],
+            attenuateToCurrentDevice: false));
+        var prepared = fixture.PreparedContexts.Issue(
+            actor,
+            new PlatformPreparedActionRequest(
+                PlatformOperationDefinition.HiddenContentConfigureItem,
+                item,
+                configurationRevision: 1,
+                privateState: [4, 5, 6]),
+            attenuateToCurrentDevice: false);
+        var inspection = fixture.Capabilities.Inspect(prepared.Capability);
+        var idempotency = new PlatformIdempotencyStore();
+        Assert.True(PlatformIdempotencyKey.TryParse("ambiguous-save-boundary", out var idempotencyKey));
+        var idempotencyRequest = new PlatformIdempotencyRequest(
+            actor.UserId,
+            "hidden-content.configure",
+            idempotencyKey,
+            new PlatformSemanticFingerprint(SHA256.HashData(Encoding.UTF8.GetBytes("exact-input"))),
+            maximumResultBytes: 1024);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => idempotency.ExecuteAsync(
+            idempotencyRequest,
+            _ => throw new InvalidOperationException("external outcome unknown"),
+            CancellationToken.None));
+
+        Assert.Equal(1, fixture.PrepareHandles.EntryCount);
+        Assert.Equal(1, fixture.PreparedContexts.EntryCount);
+        Assert.Equal(1, fixture.Capabilities.LedgerEntryCount);
+
+        var notification = fixture.SaveConfigurationAsync(new PluginConfiguration { PlatformEnabled = false });
+
+        // These assertions intentionally run before awaiting the async notification:
+        // the synchronous ConfigurationChanged prefix must revoke authority before
+        // any live-session push can yield.
+        Assert.Equal(0, fixture.PrepareHandles.EntryCount);
+        Assert.Equal(0, fixture.PreparedContexts.EntryCount);
+        Assert.Equal(0, fixture.Capabilities.LedgerEntryCount);
+        Assert.Null(fixture.PrepareHandles.Resolve(handle.Handle, actor));
+        Assert.Null(fixture.PreparedContexts.Resolve(prepared.Capability, inspection));
+        await notification;
+
+        var retriedMutation = false;
+        var retry = await idempotency.ExecuteAsync(
+            idempotencyRequest,
+            _ =>
+            {
+                retriedMutation = true;
+                using var result = JsonDocument.Parse("{\"unexpected\":true}");
+                return Task.FromResult(new PlatformIdempotencyResult(200, "ok", result.RootElement));
+            },
+            CancellationToken.None);
+        Assert.Equal(PlatformIdempotencyOutcomeKind.Indeterminate, retry.Kind);
+        Assert.False(retriedMutation);
+
+        await fixture.SaveConfigurationAsync(new PluginConfiguration { PlatformEnabled = true });
+        Assert.Null(fixture.PrepareHandles.Resolve(handle.Handle, actor));
+        Assert.Null(fixture.PreparedContexts.Resolve(
+            prepared.Capability,
+            fixture.Capabilities.Inspect(prepared.Capability)));
         fixture.DisposeMonitors();
     }
 }

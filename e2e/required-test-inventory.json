@@ -102,6 +102,7 @@
     "e2e/panel.spec.ts › panel › opens, has a section nav, switches sections, closes on Escape",
     "e2e/platform-contract-smoke.spec.ts › Platform v1 contract — live smoke client › a client built only from the published contract discovers and negotiates",
     "e2e/platform-contract-smoke.spec.ts › Platform v1 contract — live smoke client › an unauthenticated call to the authenticated route is refused with an unparseable body",
+    "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › admin disable is immediate, preserves bare auth, and reenable revokes old native authority",
     "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › Spoiler Guard, Hidden Content, and Seerr complete through generic opaque actions",
     "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › unsupported input mode and protocol fail closed without owner state",
     "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › a live parental-policy revocation invalidates an already-prepared Seerr capability",

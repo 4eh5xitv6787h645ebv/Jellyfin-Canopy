@@ -425,6 +425,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
                 // =========================== private-config ===========================
 
+                // Platform availability is operational server state. Administrators
+                // need it to round-trip the dashboard control, but ordinary and
+                // anonymous clients learn only the bounded discovery Available bit.
+                Private("PlatformEnabled", c => c.PlatformEnabled),
+
                 // For Arr Links (legacy single-instance fields, kept for backward compat)
                 Private("SonarrUrl", c => c.SonarrUrl),
                 Private("RadarrUrl", c => c.RadarrUrl),

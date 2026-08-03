@@ -1,13 +1,25 @@
 using System.Linq;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 {
     public class PlatformDiscoveryControllerTests
     {
-        private static PlatformDiscoveryController Controller() => new();
+        private static PlatformDiscoveryController Controller(bool enabled = true)
+        {
+            var controller = new PlatformDiscoveryController
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext(),
+                },
+            };
+            PlatformAvailabilityFilter.Record(controller.HttpContext, enabled);
+            return controller;
+        }
 
         [Fact]
         public void Discovery_ExposesAvailabilityAndProtocolRangeAndNothingElse()
@@ -26,6 +38,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(
                 new[] { nameof(PlatformDiscoveryResponse.Available), nameof(PlatformDiscoveryResponse.ProtocolMaximum), nameof(PlatformDiscoveryResponse.ProtocolMinimum) },
                 properties);
+        }
+
+        [Fact]
+        public void Discovery_UsesOnlyTheRequestScopedAvailabilitySnapshot()
+        {
+            var disabled = Assert.IsType<PlatformDiscoveryResponse>(
+                Assert.IsType<OkObjectResult>(Controller(enabled: false).GetDiscovery().Result).Value);
+
+            Assert.False(disabled.Available);
+            Assert.Equal(PlatformConstants.ProtocolMinimum, disabled.ProtocolMinimum);
+            Assert.Equal(PlatformConstants.ProtocolMaximum, disabled.ProtocolMaximum);
+
+            var missingState = new PlatformDiscoveryController
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+            };
+            var missing = Assert.IsType<PlatformDiscoveryResponse>(
+                Assert.IsType<OkObjectResult>(missingState.GetDiscovery().Result).Value);
+            Assert.False(missing.Available);
         }
 
         [Theory]

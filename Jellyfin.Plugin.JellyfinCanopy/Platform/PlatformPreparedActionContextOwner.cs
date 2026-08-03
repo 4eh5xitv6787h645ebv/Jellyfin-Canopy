@@ -56,7 +56,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     }
 
     /// <summary>An immutable context released only after exact capability authentication.</summary>
-    internal sealed class PlatformPreparedActionContext
+    internal sealed class PlatformPreparedActionContext : IDisposable
     {
         private readonly byte[] _privateState;
         private readonly byte[] _digest;
@@ -72,6 +72,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             _digest = digest.ToArray();
         }
 
+        private PlatformPreparedActionContext(PlatformPreparedActionContext source)
+        {
+            Definition = source.Definition;
+            Item = source.Item;
+            ConfigurationRevision = source.ConfigurationRevision;
+            _privateState = source._privateState.ToArray();
+            _digest = source._digest.ToArray();
+        }
+
         internal PlatformOperationDefinition Definition { get; }
 
         internal HostAccessibleItem Item { get; }
@@ -81,6 +90,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal ReadOnlyMemory<byte> PrivateState => _privateState.ToArray();
 
         internal ReadOnlyMemory<byte> Digest => _digest.ToArray();
+
+        internal PlatformPreparedActionContext Detach() => new(this);
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            CryptographicOperations.ZeroMemory(_privateState);
+            CryptographicOperations.ZeroMemory(_digest);
+        }
     }
 
     internal enum PlatformPreparedActionIssueKind
@@ -223,8 +241,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 ThrowIfDisposed();
                 RemoveExpired(_timeProvider.GetUtcNow());
+                // Never lend the owner-retained buffers outside the lock. A config
+                // save may synchronously zero and clear every retained context while
+                // an already-admitted invocation is still evaluating authority.
                 return _entries.TryGetValue(Lookup(capability), out var entry)
-                    ? entry.Context
+                    ? entry.Context.Detach()
                     : null;
             }
         }
@@ -235,7 +256,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 ThrowIfDisposed();
                 _capabilities.InvalidateOutstandingCapabilities();
-                _entries.Clear();
+                ClearEntries();
             }
         }
 
@@ -262,7 +283,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     return;
                 }
 
-                _entries.Clear();
+                ClearEntries();
                 CryptographicOperations.ZeroMemory(_lookupKey);
                 _disposed = true;
             }
@@ -329,9 +350,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 foreach (var key in expired)
                 {
-                    _entries.Remove(key);
+                    if (_entries.Remove(key, out var entry))
+                    {
+                        entry.Context.Dispose();
+                    }
                 }
             }
+        }
+
+        private void ClearEntries()
+        {
+            foreach (var entry in _entries.Values)
+            {
+                entry.Context.Dispose();
+            }
+
+            _entries.Clear();
         }
 
         private static PlatformPreparedActionIssueKind Map(PlatformCapabilityMintOutcomeKind kind) => kind switch

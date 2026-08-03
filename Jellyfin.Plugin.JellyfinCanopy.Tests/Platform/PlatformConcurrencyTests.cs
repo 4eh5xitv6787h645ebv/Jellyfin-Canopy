@@ -80,6 +80,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public async Task AvailabilityTransitionsProduceNewStrongRepresentationsInsteadOfStale304s()
+        {
+            var enabled = await RunDiscoveryAsync();
+            var disabled = await RunDiscoveryAsync(
+                ifNoneMatch: enabled.Headers.ETag.ToString(),
+                enabled: false);
+            var reenabled = await RunDiscoveryAsync(
+                ifNoneMatch: disabled.Headers.ETag.ToString(),
+                enabled: true);
+
+            Assert.Equal(StatusCodes.Status200OK, disabled.StatusCode);
+            Assert.Equal(StatusCodes.Status200OK, reenabled.StatusCode);
+            Assert.NotEqual(enabled.Headers.ETag.ToString(), disabled.Headers.ETag.ToString());
+            Assert.Equal(enabled.Headers.ETag.ToString(), reenabled.Headers.ETag.ToString());
+            using var disabledBody = JsonDocument.Parse(Assert.IsType<MemoryStream>(disabled.Body).ToArray());
+            using var enabledBody = JsonDocument.Parse(Assert.IsType<MemoryStream>(reenabled.Body).ToArray());
+            Assert.False(disabledBody.RootElement.GetProperty(nameof(PlatformDiscoveryResponse.Available)).GetBoolean());
+            Assert.True(enabledBody.RootElement.GetProperty(nameof(PlatformDiscoveryResponse.Available)).GetBoolean());
+        }
+
+        [Fact]
         public async Task IfMatchUsesStrongComparison()
         {
             var first = await RunDiscoveryAsync();
@@ -291,6 +312,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             app.Run(async http =>
             {
                 var controller = new PlatformDiscoveryController();
+                controller.ControllerContext = new ControllerContext { HttpContext = http };
+                PlatformAvailabilityFilter.Record(http, enabled: true);
                 var result = Assert.IsType<OkObjectResult>(controller.GetDiscovery().Result);
                 var method = typeof(PlatformDiscoveryController)
                     .GetMethod(nameof(PlatformDiscoveryController.GetDiscovery))!;
@@ -313,9 +336,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             string? ifMatch = null,
             string? ifNoneMatch = null,
             string[]? ifMatchValues = null,
-            string[]? ifNoneMatchValues = null)
+            string[]? ifNoneMatchValues = null,
+            bool enabled = true)
         {
             var controller = new PlatformDiscoveryController();
+            var http = new DefaultHttpContext();
+            controller.ControllerContext = new ControllerContext { HttpContext = http };
+            PlatformAvailabilityFilter.Record(http, enabled);
             var action = Assert.IsType<OkObjectResult>(controller.GetDiscovery().Result);
             var method = typeof(PlatformDiscoveryController).GetMethod(nameof(PlatformDiscoveryController.GetDiscovery))!;
             return await RunAsync(method, action, ifMatch, ifNoneMatch, ifMatchValues, ifNoneMatchValues);

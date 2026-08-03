@@ -518,7 +518,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 ThrowIfDisposed();
                 _authorityRevision = checked(_authorityRevision + 1);
-                _ledger.Clear();
+                ClearLedger();
             }
         }
 
@@ -558,7 +558,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
 
                 CryptographicOperations.ZeroMemory(_authorityKey);
-                _ledger.Clear();
+                ClearLedger();
                 _disposed = true;
             }
         }
@@ -917,9 +917,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 foreach (var key in expired)
                 {
-                    _ledger.Remove(key);
+                    if (_ledger.Remove(key, out var entry))
+                    {
+                        entry.ClearSensitiveState();
+                    }
                 }
             }
+        }
+
+        private void ClearLedger()
+        {
+            foreach (var entry in _ledger.Values)
+            {
+                entry.ClearSensitiveState();
+            }
+
+            _ledger.Clear();
         }
 
         private void ThrowIfDisposed()
@@ -994,6 +1007,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             internal byte[] Tag { get; }
 
             internal bool Consumed { get; set; }
+
+            internal void ClearSensitiveState() => CryptographicOperations.ZeroMemory(Tag);
         }
     }
 }

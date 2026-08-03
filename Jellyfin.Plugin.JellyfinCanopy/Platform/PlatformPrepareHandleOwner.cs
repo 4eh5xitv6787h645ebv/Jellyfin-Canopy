@@ -682,6 +682,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
         }
 
+        /// <summary>
+        /// Invalidates and zeroes every outstanding server-private prepare snapshot.
+        /// A later enable starts from an empty generation and cannot revive a handle.
+        /// </summary>
+        internal void InvalidateOutstanding()
+        {
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                ClearEntries();
+            }
+        }
+
         /// <inheritdoc />
         public void Dispose()
         {
@@ -692,16 +705,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     return;
                 }
 
-                foreach (var entry in _byHandle.Values)
-                {
-                    entry.Dispose();
-                }
-
-                _byHandle.Clear();
-                _bySemantic.Clear();
-                _byActor.Clear();
+                ClearEntries();
                 _disposed = true;
             }
+        }
+
+        private void ClearEntries()
+        {
+            foreach (var entry in _byHandle.Values)
+            {
+                entry.Dispose();
+            }
+
+            _byHandle.Clear();
+            _bySemantic.Clear();
+            _byActor.Clear();
         }
 
         private bool TryCreateHandle(out string handle)

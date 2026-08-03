@@ -17,7 +17,7 @@
       "get": {
         "operationId": "getDiscovery",
         "summary": "Whether the platform is present, and which protocol versions it speaks.",
-      "description": "The ONLY anonymous route in Platform v1. A client must be able to learn the platform exists before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
+      "description": "The ONLY anonymous route in Platform v1. A client must be able to learn whether the native platform is serving requests before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed. Available=false means the administrator has disabled Platform v1; the protocol range remains present so a client can distinguish a disabled compatible host from an unknown route. Disabled discovery responses use Cache-Control: no-store.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
       "security": [],
       "parameters": [
         {
@@ -29,10 +29,17 @@
       ],
       "responses": {
         "200": {
-          "description": "The platform is present.",
+          "description": "The platform discovery representation. Check Available before authenticating or using another Platform route.",
           "headers": {
             "ETag": {
               "$ref": "#/components/headers/PlatformEntityTag"
+            },
+            "Cache-Control": {
+              "description": "Present as no-store when Available is false, so disabled state is never retained as a reusable representation.",
+              "schema": {
+                "type": "string"
+              },
+              "example": "no-store"
             }
           },
           "content": {
@@ -124,6 +131,9 @@
         },
         "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
           },
           "504": {
             "$ref": "#/components/responses/Timeout"
@@ -406,7 +416,23 @@
         }
       },
       "Unavailable": {
-        "description": "A required first-party owner or provider is temporarily unavailable. Retrying may succeed; clients must keep ordinary Jellyfin behavior usable.",
+        "description": "Platform v1 is administratively disabled, or a required first-party owner or provider is temporarily unavailable. The response is retryable; clients must keep ordinary Jellyfin behavior usable. Administrative-gate responses include Cache-Control: no-store, while an owner/provider failure is not required to include that optional header.",
+        "headers": {
+          "Cache-Control": {
+            "description": "Present as no-store when the administrative availability gate selected this response.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          },
+          "X-Correlation-Id": {
+            "description": "The same bounded correlation identifier carried in the PlatformError body.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            }
+          }
+        },
         "content": {
           "application/json": {
             "schema": {

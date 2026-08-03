@@ -56,6 +56,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         }
 
         [Fact]
+        public void PlatformMasterSwitchIsPrivateOperationalMetadataOnly()
+        {
+            var config = new PluginConfiguration { PlatformEnabled = false };
+            var context = new SettingContext(config, IsAuthenticated: true);
+
+            var publicPayload = SettingDescriptors.BuildPayload(SettingExposure.Public, context);
+            var privatePayload = SettingDescriptors.BuildPayload(SettingExposure.Private, context);
+
+            Assert.DoesNotContain(nameof(PluginConfiguration.PlatformEnabled), publicPayload);
+            Assert.False(Assert.IsType<bool>(privatePayload[nameof(PluginConfiguration.PlatformEnabled)]));
+        }
+
+        [Fact]
         public void MaintenanceModeAffectedUsers_RedactedForAnonymous()
         {
             var config = new PluginConfiguration { MaintenanceModeAffectedUsers = "guid1,guid2" };

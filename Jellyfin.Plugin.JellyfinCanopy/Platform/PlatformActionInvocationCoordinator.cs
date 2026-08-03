@@ -114,7 +114,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 return Reject(PlatformErrorCode.NotFound);
             }
 
-            var prepared = _preparedContexts.Resolve(request.Capability, inspection);
+            using var prepared = _preparedContexts.Resolve(request.Capability, inspection);
             if (cancellation.ExecutionToken.IsCancellationRequested)
             {
                 using var canceled = _audit.BeginUnresolved(boundaryActor);

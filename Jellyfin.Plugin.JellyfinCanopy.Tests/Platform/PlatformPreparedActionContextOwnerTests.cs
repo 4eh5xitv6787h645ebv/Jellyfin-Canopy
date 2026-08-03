@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(PlatformPreparedActionIssueKind.Issued, issued.Kind);
             Assert.Equal(Epoch + PlatformActionCapabilityService.CapabilityTimeToLive, issued.ExpiresAt);
             var inspection = capabilities.Inspect(issued.Capability);
-            var context = owner.Resolve(issued.Capability, inspection);
+            using var context = owner.Resolve(issued.Capability, inspection);
 
             Assert.NotNull(context);
             Assert.Same(PlatformOperationDefinition.HiddenContentConfigureItem, context!.Definition);

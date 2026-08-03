@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Session;
@@ -58,6 +59,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly WatchlistMonitor _watchlistMonitor;
         private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
         private readonly AutoSeasonRequestMonitor _autoSeasonRequestMonitor;
+        private readonly PlatformPrepareHandleOwner _platformPrepareHandles;
+        private readonly PlatformPreparedActionContextOwner _platformPreparedContexts;
         private readonly ILogger<LiveNotifierService> _logger;
 
         private BasePlugin<PluginConfiguration>? _plugin;
@@ -71,6 +74,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             WatchlistMonitor watchlistMonitor,
             AutoMovieRequestMonitor autoMovieRequestMonitor,
             AutoSeasonRequestMonitor autoSeasonRequestMonitor,
+            PlatformPrepareHandleOwner platformPrepareHandles,
+            PlatformPreparedActionContextOwner platformPreparedContexts,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -80,6 +85,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _watchlistMonitor = watchlistMonitor;
             _autoMovieRequestMonitor = autoMovieRequestMonitor;
             _autoSeasonRequestMonitor = autoSeasonRequestMonitor;
+            _platformPrepareHandles = platformPrepareHandles ?? throw new ArgumentNullException(nameof(platformPrepareHandles));
+            _platformPreparedContexts = platformPreparedContexts ?? throw new ArgumentNullException(nameof(platformPreparedContexts));
             _logger = logger;
         }
 
@@ -138,6 +145,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal async Task HandleConfigurationChangedAsync(CancellationToken cancellationToken)
         {
+            // A saved configuration is a new native authority generation. Revoke every
+            // server-retained prepare handle and prepared capability synchronously,
+            // before session I/O can yield, so disabling and re-enabling Platform v1
+            // can never revive an action issued under an earlier configuration.
+            InvalidatePlatformAuthority();
+
             // Reconcile monitor subscriptions + invalidate cached Seerr state BEFORE
             // the first await, so the fire-and-forget ConfigurationChanged callback
             // applies subscription ownership synchronously and cannot be delayed by
@@ -196,6 +209,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "LiveNotifier: failed to push config-changed to sessions.");
+            }
+        }
+
+        private void InvalidatePlatformAuthority()
+        {
+            try
+            {
+                _platformPrepareHandles.InvalidateOutstanding();
+            }
+            catch (Exception error)
+            {
+                _logger.LogWarning(error, "LiveNotifier: failed to invalidate native prepare handles on config change.");
+            }
+
+            try
+            {
+                // The context owner atomically advances the capability authority too.
+                // Platform idempotency is deliberately independent and is not cleared:
+                // terminal tombstones must continue suppressing duplicate mutations.
+                _platformPreparedContexts.InvalidateOutstanding();
+            }
+            catch (Exception error)
+            {
+                _logger.LogWarning(error, "LiveNotifier: failed to invalidate native prepared actions on config change.");
             }
         }
 

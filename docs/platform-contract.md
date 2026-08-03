@@ -85,11 +85,29 @@ on your own schedule rather than on ours.
 
 ## The handshake
 
+An administrator can turn the native Platform surface off with **Advanced → Native
+Platform → Enable Native Platform**. The setting defaults to on, including upgrades
+whose saved XML predates the setting. It controls only `/JellyfinCanopy/Platform/v1`;
+ordinary Jellyfin routes and Canopy's established web experience continue normally.
+
+While disabled, discovery remains anonymous and returns `200` with `Available: false`,
+the same protocol range, a representation-specific `ETag`, and `Cache-Control: no-store`.
+Every other Platform route is rejected after Jellyfin's normal actor check and before
+request-body acquisition with retryable `503 unavailable`, a correlation ID, and
+`Cache-Control: no-store`. Consequently, missing or invalid authentication still gets
+Jellyfin's bare `401`/`403` rather than learning a different error shape.
+
+Every configuration save revokes outstanding native prepare handles and action
+capabilities before any asynchronous notification work. Re-enabling Platform does not
+revive authority issued under an older configuration. Idempotency results and
+indeterminate tombstones are deliberately retained, because forgetting one could allow
+a client retry to repeat an external mutation whose first outcome was ambiguous.
+
 Two routes, meant to be used as a pair:
 
 1. **`GET /JellyfinCanopy/Platform/v1/discovery`** — anonymous. Tells you whether the
-   platform is present and which protocol versions it speaks, and deliberately nothing
-   else. You need this before you have any reason to authenticate.
+   platform is serving requests and which protocol versions it speaks, and deliberately
+   nothing else. Check `Available` before you have any reason to authenticate.
 2. **`GET /JellyfinCanopy/Platform/v1/negotiate`** — authenticated. You offer the range
    you support; the host answers with what it will actually use.
 

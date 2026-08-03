@@ -5,6 +5,7 @@
   "MaintainerrExternalUrl": "cfg-MaintainerrExternalUrl",
   "MaintainerrUrl": "cfg-MaintainerrUrl",
   "MaintainerrUrlMappings": "cfg-MaintainerrUrlMappings",
+  "PlatformEnabled": false,
   "RadarrExternalUrl": "cfg-RadarrExternalUrl",
   "RadarrInstances": [],
   "RadarrInstancesCorrupt": true,

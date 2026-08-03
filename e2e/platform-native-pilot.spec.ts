@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, USERS } from './fixtures/auth';
-import { apiRaw, authenticate, type Session } from './fixtures/api';
+import { api, apiRaw, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -64,6 +64,9 @@ function operationPath(operationId: string): string {
 const RESOLVE_PATH = operationPath('resolveNativeItemDetail');
 const PREPARE_PATH = operationPath('prepareNativeAction');
 const INVOKE_PATH = operationPath('invokeNativeAction');
+const DISCOVERY_PATH = operationPath('getDiscovery');
+const NEGOTIATE_PATH = operationPath('negotiate');
+const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 
 function canonicalGuid(value: string): string {
     const compact = value.replaceAll('-', '').toLowerCase();
@@ -180,6 +183,99 @@ async function jellyfinMovie(baseURL: string, session: Session): Promise<any> {
 }
 
 test.describe.serial('Platform v1 native pilot — live Jellyfin 12', () => {
+    test('admin disable is immediate, preserves bare auth, and reenable revokes old native authority', async ({ baseURL }) => {
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const original = await api<Record<string, unknown>>(baseURL!, CONFIG_PATH, admin.token);
+        expect(original).toBeTruthy();
+
+        const save = (enabled: boolean) => api(baseURL!, CONFIG_PATH, admin.token, {
+            method: 'POST',
+            body: JSON.stringify({ ...original, PlatformEnabled: enabled }),
+        });
+
+        try {
+            await save(true);
+            const available = await apiRaw(baseURL!, DISCOVERY_PATH);
+            expect(available.status).toBe(200);
+            const availableTag = available.headers.get('etag');
+            expect(availableTag).toMatch(/^"sha256-[0-9a-f]{64}"$/);
+            expect((await available.json() as any).Available).toBe(true);
+
+            const movie = await jellyfinMovie(baseURL!, admin);
+            const surface = await resolve(baseURL!, admin, movie.Id);
+            const action = contribution(surface, 'hidden-content-configure');
+            const prepared = await prepare(baseURL!, admin, action);
+
+            await save(false);
+
+            const disabled = await apiRaw(baseURL!, DISCOVERY_PATH, undefined, {
+                headers: { 'If-None-Match': availableTag! },
+            });
+            expect(disabled.status).toBe(200);
+            expect(disabled.headers.get('cache-control')).toContain('no-store');
+            expect(disabled.headers.get('etag')).not.toBe(availableTag);
+            const disabledTag = disabled.headers.get('etag');
+            const disabledBody = await disabled.json() as any;
+            expect(disabledBody).toEqual({
+                Available: false,
+                ProtocolMinimum: 1,
+                ProtocolMaximum: 1,
+            });
+
+            const negotiate = await apiRaw(
+                baseURL!,
+                `${NEGOTIATE_PATH}?protocolMinimum=1&protocolMaximum=1`,
+                admin.token,
+            );
+            expect(negotiate.status).toBe(503);
+            expect(negotiate.headers.get('cache-control')).toContain('no-store');
+            const unavailable = await negotiate.json() as any;
+            expect(unavailable).toMatchObject({
+                Error: true,
+                Code: 'unavailable',
+                Retryable: true,
+            });
+            expect(unavailable.CorrelationId).toBe(negotiate.headers.get('x-correlation-id'));
+
+            const gatedResolve = await apiRaw(baseURL!, RESOLVE_PATH, admin.token, {
+                method: 'POST',
+                body: JSON.stringify({
+                    Protocol: 1,
+                    SurfaceSchema: 1,
+                    Item: { Id: canonicalGuid(movie.Id) },
+                    Client: CLIENT,
+                }),
+            });
+            expect(gatedResolve.status).toBe(503);
+
+            const anonymous = await apiRaw(baseURL!, NEGOTIATE_PATH);
+            expect([401, 403]).toContain(anonymous.status);
+            expect(await anonymous.text()).toBe('');
+
+            await save(true);
+            const reenabled = await apiRaw(baseURL!, DISCOVERY_PATH, undefined, {
+                headers: { 'If-None-Match': disabledTag! },
+            });
+            expect(reenabled.status).toBe(200);
+            expect((await reenabled.json() as any).Available).toBe(true);
+
+            await postJson<null>(baseURL!, PREPARE_PATH, admin, {
+                PrepareHandle: action.PrepareHandle,
+            }, 404);
+            await postJson<null>(baseURL!, INVOKE_PATH, admin, {
+                Capability: prepared.Capability,
+                IdempotencyKey: `platform-reenabled-${Date.now()}`,
+                Answers: [],
+            }, 404);
+            await resolve(baseURL!, admin, movie.Id);
+        } finally {
+            await api(baseURL!, CONFIG_PATH, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(original),
+            });
+        }
+    });
+
     test('Spoiler Guard, Hidden Content, and Seerr complete through generic opaque actions', async ({ baseURL }) => {
         const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
         const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
