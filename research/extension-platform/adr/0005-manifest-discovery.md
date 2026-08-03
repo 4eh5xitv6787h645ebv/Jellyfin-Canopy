@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **accepted design** (ADR-0013; EP-03 implementation pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **accepted; bounded manifest contract and semantic fingerprint implemented** (#645; host-bound discovery and registry lifecycle pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
 
 ## Context
 
@@ -38,6 +38,14 @@ declared scopes — are each a distinct vulnerability.
    discovery iterates every plugin and one bad root must not take out the rest.
 5. **Bounded.** Manifest size, id/version lengths, operation and contribution
    counts, nesting depth and local-asset counts are all capped.
+   Issue #645 freezes the first pure installed-provider envelope before any
+   filesystem reader exists: strict UTF-8 JSON at 256 KiB and depth 16; exact
+   schema, identity, version, actor-kind and compatibility fields; only exact
+   provider-eligible capability requests; closed properties; and immutable
+   bounded parse results. Its domain-separated semantic SHA-256 fingerprint is
+   stable across property, whitespace and request-set ordering, while every
+   validated field change changes the fingerprint. This content fingerprint is
+   not proof of installation, a signature, approval, a grant or registry identity.
 6. **A manifest is never a grant.** It states what an extension *requests*. An
    administrator approves. Requested and granted scopes are stored separately.
 7. **Fingerprint changes revoke approval.** Any change to the manifest

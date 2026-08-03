@@ -193,6 +193,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         internal string Value { get; }
 
+        internal static PlatformManifestFingerprint EstablishValidatedManifestFingerprint(string value) =>
+            new(value);
+
         private static bool IsLowerHex(string value)
         {
             foreach (var character in value)

@@ -168,8 +168,12 @@ public sealed class PlatformCapabilityArchitectureTests
     {
         foreach (var (typeName, memberName) in SensitiveMembers)
         {
+            var expectedOwners = typeName == nameof(PlatformRequestedCapabilitySet)
+                && memberName == nameof(PlatformRequestedCapabilitySet.TryCreate)
+                    ? new[] { CapabilityDomainFileName, "PlatformExtensionManifestDomain.cs" }
+                    : new[] { CapabilityDomainFileName };
             Assert.Equal(
-                new[] { CapabilityDomainFileName },
+                expectedOwners,
                 SensitiveMemberOwners(typeName, memberName));
         }
 
