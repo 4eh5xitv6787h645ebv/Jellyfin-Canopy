@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 35254,
-        "totalLines": 44447
+        "coveredLines": 37080,
+        "totalLines": 46434
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 35252,
-        "maximumCoveredLines": 35254
+        "minimumCoveredLines": 37079,
+        "maximumCoveredLines": 37080
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The integrated #606 prerequisite adds the process-local five-minute random prepare-handle owner and complete immutable semantic snapshot used between item-detail resolve and action prepare. The fixed-cap owner binds normalized actor, accessible-item/provider, operation/schema/generation, client capability/locale, private state/revision, configuration and catalog dimensions; reuses an exact live snapshot; enforces 24 entries per actor and 1,024 globally without cross-user eviction; and remains separate from the 60-second invoke capability. Final review additionally required raw lazy-enumeration caps, including duplicates, and raw-ASCII validation before explicit ASCII lowercase. Three clean successful Coverlet runs on the identical 2026-08-03 source and 44,447-line scope each passed all 3,085 server tests and observed 35,254, 35,253, and 35,252 covered lines. The two-line spread is confined to pre-existing timing-sensitive ImageBlurService.cs:740 and ReviewsStore.cs:216 paths; no prepare-owner line varied. Relative to the reviewed combined #591/#595 high-water of 34,744/43,927 (79.095%), the prerequisite adds 520 instrumented lines and raises the observed high-water by 510 covered lines to 35,254/44,447 (79.317%). The floor is the directly observed 35,252/44,447 minimum, exactly two lines below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 1,
+        "rationale": "The completed native-platform pilot extends the reviewed prepare-handle prerequisite through the fixed `/JellyfinCanopy/Platform/v1` discovery, negotiation, catalog, resolve, prepare, and opaque-action surfaces for Spoiler Guard, Hidden Content, and Seerr. The server owns current-user authorization, item access and parental checks, feature/configuration state, bounded presentation, Seerr mapping and secret handling, action reauthorization, idempotency, revisions, cache isolation, audit/error envelopes, capability invalidation, and the live administrative disable gate. Three clean successful Coverlet runs on the identical 2026-08-03 final pilot source and 46,434-line scope each passed all 3,281 server tests and observed 37,079, 37,079, and 37,080 covered lines. The one-line aggregate spread is confined to pre-existing timing-sensitive ImageBlurService.cs:740, BookmarkStore.cs:909, and ReviewsStore.cs:216 paths; no Platform line varied. Relative to the reviewed prepare-handle high-water of 35,254/44,447 (79.317%), the completed pilot adds 1,987 instrumented lines and raises the observed high-water by 1,826 covered lines to 37,080/46,434 (79.855%). The floor is the directly observed 37,079/46,434 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
