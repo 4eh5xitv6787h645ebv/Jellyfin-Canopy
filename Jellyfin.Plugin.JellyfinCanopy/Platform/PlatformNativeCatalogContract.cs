@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -85,12 +86,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             if (!PlatformNativeContractText.IsBoundedAsciiToken(
                     locale,
                     PlatformNativeCatalogBounds.MaximumLocaleBytes,
-                    allowHyphen: true))
+                    allowHyphen: true)
+                || locale.Any(character => character is not (>= 'a' and <= 'z'
+                    or >= 'A' and <= 'Z'
+                    or >= '0' and <= '9'
+                    or '-')))
             {
                 throw new ArgumentException("The client locale is invalid.", nameof(locale));
             }
 
-            return locale.ToLowerInvariant();
+            try
+            {
+                var normalized = CultureInfo.GetCultureInfo(locale).Name.ToLowerInvariant();
+                if (normalized.Length == 0
+                    || Encoding.UTF8.GetByteCount(normalized) > PlatformNativeCatalogBounds.MaximumLocaleBytes)
+                {
+                    throw new ArgumentException("The client locale is invalid.", nameof(locale));
+                }
+
+                return normalized;
+            }
+            catch (CultureNotFoundException exception)
+            {
+                throw new ArgumentException("The client locale is not recognized.", nameof(locale), exception);
+            }
         }
     }
 
@@ -653,12 +672,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 throw new JsonException("The client capability object is incomplete.");
             }
 
-            return new PlatformNativeClientCapabilities(
-                contributions.Value,
-                fields.Value,
-                inputModes.Value,
-                accessibility.Value,
-                locale);
+            try
+            {
+                return new PlatformNativeClientCapabilities(
+                    contributions.Value,
+                    fields.Value,
+                    inputModes.Value,
+                    accessibility.Value,
+                    locale);
+            }
+            catch (ArgumentException exception)
+            {
+                throw new JsonException("The client capability object is invalid.", exception);
+            }
         }
 
         private static ImmutableArray<string> ReadTokens(ref Utf8JsonReader reader, string property)

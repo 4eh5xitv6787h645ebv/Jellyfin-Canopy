@@ -162,6 +162,21 @@ public sealed class PlatformNativeCatalogServiceTests
     }
 
     [Fact]
+    public async Task Resolve_SeerrOwnerFailureOmitsOnlySeerrFamily()
+    {
+        using var fixture = new Fixture();
+        fixture.Seerr.Resolver = _ => throw new InvalidOperationException("provider secret");
+
+        var result = await fixture.Service.ResolveAsync(fixture.ActorA, fixture.Request(), CancellationToken.None);
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+        Assert.Equal(
+            ["spoiler-guard-status", "spoiler-guard-configure", "hidden-content-status", "hidden-content-configure"],
+            result.Response!.Contributions.Select(value => value.Id));
+        Assert.Equal(2, fixture.Seerr.Calls);
+    }
+
+    [Fact]
     public async Task Resolve_RepeatedConfigurationDriftExhaustsBoundedRetryAndFailsClosed()
     {
         using var fixture = new Fixture();
@@ -307,6 +322,19 @@ public sealed class PlatformNativeCatalogServiceTests
         var result = await fixture.Prepare(fixture.ActorA, resolved, "seerr-request");
 
         Assert.Equal(PlatformNativeCatalogOutcomeKind.NotFound, result.Kind);
+    }
+
+    [Fact]
+    public async Task Prepare_SeerrOwnerFailureInvalidatesPreparedAction()
+    {
+        using var fixture = new Fixture();
+        var resolved = await fixture.Service.ResolveAsync(fixture.ActorA, fixture.Request(), CancellationToken.None);
+        fixture.Seerr.Resolver = _ => throw new InvalidOperationException("provider secret");
+
+        var result = await fixture.Prepare(fixture.ActorA, resolved, "seerr-request");
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.NotFound, result.Kind);
+        Assert.Null(result.Response);
     }
 
     [Fact]

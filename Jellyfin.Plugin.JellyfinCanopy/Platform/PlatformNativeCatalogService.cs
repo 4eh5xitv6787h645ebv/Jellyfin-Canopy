@@ -337,11 +337,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
             if (item.Kind is HostItemKind.Movie or HostItemKind.Series)
             {
-                var presentation = await _seerr.ResolveItemRequestPresentationAsync(
+                var presentation = await ResolveSeerrPresentationAsync(
                     actor,
                     item,
                     cancellationToken).ConfigureAwait(false);
-                if (presentation.IsVisible)
+                if (presentation?.IsVisible is true)
                 {
                     if (client.SupportsContribution("status"))
                     {
@@ -400,13 +400,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         && hidden.Hidden == state.CurrentBoolean
                         && hidden.HiddenContentEnabled;
                 case PlatformNativePreparedFamily.Seerr:
-                    var presentation = await _seerr.ResolveItemRequestPresentationAsync(
+                    var presentation = await ResolveSeerrPresentationAsync(
                         actor,
                         item,
                         cancellationToken).ConfigureAwait(false);
-                    return MatchesSeerrPresentation(state, presentation);
+                    return presentation is not null && MatchesSeerrPresentation(state, presentation);
                 default:
                     return false;
+            }
+        }
+
+        private async Task<SeerrItemRequestPresentation?> ResolveSeerrPresentationAsync(
+            PlatformActor actor,
+            HostAccessibleItem item,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await _seerr.ResolveItemRequestPresentationAsync(
+                    actor,
+                    item,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 

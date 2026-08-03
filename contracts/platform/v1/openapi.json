@@ -554,7 +554,7 @@
           "Locale": {
             "type": "string",
             "maxLength": 64,
-            "pattern": "^[A-Za-z0-9_.-]+$"
+            "pattern": "^[A-Za-z0-9-]+$"
           }
         }
       },

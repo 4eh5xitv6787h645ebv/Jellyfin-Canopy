@@ -55,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         [InlineData("{}")]
         [InlineData("{\"Protocol\":1,\"SurfaceSchema\":1,\"Item\":{\"Id\":\"11111111-2222-3333-4444-555555555555\"},\"Client\":{}}")]
         [InlineData("{\"Protocol\":1,\"SurfaceSchema\":1,\"Item\":{\"Id\":\"11111111-2222-3333-4444-555555555555\"},\"Client\":{\"ContributionKinds\":[],\"FieldKinds\":[],\"InputModes\":[],\"Accessibility\":[],\"Locale\":\"../../bad\"}}")]
+        [InlineData("{\"Protocol\":1,\"SurfaceSchema\":1,\"Item\":{\"Id\":\"11111111-2222-3333-4444-555555555555\"},\"Client\":{\"ContributionKinds\":[],\"FieldKinds\":[],\"InputModes\":[],\"Accessibility\":[],\"Locale\":\"en_US\"}}")]
         [InlineData("{\"Protocol\":1,\"SurfaceSchema\":1,\"Item\":{\"Id\":\"11111111-2222-3333-4444-555555555555\"},\"Client\":{\"ContributionKinds\":[null],\"FieldKinds\":[],\"InputModes\":[],\"Accessibility\":[],\"Locale\":\"en\"}}")]
         [InlineData("{\"Protocol\":1,\"SurfaceSchema\":1,\"Item\":{\"Id\":\"11111111-2222-3333-4444-555555555555\"},\"Client\":{\"ContributionKinds\":[],\"FieldKinds\":[],\"InputModes\":[],\"Accessibility\":[],\"Locale\":\"en\"}} trailing")]
         public void MalformedOrIncompleteResolveBodiesFailClosed(string json)
