@@ -145,7 +145,7 @@
       "post": {
         "operationId": "resolveNativeItemDetail",
         "summary": "Resolve the current actor's bounded native item-detail contributions.",
-        "description": "Canopy re-authorizes the Jellyfin item and composes only the fixed Spoiler Guard, Hidden Content, and Seerr pilot families. Unknown or unavailable families are omitted. The response is capped at seven contributions. Opaque prepare handles carry no client-interpretable authority. This POST receives a strong ETag over its exact response bytes, but intentionally has no conditional-GET or 304 behavior because the bounded client capability body is part of the representation key.",
+        "description": "Canopy re-authorizes the Jellyfin item and composes only the fixed Spoiler Guard, Hidden Content, and Seerr pilot families. Unknown or unavailable families are omitted. The response is capped at twelve contributions, retaining bounded headroom for another native-safe family. Opaque prepare handles carry no client-interpretable authority. This POST receives a strong ETag over its exact response bytes, but intentionally has no conditional-GET or 304 behavior because the bounded client capability body is part of the representation key.",
         "x-canopy-validated-representation": true,
         "requestBody": {
           "required": true,
@@ -628,7 +628,7 @@
           },
           "Contributions": {
             "type": "array",
-            "maxItems": 7,
+            "maxItems": 12,
             "items": {
               "$ref": "#/components/schemas/PlatformNativeContribution"
             }

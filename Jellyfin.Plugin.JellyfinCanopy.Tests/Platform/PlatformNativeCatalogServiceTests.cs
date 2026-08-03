@@ -32,7 +32,7 @@ public sealed class PlatformNativeCatalogServiceTests
 
         Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, first.Kind);
         Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, second.Kind);
-        Assert.Equal(PlatformNativeCatalogBounds.MaximumContributions, first.Response!.Contributions.Length);
+        Assert.Equal(CompleteOrder.Length, first.Response!.Contributions.Length);
         Assert.Equal(CompleteOrder, first.Response.Contributions.Select(value => value.Id));
         Assert.Equal(first.Response.CatalogRevision, second.Response!.CatalogRevision);
         Assert.Equal(

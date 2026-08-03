@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// <summary>Wire and collection bounds shared by the native item-detail pilot.</summary>
     internal static class PlatformNativeCatalogBounds
     {
-        internal const int MaximumContributions = 7;
+        internal const int MaximumContributions = 12;
         internal const int MaximumFields = 8;
         internal const int MaximumOptions = 32;
         internal const int MaximumCapabilityValues = 16;
