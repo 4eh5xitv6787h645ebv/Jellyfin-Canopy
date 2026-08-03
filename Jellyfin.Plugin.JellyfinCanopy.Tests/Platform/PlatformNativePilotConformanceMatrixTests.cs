@@ -991,6 +991,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 return PlatformActionPortAdmission.Admit(new BooleanInput(enabled), new[] { enabled ? (byte)1 : (byte)0 });
             }
 
+            public Task<PlatformActionPortAdmission> ValidateCurrentAsync(
+                PlatformActor actor,
+                HostAccessibleItem item,
+                PlatformPreparedActionContext prepared,
+                ImmutableArray<PlatformActionAnswer> answers,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(ValidateCurrent(actor, item, prepared, answers));
+            }
+
             public async Task<PlatformActionOwnerResult> InvokeAsync(
                 PlatformActor actor,
                 HostAccessibleItem item,
@@ -1040,6 +1051,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 PlatformPreparedActionContext prepared,
                 ImmutableArray<PlatformActionAnswer> answers) =>
                 PlatformActionPortAdmission.Refuse(PlatformActionPortDecision.InvalidInput);
+
+            public Task<PlatformActionPortAdmission> ValidateCurrentAsync(
+                PlatformActor actor,
+                HostAccessibleItem item,
+                PlatformPreparedActionContext prepared,
+                ImmutableArray<PlatformActionAnswer> answers,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(ValidateCurrent(actor, item, prepared, answers));
+            }
 
             public Task<PlatformActionOwnerResult> InvokeAsync(
                 PlatformActor actor,
