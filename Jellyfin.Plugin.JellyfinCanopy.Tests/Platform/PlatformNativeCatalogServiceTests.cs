@@ -650,7 +650,7 @@ public sealed class PlatformNativeCatalogServiceTests
         }
 
         internal PlatformActor Actor(Guid userId, string? deviceId = "device-a")
-            => new(userId, false, "catalog-test", "Android TV", deviceId);
+            => PlatformActorTestFactory.Create(userId, false, "catalog-test", "Android TV", deviceId);
     }
 
     private sealed class BlockingLiveSessionRegistry : ILiveSessionRegistry, IDisposable

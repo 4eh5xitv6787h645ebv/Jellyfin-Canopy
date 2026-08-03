@@ -95,12 +95,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 return;
             }
 
-            var actor = new PlatformActor(
-                userId,
-                currentUser.Value.IsAdministrator,
+            var boundaryResult = PlatformUserBoundaryResult.EstablishAuthenticatedUserBoundary(
+                currentUser.Value,
                 PlatformCorrelation.For(context.HttpContext),
                 ReadAttribution(principal.Claims, ClientClaim, MaxClientNameBytes),
                 ReadAttribution(principal.Claims, DeviceIdClaim, MaxDeviceIdBytes));
+            var actor = PlatformActorFactory.CreateAuthenticatedUserActor(boundaryResult);
 
             context.HttpContext.Items[ActorItemsKey] = actor;
             await next().ConfigureAwait(false);
@@ -124,22 +124,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// Actor construction remains confined to this authority boundary even when a
         /// long-running action repeats its user lookup immediately before mutation.
         /// </summary>
-        internal static PlatformActor? Reauthorize(
+        internal static PlatformActor? ReauthorizeUserActor(
             PlatformActor boundaryActor,
-            HostUser? currentUser)
+            IPlatformHost host)
         {
             ArgumentNullException.ThrowIfNull(boundaryActor);
-            if (currentUser is not HostUser user || user.Id != boundaryActor.UserId)
+            ArgumentNullException.ThrowIfNull(host);
+
+            // The authority boundary owns the fresh lookup. Callers cannot supply a
+            // shaped HostUser or choose the elevation bit that crosses into the actor.
+            var currentUser = host.Users.Find(boundaryActor.UserId);
+            if (currentUser is not HostUser user
+                || user.Id == Guid.Empty
+                || user.Id != boundaryActor.UserId)
             {
                 return null;
             }
 
-            return new PlatformActor(
-                user.Id,
-                user.IsAdministrator,
-                boundaryActor.CorrelationId,
-                boundaryActor.ClientName,
-                boundaryActor.DeviceId);
+            var boundaryResult = PlatformUserBoundaryResult.EstablishReauthorizedUserBoundary(
+                boundaryActor,
+                user);
+            return PlatformActorFactory.CreateAuthenticatedUserActor(boundaryResult);
         }
 
         private static string? ReadAttribution(

@@ -29,7 +29,7 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
             expectedOverridesRevision: 7);
 
         var result = adapter.Configure(
-            new PlatformActor(userId, false, "correlation", null, null),
+            PlatformActorTestFactory.Create(userId, false, "correlation", null, null),
             new HostAccessibleItem(itemId, hostKind, seriesId: null, ImmutableArray<HostProviderReference>.Empty),
             configuration);
 
@@ -58,7 +58,7 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
         var itemId = Guid.NewGuid();
 
         var result = adapter.GetState(
-            new PlatformActor(userId, false, "correlation", "client", "device"),
+            PlatformActorTestFactory.Create(userId, false, "correlation", "client", "device"),
             new HostAccessibleItem(itemId, hostKind, seriesId: null, []));
 
         Assert.Same(owner.State, result);
@@ -78,11 +78,11 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
         var adapter = new SpoilerGuardPlatformItemActionAdapter(owner);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => adapter.Configure(
-            new PlatformActor(Guid.NewGuid(), false, "correlation", null, null),
+            PlatformActorTestFactory.Create(Guid.NewGuid(), false, "correlation", null, null),
             new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Episode, Guid.NewGuid(), []),
             SpoilerGuardItemConfiguration.Exact(false, 0)));
         Assert.Throws<ArgumentOutOfRangeException>(() => adapter.GetState(
-            new PlatformActor(Guid.NewGuid(), false, "correlation", null, null),
+            PlatformActorTestFactory.Create(Guid.NewGuid(), false, "correlation", null, null),
             new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Other, null, [])));
         Assert.Equal(0, owner.ConfigureCalls + owner.GetStateCalls);
     }
@@ -94,7 +94,7 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
         var adapter = new SpoilerGuardPlatformItemActionAdapter(owner);
 
         var exception = Assert.Throws<ArgumentException>(() => adapter.Configure(
-            new PlatformActor(Guid.NewGuid(), false, "correlation", null, null),
+            PlatformActorTestFactory.Create(Guid.NewGuid(), false, "correlation", null, null),
             new HostAccessibleItem(Guid.NewGuid(), HostItemKind.Movie, null, []),
             new SpoilerGuardItemConfiguration(enabled: true)));
 
@@ -136,7 +136,7 @@ public sealed class SpoilerGuardPlatformItemActionAdapterTests
             var adapter = new SpoilerGuardPlatformItemActionAdapter(
                 new SpoilerGuardItemActionOwner(manager));
             var result = adapter.Configure(
-                new PlatformActor(userId, false, "correlation", null, null),
+                PlatformActorTestFactory.Create(userId, false, "correlation", null, null),
                 new HostAccessibleItem(itemId, HostItemKind.Movie, seriesId: null, []),
                 SpoilerGuardItemConfiguration.Exact(enabled: true, expectedOverridesRevision: 17));
             var stored = manager.GetUserConfigurationStrict<UserSpoilerBlur>(

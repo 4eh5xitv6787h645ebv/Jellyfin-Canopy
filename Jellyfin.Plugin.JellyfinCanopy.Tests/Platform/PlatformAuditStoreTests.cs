@@ -298,7 +298,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var actualOversized = "bearer-" + new string('x', PlatformActorBoundaryFilter.MaxClientNameBytes);
             var logger = new RecordingLogger();
             var store = Store(logger);
-            var actor = new PlatformActor(Guid.NewGuid(), false, "canary-correlation", actualOversized, "device\ncanary");
+            var actor = PlatformActorTestFactory.Create(Guid.NewGuid(), false, "canary-correlation", actualOversized, "device\ncanary");
 
             using var attempt = store.Begin(actor, Operation(PlatformOperationFamily.Seerr));
             Assert.True(attempt.Complete(PlatformAuditResultCode.AuthorityDenied));
@@ -321,9 +321,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 timeProvider ?? new ManualTimeProvider(Start),
                 Enumerable.Repeat(keyByte, 32).Select(value => (byte)value).ToArray());
 
-        private static PlatformActor Actor(int value, string? client = "Android TV", string? device = "living-room") => new(
+        private static PlatformActor Actor(int value, string? client = "Android TV", string? device = "living-room") => PlatformActorTestFactory.Create(
             Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-            isElevated: value % 2 == 0,
+            value % 2 == 0,
             Correlation(value),
             client,
             device);

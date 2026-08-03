@@ -19,7 +19,12 @@ public sealed class PlatformNativeActionPortTests
         HostItemKind.Movie,
         seriesId: null,
         [new HostProviderReference("tmdb", "123")]);
-    private static readonly PlatformActor Actor = new(UserId, false, "action-port-test", "Android TV", "device-a");
+    private static readonly PlatformActor Actor = PlatformActorTestFactory.Create(
+        UserId,
+        false,
+        "action-port-test",
+        "Android TV",
+        "device-a");
 
     [Fact]
     public async Task Spoiler_ExactAnswerAndCurrentRevisionAreRequired_ThenSuccessRefreshesItemAndSurface()

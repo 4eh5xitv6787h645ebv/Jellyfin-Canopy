@@ -15,26 +15,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     /// </remarks>
     public sealed class PlatformActor
     {
-        internal PlatformActor(
-            Guid userId,
-            bool isElevated,
-            string correlationId,
-            string? clientName,
-            string? deviceId)
+        internal PlatformActor(PlatformUserBoundaryResult boundaryResult)
         {
-            if (userId == Guid.Empty)
-            {
-                throw new ArgumentException("An actor must have a non-empty user id.", nameof(userId));
-            }
-
-            ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
-
-            UserId = userId;
-            IsElevated = isElevated;
-            CorrelationId = correlationId;
-            ClientName = clientName;
-            DeviceId = deviceId;
+            ArgumentNullException.ThrowIfNull(boundaryResult);
+            UserId = boundaryResult.UserId;
+            IsElevated = boundaryResult.IsElevated;
+            CorrelationId = boundaryResult.CorrelationId;
+            ClientName = boundaryResult.ClientName;
+            DeviceId = boundaryResult.DeviceId;
         }
+
+        /// <summary>Gets the actor kind.</summary>
+        public PlatformActorKind Kind => PlatformActorKind.JellyfinUserClient;
 
         /// <summary>The authoritative authenticated Jellyfin user.</summary>
         public Guid UserId { get; }
@@ -50,5 +42,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Bounded caller-reported device identifier. Attribution only.</summary>
         public string? DeviceId { get; }
+
+        internal PlatformActorAuthority Authority =>
+            PlatformActorAuthority.ProjectAuthenticatedUserAuthority(IsElevated);
     }
 }

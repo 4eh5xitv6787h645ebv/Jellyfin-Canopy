@@ -29,12 +29,14 @@ const FROZEN = JSON.parse(
 );
 
 type Authority = 'anonymous' | 'authenticated' | 'elevated';
+type ActorKind = 'jellyfin-user-client' | 'installed-provider' | 'companion-service';
 
 type FrozenOperation = {
     path: string;
     method: string;
     operation: any;
     authority: Authority;
+    actorKinds: ActorKind[];
 };
 
 type JellyfinApiKey = {
@@ -139,11 +141,24 @@ function frozenOperations(): FrozenOperation[] {
                 ['anonymous', 'authenticated', 'elevated'],
                 `${method.toUpperCase()} ${path} must publish x-canopy-authority`,
             ).toContain(operation['x-canopy-authority']);
+            const actorKinds = operation['x-canopy-actor-kinds'];
+            expect(Array.isArray(actorKinds), `${method.toUpperCase()} ${path} must publish x-canopy-actor-kinds`)
+                .toBe(true);
+            for (const actorKind of actorKinds) {
+                expect(CONTRACT['x-canopy-actor-kind-vocabulary'], `${method.toUpperCase()} ${path} actor kind`)
+                    .toContain(actorKind);
+            }
+            const key = `${method} ${path}`;
+            expect(FROZEN.operationMetadata[key], `${key} must freeze authority metadata`).toEqual({
+                authority: operation['x-canopy-authority'],
+                actorKinds,
+            });
             operations.push({
                 path,
                 method,
                 operation,
                 authority: operation['x-canopy-authority'] as Authority,
+                actorKinds: actorKinds as ActorKind[],
             });
         }
     }
@@ -158,6 +173,9 @@ function frozenOperations(): FrozenOperation[] {
         .sort();
     expect(frozenInventory, 'frozen.json and openapi.json must expose the same operation inventory')
         .toEqual(specInventory);
+    expect(Object.keys(FROZEN.operationMetadata).sort(), 'every frozen operation must have exact authority metadata')
+        .toEqual(Object.keys(FROZEN.paths).flatMap(path =>
+            FROZEN.paths[path].map((method: string) => `${method} ${path}`)).sort());
     return operations;
 }
 
@@ -487,6 +505,11 @@ test.describe('Platform v1 contract — live smoke client', () => {
         };
 
         for (const frozen of frozenOperations()) {
+            expect(frozen.actorKinds, `${frozen.method.toUpperCase()} ${frozen.path} actor policy`).toEqual(
+                frozen.authority === 'anonymous' ? [] : ['jellyfin-user-client'],
+            );
+            expect(frozen.actorKinds).not.toContain('installed-provider');
+            expect(frozen.actorKinds).not.toContain('companion-service');
             for (const [actor, session] of Object.entries(sessions)) {
                 const allowed = frozen.authority === 'anonymous'
                     || (frozen.authority === 'authenticated' && actor !== 'anonymous')

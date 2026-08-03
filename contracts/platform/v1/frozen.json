@@ -17,6 +17,41 @@
       "post"
     ]
   },
+  "actorKindVocabulary": [
+    "jellyfin-user-client",
+    "installed-provider",
+    "companion-service"
+  ],
+  "operationMetadata": {
+    "get /JellyfinCanopy/Platform/v1/discovery": {
+      "authority": "anonymous",
+      "actorKinds": []
+    },
+    "get /JellyfinCanopy/Platform/v1/negotiate": {
+      "authority": "authenticated",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ]
+    },
+    "post /JellyfinCanopy/Platform/v1/surfaces/item-detail/resolve": {
+      "authority": "authenticated",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ]
+    },
+    "post /JellyfinCanopy/Platform/v1/actions/prepare": {
+      "authority": "authenticated",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ]
+    },
+    "post /JellyfinCanopy/Platform/v1/actions/invoke": {
+      "authority": "authenticated",
+      "actorKinds": [
+        "jellyfin-user-client"
+      ]
+    }
+  },
   "schemas": {
     "PlatformDiscoveryResponse": {
       "required": [

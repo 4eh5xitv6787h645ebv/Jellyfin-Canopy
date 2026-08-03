@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37759,
-        "totalLines": 47107
+        "coveredLines": 37908,
+        "totalLines": 47266
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 37759,
-        "maximumCoveredLines": 37759
+        "minimumCoveredLines": 37906,
+        "maximumCoveredLines": 37908
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The #638 EP-02 caller-identity change converges authority-relevant Jellyfin user resolution on one authenticated claims-only owner, binds administrator and Platform API-key classification to that same identity, closes role-only cross-user selection, and adds behavioral session-control and negative architecture coverage. Three clean local .NET 10.0.9 Coverlet runs on the identical final 47,107-line source and test scope each passed all 3,392 tests and reproduced exactly 37,759 covered lines. The reviewed observed high-water and exact clean-run floor are therefore both 37,759/47,107 (80.156%), so no instrumentation tolerance is required. Relative to the prior 37,685/47,087 high-water baseline, the change adds 20 instrumented lines, raises covered lines by 74, and increases overall coverage from 80.033% to 80.156%. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The #640 EP-02 actor-domain change adds the exact closed user/provider/service actor vocabulary, typed kernel-only construction proofs, one immutable authority projection, centralized operation kind/ceiling policy, and runtime/OpenAPI/frozen drift guards without activating provider or service routes. Reauthorization owns its fresh host lookup and no longer accepts caller-constructible HostUser input. Three clean local .NET 10.0.9 Coverlet runs on the identical final 47,266-line source and test scope each passed all 3,414 tests and measured 37,908, 37,906 and 37,906 covered lines. The reviewed observed high-water is therefore 37,908/47,266 (80.201%) and the exact observed floor is 37,906/47,266 (80.197%); the two-line tolerance is only the reproduced instrumentation envelope. Relative to the #638 baseline of 37,759/47,107 (80.156%), the change adds 159 instrumented lines and at least 147 covered lines while increasing overall coverage. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

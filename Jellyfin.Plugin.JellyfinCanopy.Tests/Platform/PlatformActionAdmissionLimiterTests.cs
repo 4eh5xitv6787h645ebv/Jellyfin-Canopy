@@ -142,7 +142,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         {
             Span<byte> bytes = stackalloc byte[16];
             BitConverter.TryWriteBytes(bytes, suffix);
-            return new PlatformActor(new Guid(bytes), false, new string('a', 32), null, null);
+            return PlatformActorTestFactory.Create(new Guid(bytes), false, new string('a', 32), null, null);
         }
     }
 }

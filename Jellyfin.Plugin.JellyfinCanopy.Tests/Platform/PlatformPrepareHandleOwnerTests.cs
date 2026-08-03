@@ -433,7 +433,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             string correlationId = "correlation",
             string? clientName = "android-tv",
             string? deviceId = "device-a")
-            => new(userId ?? UserId, elevated, correlationId, clientName, deviceId);
+            => PlatformActorTestFactory.Create(
+                userId ?? UserId,
+                elevated,
+                correlationId,
+                clientName,
+                deviceId);
 
         private static Guid User(int value)
         {
