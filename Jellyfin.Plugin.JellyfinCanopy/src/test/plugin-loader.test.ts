@@ -1398,9 +1398,10 @@ describe('plugin.js loader guards', () => {
         expect(isNotFound(new TypeError('network failed'))).toBe(false);
     });
 
-    it('fails a five-file owner read on transient errors but defaults a genuine 404', async () => {
+    it('serializes the five-file owner read and fails closed before publication', async () => {
         const fetchSource = extractFunctionSource('fetchUserConfig');
         const notFoundSource = extractFunctionSource('isNotFoundError');
+        const runSource = extractFunctionSource('runInitialization') || '';
         expect(fetchSource, 'fetchUserConfig not found').toBeTruthy();
         expect(notFoundSource, 'isNotFoundError not found').toBeTruthy();
         type AjaxOptions = { url: string };
@@ -1454,21 +1455,25 @@ describe('plugin.js loader guards', () => {
                     }
                 }
                 : {};
-        const transientError = Object.assign(new Error('temporary server failure'), { status: 503 });
-        const transientAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
-            ? Promise.reject(transientError)
-            : Promise.resolve(validUserFile(options)));
-
-        await expect(fetchUserConfig({ getUrl: (path) => path, ajax: transientAjax }, context, scope))
-            .rejects.toBe(transientError);
-        expect(transientAjax).toHaveBeenCalledTimes(5);
-
-        const malformedAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
-            ? Promise.resolve(null)
-            : Promise.resolve(validUserFile(options)));
-        await expect(fetchUserConfig({ getUrl: (path) => path, ajax: malformedAjax }, context, scope))
-            .rejects.toThrow('Invalid settings user-settings response');
-        expect(malformedAjax).toHaveBeenCalledTimes(5);
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const serialAjax = vi.fn(async (options: AjaxOptions) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await Promise.resolve();
+            inFlight--;
+            return validUserFile(options);
+        });
+        const completeSnapshot = await fetchUserConfig(
+            { getUrl: (path) => path, ajax: serialAjax },
+            context,
+            scope,
+        );
+        expect(serialAjax).toHaveBeenCalledTimes(5);
+        expect(maxInFlight).toBe(1);
+        expect(Object.keys(completeSnapshot)).toEqual([
+            'settings', 'shortcuts', 'bookmark', 'elsewhere', 'hiddenContent',
+        ]);
 
         const missingError = Object.assign(new Error('missing'), { status: 404 });
         const missingAjax = vi.fn((options: AjaxOptions) => options.url.includes('shortcuts.json')
@@ -1491,6 +1496,31 @@ describe('plugin.js loader guards', () => {
             : Promise.resolve({}));
         await expect(fetchUserConfig({ getUrl: (path) => path, ajax: missingBookmarkAjax }, context, scope))
             .rejects.toBe(missingError);
+        expect(missingBookmarkAjax).toHaveBeenCalledTimes(3);
+
+        const transientError = Object.assign(new Error('temporary server failure'), { status: 503 });
+        const transientAjax = vi.fn((options: AjaxOptions) => options.url.includes('bookmark.json')
+            ? Promise.reject(transientError)
+            : Promise.resolve(validUserFile(options)));
+        const published = { value: 'unchanged' as unknown };
+
+        await expect(fetchUserConfig({ getUrl: (path) => path, ajax: transientAjax }, context, scope)
+            .then((value) => { published.value = value; }))
+            .rejects.toBe(transientError);
+        expect(transientAjax).toHaveBeenCalledTimes(3);
+        expect(published.value).toBe('unchanged');
+
+        const malformedAjax = vi.fn((options: AjaxOptions) => options.url.includes('settings.json')
+            ? Promise.resolve(null)
+            : Promise.resolve(validUserFile(options)));
+        await expect(fetchUserConfig({ getUrl: (path) => path, ajax: malformedAjax }, context, scope))
+            .rejects.toThrow('Invalid settings user-settings response');
+        expect(malformedAjax).toHaveBeenCalledTimes(5);
+
+        const aggregate = runSource.indexOf('const [userConfig, currentUser, pluginData, privateConfig, translations] = await Promise.all([');
+        const publication = runSource.indexOf('publishIdentitySnapshot(context, {');
+        expect(aggregate).toBeGreaterThanOrEqual(0);
+        expect(publication).toBeGreaterThan(aggregate);
     });
 
     it('does not downgrade current-user failure and encodes every loader user path', () => {

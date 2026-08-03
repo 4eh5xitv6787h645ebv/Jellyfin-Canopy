@@ -1912,7 +1912,14 @@
             ['elsewhere', 'elsewhere.json'],
             ['hiddenContent', 'hidden-content.json']
         ];
-        const results = await Promise.all(files.map(async ([name, file]) => {
+        const results = [];
+        // Jellyfin 12 can still be finishing its cold-start database work when
+        // the web client authenticates. Keep this one logical owner read
+        // strictly serial so its five host-authenticated requests cannot fan
+        // out against that shared database boundary. The snapshot remains
+        // unpublished until every file belongs to the current identity.
+        for (const [name, file] of files) {
+            requireCurrentIdentity(context);
             try {
                 const request = client.ajax({
                     type: 'GET',
@@ -1921,19 +1928,24 @@
                     signal: scope.signal
                 });
                 const value = await scope.race(request);
-                return { name, value, missing: false };
+                requireCurrentIdentity(context);
+                results.push({ name, value, missing: false });
             } catch (reason) {
                 // The bookmark controller represents a genuinely missing file
                 // as a valid revision-0 state. A 404 therefore means the
                 // versioned endpoint itself was unavailable; never fabricate a
                 // mutation-capable empty bookmark snapshot from it.
-                if (isNotFoundError(reason) && name !== 'bookmark') return { name, value: null, missing: true };
+                if (isNotFoundError(reason) && name !== 'bookmark') {
+                    requireCurrentIdentity(context);
+                    results.push({ name, value: null, missing: true });
+                    continue;
+                }
                 // Authentication, transport, server, cancellation, and malformed
                 // success failures must abort this initialization. Publishing a
                 // fabricated empty owner snapshot would erase real preferences.
                 throw reason;
             }
-        }));
+        }
         requireCurrentIdentity(context);
 
         const snapshot = emptyUserConfig();
