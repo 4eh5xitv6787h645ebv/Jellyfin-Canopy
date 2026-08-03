@@ -222,6 +222,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 .Select(attribute => attribute.ImplementationType)
                 .ToList();
 
+            Assert.Contains(typeof(PlatformAcceptMediaTypeFilter), filters);
             Assert.Contains(typeof(PlatformJsonMediaTypeFilter), filters);
             Assert.Contains(typeof(PlatformJsonResultFilter), filters);
             Assert.IsAssignableFrom<IAsyncAlwaysRunResultFilter>(new PlatformJsonResultFilter());

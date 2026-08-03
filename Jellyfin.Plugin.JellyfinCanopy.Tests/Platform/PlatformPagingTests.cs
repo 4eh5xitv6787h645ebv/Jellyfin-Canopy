@@ -222,6 +222,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             var token = Codec().Encode(Scope, "000005");
 
             Assert.DoesNotContain("000005", token, StringComparison.Ordinal);
+            Assert.Matches("^[A-Za-z0-9_-]+$", token);
+            Assert.DoesNotContain("://", token, StringComparison.Ordinal);
+            Assert.DoesNotContain('/', token);
+            Assert.DoesNotContain('?', token);
+            Assert.DoesNotContain('#', token);
+            Assert.False(token.StartsWith("/", StringComparison.Ordinal));
         }
 
         [Fact]

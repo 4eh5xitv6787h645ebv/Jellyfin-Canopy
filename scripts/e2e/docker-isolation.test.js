@@ -40,6 +40,7 @@ function runSeed(overrides = {}) {
         'JF_USER_PASS',
         'JF_ALLOW_NON_LOOPBACK',
         'JF_BIND_ADDRESS',
+        'JF_BASE_PATH',
         'JF_CPUS',
         'JF_E2E_PROJECT',
         'JF_E2E_IMAGE_PREFETCHED',
@@ -230,6 +231,16 @@ test('port zero is discovered from the owned container and recorded without cred
     assert.doesNotMatch(resultBuilder, /ADMIN_(?:USER|PASS)|USER_(?:NAME|PASS)|TOKEN/);
 });
 
+test('optional reverse-proxy base path is canonical, persisted, restarted, and recorded', () => {
+    assert.match(seed, /BASE_PATH="\$\{JF_BASE_PATH:-\}"/);
+    assert.match(seed, /System\/Configuration\/network/);
+    assert.match(seed, /'\.BaseUrl = \$basePath'/);
+    assert.match(seed, /restart jellyfin/);
+    assert.match(seed, /BASE="\$\{ROOT_BASE\}\$\{BASE_PATH\}"/);
+    assert.match(seed, /System\/Info\/Public JSON under JF_BASE_PATH/);
+    assert.match(seed, /Platform discovery unexpectedly bypassed the configured JF_BASE_PATH/);
+});
+
 test('a declared image prefetch is verified locally instead of pulled again', () => {
     assert.match(seed, /JF_E2E_IMAGE_PREFETCHED:-false/);
     assert.match(seed, /docker image inspect "\$\{IMAGE\}"/);
@@ -292,6 +303,20 @@ test('seed rejects unsafe namespaces and exposure before invoking Compose', (t) 
     const rootState = runSeed({ JF_E2E_STATE_DIR: '/' });
     assert.notEqual(rootState.status, 0);
     assert.match(rootState.stderr, /must not be the filesystem root/);
+
+    for (const unsafeBasePath of ['jf', '/', '/jf/', '/jf//nested', '/./jf', '/../jf', '/jf?query']) {
+        const invalidBasePath = runSeed({ JF_BASE_PATH: unsafeBasePath });
+        assert.notEqual(invalidBasePath.status, 0);
+        assert.match(invalidBasePath.stderr, /JF_BASE_PATH/);
+    }
+
+    const canonicalBasePath = runSeed({
+        JF_BASE_PATH: '/jf/nested-1',
+        JF_E2E_SEED_ID: 'invalid/after-base-path-check',
+    });
+    assert.notEqual(canonicalBasePath.status, 0);
+    assert.match(canonicalBasePath.stderr, /JF_E2E_SEED_ID may contain only/);
+    assert.doesNotMatch(canonicalBasePath.stderr, /JF_BASE_PATH/);
 });
 
 test('custom state claim is exact and symlink paths fail closed', (t) => {

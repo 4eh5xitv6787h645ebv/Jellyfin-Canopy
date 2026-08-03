@@ -333,6 +333,20 @@ interface LoginAttemptResult {
     diagnostic: string;
 }
 
+/** Preserve Jellyfin's configured reverse-proxy path when opening its web client. */
+function configuredWebClientUrl(): string {
+    const configuredBase = process.env.JF_BASE_URL?.trim();
+    if (!configuredBase) {
+        return '/web/';
+    }
+
+    const target = new URL(configuredBase);
+    target.pathname = `${target.pathname.replace(/\/+$/, '')}/web/`;
+    target.search = '';
+    target.hash = '';
+    return target.toString();
+}
+
 function failedDecision(decision: AuthSessionDecision, timedOut = false): LoginAttemptResult {
     return {
         ok: false,
@@ -384,7 +398,7 @@ async function attemptLogin(
     password: string,
     consoleErrors?: ConsoleErrors
 ): Promise<LoginAttemptResult> {
-    await page.goto('/web/', { waitUntil: 'domcontentloaded' });
+    await page.goto(configuredWebClientUrl(), { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(
         () => typeof (window as any).ApiClient?.authenticateUserByName === 'function',
         undefined,

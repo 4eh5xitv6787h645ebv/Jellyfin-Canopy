@@ -25,6 +25,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// <summary>The request body is not carried as a JSON media type.</summary>
         public const string UnsupportedMediaType = "unsupported_media_type";
 
+        /// <summary>The caller excluded the JSON representation returned by Platform v1.</summary>
+        public const string NotAcceptable = "not_acceptable";
+
         /// <summary>No protocol version is common to the client and this host. See the negotiate endpoint.</summary>
         public const string UnsupportedProtocol = "unsupported_protocol";
 
@@ -65,6 +68,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             {
                 [InvalidRequest] = (400, false),
                 [UnsupportedMediaType] = (415, false),
+                [NotAcceptable] = (406, false),
                 [UnsupportedProtocol] = (400, false),
                 [NotFound] = (404, false),
                 [Conflict] = (409, false),
