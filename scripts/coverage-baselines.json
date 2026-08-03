@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 37085,
-        "totalLines": 46439
+        "coveredLines": 37089,
+        "totalLines": 46443
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 37084,
-        "maximumCoveredLines": 37085
+        "minimumCoveredLines": 37088,
+        "maximumCoveredLines": 37089
       },
       "tolerance": {
         "missingCoveredLines": 1,
-        "rationale": "The Android native live-invalidation audit reuses the bounded live-session registry after a successful authenticated Platform v1 item-detail resolve. The service records only the boundary-validated device attribution with the authoritative actor user while unsupported, not-found, unavailable, disabled, and no-device paths remain ineligible; send-time delivery still requires that same user to have a live session on the device. Three clean successful Coverlet runs on the identical 2026-08-03 source and 46,439-line scope each passed all 3,285 server tests and observed 37,085, 37,084, and 37,084 covered lines. The five added instrumented production lines are covered in the retained report; the one-line aggregate spread remains within the existing reviewed timing-sensitive tolerance and no new Platform line requires tolerance. Relative to the completed pilot baseline of 37,080/46,434 (79.855%), this change adds five instrumented lines and raises the observed high-water by five covered lines to 37,085/46,439 (79.857%). The floor is the directly observed 37,084/46,439 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The native live-invalidation linearization fix registers the validated device/user before a final post-composition configuration-generation read. A concurrent save therefore either observes the registered device or makes the resolve retry/fail instead of publishing stale state; a request that starts an attempt while Platform is disabled now fails unavailable without registration. Three clean successful Coverlet runs on the identical 2026-08-03 source and 46,443-line scope each passed all 3,286 server tests and observed 37,089, 37,089, and 37,088 covered lines. The four added instrumented production lines are covered in the retained report; the one-line aggregate spread remains within the existing reviewed timing-sensitive tolerance and no new Platform line requires tolerance. Relative to the native-registration baseline of 37,085/46,439 (79.857%), this fix adds four instrumented lines and raises the observed high-water by four covered lines to 37,089/46,443 (79.859%). The floor is the directly observed 37,088/46,443 minimum, exactly one line below the maintained high-water. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

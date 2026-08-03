@@ -92,7 +92,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
 
                 var configuration = _configuration.GetSnapshot();
-                if (configuration.Configuration is null || configuration.Revision < 0)
+                if (configuration.Configuration is null
+                    || configuration.Revision < 0
+                    || !configuration.Configuration.PlatformEnabled)
                 {
                     return new PlatformNativeCatalogOutcome(PlatformNativeCatalogOutcomeKind.Unavailable);
                 }
@@ -191,15 +193,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     throw new InvalidOperationException("The fixed native catalog exceeded its reviewed contribution bound.");
                 }
 
-                // A successful authenticated resolve is the native client's explicit
-                // participation signal for the existing inert config-changed marker.
-                // DeviceId remains attribution only: the registry binds it to the
-                // authoritative actor user, and LiveNotifierService later requires
-                // that same user to have a live session on the device before sending.
-                if (finalConfiguration.Configuration!.PlatformEnabled
-                    && final.Actor.DeviceId is { } deviceId)
+                // Registration must precede the final generation read. A concurrent
+                // config save then either observes this device and sends its marker,
+                // or is detected below so this attempt cannot publish stale state.
+                // A raced failed attempt can leave a TTL-bound provisional entry; it
+                // cannot be removed safely over a newer resolve, and remains harmless
+                // because the carrier is inert and delivery requires this same user
+                // to have a live session on the device.
+                if (final.Actor.DeviceId is { } deviceId)
                 {
                     _liveSessions.Touch(deviceId, final.Actor.UserId);
+                }
+
+                var publicationConfiguration = _configuration.GetSnapshot();
+                if (publicationConfiguration.Revision != finalConfiguration.Revision
+                    || publicationConfiguration.Configuration?.PlatformEnabled != true)
+                {
+                    continue;
                 }
 
                 return new PlatformNativeCatalogOutcome(

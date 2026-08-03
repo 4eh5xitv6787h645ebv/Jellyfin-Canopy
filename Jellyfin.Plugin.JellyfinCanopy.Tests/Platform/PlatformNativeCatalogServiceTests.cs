@@ -63,6 +63,37 @@ public sealed class PlatformNativeCatalogServiceTests
     }
 
     [Fact]
+    public async Task Resolve_DisableAfterSecondSnapshotCannotPublishStaleCatalog()
+    {
+        using var liveSessions = new BlockingLiveSessionRegistry();
+        using var fixture = new Fixture(liveSessions);
+        var resolving = Task.Run(() => fixture.Service.ResolveAsync(
+            fixture.ActorA,
+            fixture.Request(),
+            CancellationToken.None));
+
+        await liveSessions.TouchEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fixture.Configuration.Current = new PluginConfiguration
+        {
+            PlatformEnabled = false,
+            SpoilerBlurEnabled = true,
+            HiddenContentEnabled = true,
+        };
+        liveSessions.Release();
+
+        var result = await resolving.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(PlatformNativeCatalogOutcomeKind.Unavailable, result.Kind);
+        Assert.Null(result.Response);
+        // The provisional entry is intentionally retained: removing it could erase
+        // a newer resolve, while send-time same-user/live-session validation and the
+        // inert marker make the bounded stale entry safe.
+        Assert.Equal(
+            new LiveSessionEntry("device-a", Fixture.UserA),
+            Assert.Single(liveSessions.GetActiveEntries()));
+    }
+
+    [Fact]
     public async Task Resolve_SuccessWithoutValidatedDeviceAttributionDoesNotRegister()
     {
         using var fixture = new Fixture();
@@ -129,7 +160,7 @@ public sealed class PlatformNativeCatalogServiceTests
 
             // The HTTP availability filter normally prevents this direct service
             // call. Defense in depth keeps the bypass ineligible for live pushes.
-            Assert.Equal(PlatformNativeCatalogOutcomeKind.Success, result.Kind);
+            Assert.Equal(PlatformNativeCatalogOutcomeKind.Unavailable, result.Kind);
             Assert.Empty(disabled.LiveSessions.GetActiveEntries());
         }
     }
@@ -521,7 +552,7 @@ public sealed class PlatformNativeCatalogServiceTests
         private readonly PlatformActionCapabilityService _capabilities;
         private readonly PlatformNativeCatalogRevisionAuthority _revisions;
 
-        internal Fixture()
+        internal Fixture(ILiveSessionRegistry? liveSessions = null)
         {
             var clock = new ManualTimeProvider(new DateTimeOffset(2026, 8, 3, 0, 0, 0, TimeSpan.Zero));
             Host = new FakeHost(new HostAccessibleItem(
@@ -545,7 +576,7 @@ public sealed class PlatformNativeCatalogServiceTests
                 clock,
                 Enumerable.Repeat((byte)0x42, 32).ToArray());
             _revisions = new PlatformNativeCatalogRevisionAuthority(Enumerable.Repeat((byte)0x43, 32).ToArray());
-            LiveSessions = new LiveSessionRegistry();
+            LiveSessions = liveSessions ?? new LiveSessionRegistry();
             Service = new PlatformNativeCatalogService(
                 Host,
                 Configuration,
@@ -572,7 +603,7 @@ public sealed class PlatformNativeCatalogServiceTests
 
         internal PlatformNativeCatalogService Service { get; }
 
-        internal LiveSessionRegistry LiveSessions { get; }
+        internal ILiveSessionRegistry LiveSessions { get; }
 
         internal PlatformActor ActorA { get; }
 
@@ -620,6 +651,38 @@ public sealed class PlatformNativeCatalogServiceTests
 
         internal PlatformActor Actor(Guid userId, string? deviceId = "device-a")
             => new(userId, false, "catalog-test", "Android TV", deviceId);
+    }
+
+    private sealed class BlockingLiveSessionRegistry : ILiveSessionRegistry, IDisposable
+    {
+        private readonly LiveSessionRegistry _inner = new();
+        private readonly ManualResetEventSlim _release = new(initialState: false);
+        private int _touches;
+
+        internal TaskCompletionSource TouchEntered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Touch(string deviceId, Guid userId)
+        {
+            if (Interlocked.Increment(ref _touches) == 1)
+            {
+                TouchEntered.TrySetResult();
+                _release.Wait();
+            }
+
+            _inner.Touch(deviceId, userId);
+        }
+
+        public IReadOnlyList<LiveSessionEntry> GetActiveEntries()
+            => _inner.GetActiveEntries();
+
+        internal void Release() => _release.Set();
+
+        public void Dispose()
+        {
+            _release.Set();
+            _release.Dispose();
+        }
     }
 
     private sealed class FakeHost : IPlatformHost, IHostUsers, IHostLibrary, IHostSessions, IHostPlugins
