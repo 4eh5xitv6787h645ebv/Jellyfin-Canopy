@@ -149,10 +149,6 @@
       "reason": "ADR-0010 defines the additive-only rule the Platform v1 contract gate enforces."
     },
     {
-      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/tree/main/contracts/platform/v1",
-      "reason": "The published Platform v1 contract artifacts a client author builds against."
-    },
-    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -171,6 +167,14 @@
     {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/security/advisories/new",
       "reason": "Canonical private vulnerability-reporting route used by support intake."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/tree/main/contracts/platform/v1",
+      "reason": "The published Platform v1 contract artifacts a client author builds against."
+    },
+    {
+      "url": "https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv",
+      "reason": "First-party Android TV client repository, referenced by the Android TV client developer guide."
     },
     {
       "url": "https://github.com/BobHasNoSoul/",
@@ -202,6 +206,10 @@
     },
     {
       "url": "https://github.com/IAmParadox27/jellyfin-plugin-pages",
+      "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://github.com/Namo2/InPlayerEpisodePreview/",
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
@@ -249,10 +257,6 @@
       "reason": "Historical upstream attribution or source reference."
     },
     {
-      "url": "https://github.com/Namo2/InPlayerEpisodePreview/",
-      "reason": "Reviewed public third-party documentation or asset."
-    },
-    {
       "url": "https://github.com/ranaldsgift/KefinTweaks",
       "reason": "Reviewed public third-party documentation or asset."
     },
@@ -261,7 +265,7 @@
       "reason": "Reviewed public third-party documentation or asset."
     },
     {
-      "url": "https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=n00bcodr&button_colour=FFDD00&font_colour=000000&font_family=Ubuntu&outline_colour=000000&coffee_colour=ffffff",
+      "url": "https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=\u2615&slug=n00bcodr&button_colour=FFDD00&font_colour=000000&font_family=Ubuntu&outline_colour=000000&coffee_colour=ffffff",
       "reason": "Historical upstream attribution or source reference."
     },
     {
