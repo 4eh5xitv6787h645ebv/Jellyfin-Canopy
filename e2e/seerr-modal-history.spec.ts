@@ -1096,7 +1096,13 @@ test.describe('Seerr modal history ownership', () => {
 
         await page.evaluate(() => {
             const stableHref = location.href;
-            const proof = { arrivals: [] as string[], writeState: null as unknown };
+            const proof = {
+                arrivals: [] as string[],
+                backDescriptorRestored: false,
+                phaseAtBack: null as string | null,
+                replaceRuns: 0,
+                writeState: null as unknown,
+            };
             (window as any).__jcLateReplaceProof = proof;
             window.addEventListener('popstate', (event) => {
                 const value = (event.state as { jcHistoryProof?: unknown } | null)?.jcHistoryProof;
@@ -1116,27 +1122,61 @@ test.describe('Seerr modal history ownership', () => {
                 onSave: () => undefined,
             });
             handle.show();
+
+            // The close owner defers its Back to a timer, but another timer
+            // cannot deterministically run after Back is issued and before its
+            // asynchronous pop. Interpose exactly one real Back, restoring any
+            // host-owned wrapper before calling it, then perform the adversarial
+            // copied-marker replace synchronously after the traversal is issued.
+            const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
+            const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+            const originalBack = history.back.bind(history);
+            const restoreBack = () => {
+                if (ownBackDescriptor) {
+                    Object.defineProperty(history, 'back', ownBackDescriptor);
+                } else {
+                    delete (history as { back?: () => void }).back;
+                }
+            };
+            Object.defineProperty(history, 'back', {
+                configurable: true,
+                writable: true,
+                value: () => {
+                    restoreBack();
+                    const restoredBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+                    proof.backDescriptorRestored = ownBackDescriptor
+                        ? restoredBackDescriptor?.configurable === ownBackDescriptor.configurable
+                            && restoredBackDescriptor?.enumerable === ownBackDescriptor.enumerable
+                            && restoredBackDescriptor?.get === ownBackDescriptor.get
+                            && restoredBackDescriptor?.set === ownBackDescriptor.set
+                            && restoredBackDescriptor?.value === ownBackDescriptor.value
+                            && restoredBackDescriptor?.writable === ownBackDescriptor.writable
+                        : restoredBackDescriptor === undefined;
+                    proof.phaseAtBack = owner.pendingOwnedTraversal?.phase ?? null;
+                    originalBack();
+                    proof.replaceRuns += 1;
+                    History.prototype.replaceState.call(
+                        history,
+                        {
+                            ...(history.state as Record<string, unknown>),
+                            jcHistoryProof: 'late-replace-route-b',
+                            preservedB: { exact: 29 },
+                            usr: null,
+                        },
+                        '',
+                        stableHref
+                    );
+                    owner.historyObserver?.({
+                        source: 'replaceState',
+                        action: 'REPLACE',
+                        state: history.state,
+                        href: location.href,
+                    });
+                    proof.writeState = structuredClone(history.state);
+                },
+            });
+
             handle.close();
-            setTimeout(() => {
-                History.prototype.replaceState.call(
-                    history,
-                    {
-                        ...(history.state as Record<string, unknown>),
-                        jcHistoryProof: 'late-replace-route-b',
-                        preservedB: { exact: 29 },
-                        usr: null,
-                    },
-                    '',
-                    stableHref
-                );
-                (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2.historyObserver?.({
-                    source: 'replaceState',
-                    action: 'REPLACE',
-                    state: history.state,
-                    href: location.href,
-                });
-                proof.writeState = structuredClone(history.state);
-            }, 0);
         });
 
         await page.waitForFunction(() => {
@@ -1151,7 +1191,6 @@ test.describe('Seerr modal history ownership', () => {
             preservedB: { exact: 29 },
             usr: null,
         });
-
         await page.evaluate(() => history.back());
         await page.waitForFunction(
             () => (window as any).__jcLateReplaceProof.arrivals.at(-1) === 'late-replace-route-a',
@@ -1164,6 +1203,15 @@ test.describe('Seerr modal history ownership', () => {
             undefined,
             { timeout: 30_000 }
         );
+        expect(await page.evaluate(() => ({
+            backDescriptorRestored: (window as any).__jcLateReplaceProof.backDescriptorRestored,
+            phaseAtBack: (window as any).__jcLateReplaceProof.phaseAtBack,
+            replaceRuns: (window as any).__jcLateReplaceProof.replaceRuns,
+        }))).toEqual({
+            backDescriptorRestored: true,
+            phaseAtBack: 'issued',
+            replaceRuns: 1,
+        });
 
         assertNoRuntimeErrors(consoleErrors);
     });
