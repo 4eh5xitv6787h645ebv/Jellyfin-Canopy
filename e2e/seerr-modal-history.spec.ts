@@ -282,25 +282,51 @@ test.describe('Seerr modal history ownership', () => {
             handle.show();
             (window as any).__jcLateCapProof = {
                 lengthBeforeClose: history.length,
+                phaseAtBack: null as string | null,
                 proof,
+                pushRuns: 0,
             };
+
+            const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
+            const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+            const originalBack = history.back.bind(history);
+            const restoreBack = () => {
+                if (ownBackDescriptor) {
+                    Object.defineProperty(history, 'back', ownBackDescriptor);
+                } else {
+                    delete (history as { back?: () => void }).back;
+                }
+            };
+            Object.defineProperty(history, 'back', {
+                configurable: true,
+                writable: true,
+                value: () => {
+                    restoreBack();
+                    (window as any).__jcLateCapProof.phaseAtBack =
+                        owner.pendingOwnedTraversal?.phase ?? null;
+                    originalBack();
+                    (window as any).__jcLateCapProof.pushRuns += 1;
+                    History.prototype.pushState.call(
+                        history,
+                        {
+                            jcHistoryProof: 'late-cap-route-b',
+                            payload: new Blob(
+                                ['capped-target'],
+                                { type: 'application/octet-stream' }
+                            ),
+                        },
+                        '',
+                        `${documentPath}#/search?jcHistoryProof=late-cap-route-b`
+                    );
+                    owner.historyObserver?.({
+                        source: 'pushState',
+                        state: history.state,
+                        href: location.href,
+                    });
+                },
+            });
+
             handle.close();
-            setTimeout(() => {
-                History.prototype.pushState.call(
-                    history,
-                    {
-                        jcHistoryProof: 'late-cap-route-b',
-                        payload: new Blob(['capped-target'], { type: 'application/octet-stream' }),
-                    },
-                    '',
-                    `${documentPath}#/search?jcHistoryProof=late-cap-route-b`
-                );
-                (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2.historyObserver?.({
-                    source: 'pushState',
-                    state: history.state,
-                    href: location.href,
-                });
-            }, 0);
         });
 
         await page.waitForFunction(() => {
@@ -314,9 +340,13 @@ test.describe('Seerr modal history ownership', () => {
         const capProof = await page.evaluate(() => ({
             proof: [...(window as any).__jcLateCapProof.proof],
             lengthBeforeClose: (window as any).__jcLateCapProof.lengthBeforeClose,
+            phaseAtBack: (window as any).__jcLateCapProof.phaseAtBack,
+            pushRuns: (window as any).__jcLateCapProof.pushRuns,
             isFirefox: navigator.userAgent.includes('Firefox/'),
         }));
         expect(capProof.proof).toEqual(['closed']);
+        expect(capProof.phaseAtBack).toBe('issued');
+        expect(capProof.pushRuns).toBe(1);
         expect(capProof.lengthBeforeClose).toBeGreaterThanOrEqual(50);
         if (!capProof.isFirefox) expect(capProof.lengthBeforeClose).toBe(50);
 
@@ -550,6 +580,8 @@ test.describe('Seerr modal history ownership', () => {
             window.removeEventListener('popstate', modalListener, true);
             const proof = {
                 laterStates: [] as Array<string | null>,
+                phaseAtBack: null as string | null,
+                pushRuns: 0,
                 rewriteRuns: 0,
             };
             (window as any).__jcSyncCanonicalProof = proof;
@@ -574,14 +606,40 @@ test.describe('Seerr modal history ownership', () => {
                 );
             });
 
+            // The close owner deliberately defers its Back to a zero-delay
+            // timer. A second zero-delay timer is not a deterministic way to
+            // place B after that Back was issued but before its asynchronous
+            // pop: the browser may run the traversal task between the two timer
+            // tasks, making the later push too late for canonicalization.
+            // Interpose exactly one real history.back call so the adversarial
+            // push happens synchronously after Back is issued. Restore the
+            // instance method first and preserve any host-owned wrapper.
+            const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+            const originalBack = history.back.bind(history);
+            const restoreBack = () => {
+                if (ownBackDescriptor) {
+                    Object.defineProperty(history, 'back', ownBackDescriptor);
+                } else {
+                    delete (history as { back?: () => void }).back;
+                }
+            };
+            Object.defineProperty(history, 'back', {
+                configurable: true,
+                writable: true,
+                value: () => {
+                    restoreBack();
+                    proof.phaseAtBack = owner.pendingOwnedTraversal?.phase ?? null;
+                    originalBack();
+                    proof.pushRuns += 1;
+                    history.pushState(
+                        { jcHistoryProof: 'sync-canonical-route-b' },
+                        '',
+                        stableHref
+                    );
+                },
+            });
+
             handle.close();
-            setTimeout(() => {
-                history.pushState(
-                    { jcHistoryProof: 'sync-canonical-route-b' },
-                    '',
-                    stableHref
-                );
-            }, 0);
         });
 
         await page.waitForFunction(() => {
@@ -597,6 +655,8 @@ test.describe('Seerr modal history ownership', () => {
         }, undefined, { polling: 50, timeout: 30_000 });
         expect(await page.evaluate(() => (window as any).__jcSyncCanonicalProof)).toEqual({
             laterStates: ['sync-canonical-route-b'],
+            phaseAtBack: 'issued',
+            pushRuns: 1,
             rewriteRuns: 1,
         });
 
