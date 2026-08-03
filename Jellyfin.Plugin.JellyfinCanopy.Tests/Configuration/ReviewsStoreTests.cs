@@ -167,6 +167,54 @@ public sealed class ReviewsStoreTests : IDisposable
     }
 
     [Fact]
+    public void ImmediateQuarantineGroups_AreUniqueAndRetainNewestFive()
+    {
+        Directory.CreateDirectory(ConfigDir);
+        var manager = Manager();
+        var store = typeof(UserConfigurationManager)
+            .GetField("_reviews", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(manager)!;
+        var quarantine = store.GetType()
+            .GetMethod("MoveCorruptDatabaseGroup", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var database = Path.Combine(ConfigDir, "reviews.db");
+        var observedSuffixes = new List<string>();
+
+        for (var index = 0; index < ReviewLimits.RetainedBackups + 2; index++)
+        {
+            var before = Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*")
+                .ToHashSet(StringComparer.Ordinal);
+            File.WriteAllText(database, $"primary-{index}");
+            File.WriteAllText(database + "-wal", $"wal-{index}");
+            File.WriteAllText(database + "-shm", $"shm-{index}");
+            var modified = DateTime.UnixEpoch.AddMinutes(index);
+            File.SetLastWriteTimeUtc(database, modified);
+            File.SetLastWriteTimeUtc(database + "-wal", modified);
+            File.SetLastWriteTimeUtc(database + "-shm", modified);
+
+            quarantine.Invoke(store, null);
+
+            var after = Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*");
+            var created = Assert.Single(after, path => !before.Contains(path));
+            var suffix = created[database.Length..];
+            Assert.Matches(@"^\.corrupt-\d{17}-[0-9a-f]{32}$", suffix);
+            Assert.DoesNotContain(suffix, observedSuffixes);
+            observedSuffixes.Add(suffix);
+            Assert.True(File.Exists(database + "-wal" + suffix));
+            Assert.True(File.Exists(database + "-shm" + suffix));
+        }
+
+        Assert.Equal(ReviewLimits.RetainedBackups + 2, observedSuffixes.Count);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*").Length);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db-wal.corrupt-*").Length);
+        Assert.Equal(ReviewLimits.RetainedBackups, Directory.GetFiles(ConfigDir, "reviews.db-shm.corrupt-*").Length);
+        Assert.Equal(
+            observedSuffixes.Skip(2).Order(StringComparer.Ordinal),
+            Directory.GetFiles(ConfigDir, "reviews.db.corrupt-*")
+                .Select(path => path[database.Length..])
+                .Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void CorruptDatabase_RecoversFromNewestVerifiedBackupAndRetainsFiveGroups()
     {
         var manager = Manager();

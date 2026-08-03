@@ -900,16 +900,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             => Directory.GetFiles(_configBaseDir, DatabaseFileName + ".backup-*")
                 .Any(IsFinalBackupFile);
 
-        private string NextCorruptGroupSuffix()
-        {
-            var suffix = ".corrupt-" + UtcStamp();
-            while (new[] { DatabasePath, DatabasePath + "-wal", DatabasePath + "-shm" }
-                   .Any(path => File.Exists(path + suffix)))
-            {
-                suffix = ".corrupt-" + UtcStamp() + "-" + Guid.NewGuid().ToString("N");
-            }
-            return suffix;
-        }
+        private static string NextCorruptGroupSuffix()
+            => ".corrupt-" + UtcStamp() + "-" + Guid.NewGuid().ToString("N");
 
         private bool TryRestoreLatestBackup()
         {

@@ -134,6 +134,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 .GetField("_bookmarks", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(_manager)!;
 
+        private void QuarantineBookmarkDatabaseGroup()
+        {
+            var store = BookmarkStoreInstance();
+            store.GetType()
+                .GetMethod("MoveCorruptDatabaseGroup", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(store, null);
+        }
+
         private void MakeBookmarkBackupDue()
         {
             var store = BookmarkStoreInstance();
@@ -1622,6 +1630,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal(
                 raw,
                 File.ReadAllText(Assert.Single(Directory.GetFiles(Path.GetDirectoryName(BookmarkPath)!, "bookmark.json.corrupt-*"))));
+        }
+
+        [Fact]
+        public void ImmediateQuarantineGroups_AreUniqueAndRetainNewestFive()
+        {
+            var directory = Path.GetDirectoryName(DatabasePath)!;
+            Directory.CreateDirectory(directory);
+            var observedSuffixes = new List<string>();
+
+            for (var index = 0; index < 7; index++)
+            {
+                var before = Directory.GetFiles(directory, "bookmarks.db.corrupt-*")
+                    .ToHashSet(StringComparer.Ordinal);
+                File.WriteAllText(DatabasePath, $"primary-{index}");
+                File.WriteAllText(DatabasePath + "-wal", $"wal-{index}");
+                File.WriteAllText(DatabasePath + "-shm", $"shm-{index}");
+                var modified = DateTime.UnixEpoch.AddMinutes(index);
+                File.SetLastWriteTimeUtc(DatabasePath, modified);
+                File.SetLastWriteTimeUtc(DatabasePath + "-wal", modified);
+                File.SetLastWriteTimeUtc(DatabasePath + "-shm", modified);
+
+                QuarantineBookmarkDatabaseGroup();
+
+                var after = Directory.GetFiles(directory, "bookmarks.db.corrupt-*");
+                var created = Assert.Single(after, path => !before.Contains(path));
+                var suffix = created[DatabasePath.Length..];
+                Assert.Matches(@"^\.corrupt-\d{17}-[0-9a-f]{32}$", suffix);
+                Assert.DoesNotContain(suffix, observedSuffixes);
+                observedSuffixes.Add(suffix);
+                Assert.True(File.Exists(DatabasePath + "-wal" + suffix));
+                Assert.True(File.Exists(DatabasePath + "-shm" + suffix));
+            }
+
+            Assert.Equal(7, observedSuffixes.Count);
+            Assert.Equal(5, Directory.GetFiles(directory, "bookmarks.db.corrupt-*").Length);
+            Assert.Equal(5, Directory.GetFiles(directory, "bookmarks.db-wal.corrupt-*").Length);
+            Assert.Equal(5, Directory.GetFiles(directory, "bookmarks.db-shm.corrupt-*").Length);
+            Assert.Equal(
+                observedSuffixes.Skip(2).Order(StringComparer.Ordinal),
+                Directory.GetFiles(directory, "bookmarks.db.corrupt-*")
+                    .Select(path => path[DatabasePath.Length..])
+                    .Order(StringComparer.Ordinal));
         }
 
         [Fact]
