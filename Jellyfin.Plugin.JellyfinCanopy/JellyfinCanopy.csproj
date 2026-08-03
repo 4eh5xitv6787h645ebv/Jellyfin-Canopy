@@ -63,6 +63,11 @@
     <!-- Canonical locale inventory consumed by the server endpoints and CI. -->
     <EmbeddedResource Include="locale-manifest.json"
                       LogicalName="Jellyfin.Plugin.JellyfinCanopy.locale-manifest.json" />
+    <!-- The empty-by-default Platform deprecation schedule is a runtime contract,
+         embedded so deployed filters never read the install tree per request. -->
+    <EmbeddedResource Include="..\contracts\platform\v1\deprecations.json"
+                      Link="Platform\deprecations.json"
+                      LogicalName="Jellyfin.Plugin.JellyfinCanopy.Platform.deprecations.json" />
     <!-- Ship-safe assets served by AssetsController (guaranteed-available tier of the
          third-party asset cache; see Services/AssetCacheManifest.cs). -->
     <None Remove="Assets\poster-fallback.svg"/>
