@@ -1,6 +1,6 @@
 # ADR-0011 — Identity and authority
 
-Status: **proposed** (EP-00) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted** (pilot subset implemented; ADR-0013 server-tranche remainder pending) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 
@@ -23,9 +23,16 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
 
 ## Decision
 
-1. **Authority comes only from Jellyfin authentication claims and policies.**
-   The acting user is the token's user. No route value, header, cookie, manifest
-   field, payload field or device id can change it.
+1. **User and administrator authority comes only from Jellyfin authentication
+   claims and current host policies.** The acting user is the token's user. No
+   route value, header, cookie, manifest field, payload field or device id can
+   change it. A service actor is a separate, no-user principal: its authority
+   comes only from a kernel-owned service registration, current credential
+   generation, exact administrator grant and operation actor-kind ceiling. It
+   can never become a Jellyfin user or administrator. A user actor is constructed
+   only from the unforgeable internal result of the full Platform boundary after
+   explicit API-key rejection, a unique canonical user claim, live host-user
+   lookup and current elevation; never from a parser GUID or `ClaimsPrincipal`.
 2. **Attribution is not authority.** Client, device and extension identifiers are
    recorded for audit and never consulted for access decisions unless bound to an
    approved cryptographic credential.
@@ -51,8 +58,10 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
    contribution or provider supplied. Canopy's existing `UserAccessQuery` /
    `IItemLookupService` fail-closed pattern — including refusing to authorize
    against a truncated candidate list — is the model.
-6. **Two policies only, deny by default.** Plain `[Authorize]` for any signed-in
-   user; `Policies.RequiresElevation` for administrators.
+6. **Two Jellyfin-user policies only, deny by default.** Plain `[Authorize]` for
+   any signed-in user; `Policies.RequiresElevation` for administrators. These
+   policies do not authenticate or authorize a service principal, which uses a
+   separate Platform boundary and an explicit service-capable operation.
    `Policies.DefaultAuthorization` **does not exist** in Jellyfin 12 — the
    roadmap's assumption is corrected here. Anonymity is explicit and enumerated.
 7. **`401`/`403` stay bare**, matching verified host behaviour
@@ -64,16 +73,27 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
    authorized on its own merits; no CSRF-by-origin assumption is made.
 9. **Service credentials** for companion services are independently revocable,
    expiring, rotatable, stored hashed, and shown once at creation. A Jellyfin
-   admin API key is never reused as a platform credential.
+   admin API key is never reused as a platform credential. Existing anonymous,
+   authenticated-user and elevated-user operations reject service principals;
+   user delegation is outside the tranche accepted by ADR-0013.
+   Installed providers are different again: their identity comes only from the
+   approved registry record bound to Jellyfin's installed plugin GUID and the
+   current manifest fingerprint, never from a credential or caller claim.
 10. **Actions are opaque, short-lived capabilities** binding extension,
     operation, user, device, catalog revision, scopes and expiry — with
     replay protection. A client never names a provider method.
-11. **Operations declare the authority they need**, and the kernel intersects it
-    with the caller's own Jellyfin privileges. An operation declares
-    `authenticated` or `elevated`; an `elevated` operation is refused to a
-    non-admin *even when the extension holds the corresponding grant*, because a
-    grant is a ceiling on the extension, never a promotion for the caller. This
-    is what makes the admin-only reference capability in
+11. **Operations declare both actor kind and authority ceiling.** Existing
+    operations remain `anonymous`, `authenticated-user` or `elevated-user` and
+    reject services. A future operation may additionally be authored as
+    `service`, but then accepts only the separately authenticated no-user
+    service principal. The kernel intersects the operation allowlist, exact
+    grant and current actor authority. An `elevated-user` operation is refused
+    to a non-admin *even when the extension holds the corresponding grant*, and
+    a service grant never promotes a service to user or admin. An elevated user
+    remains the same user actor and may enter ordinary authenticated-user
+    operations; current elevation is additionally required for elevated-user
+    operations. A grant is always a ceiling, never a promotion. This is what
+    makes the admin-only reference capability in
     [`v1-capability-freeze.md`](../v1-capability-freeze.md#c9--reference-capability-families)
     expressible.
 12. **v1 has no per-user consent.** Grants are administrator-approved and
@@ -81,13 +101,28 @@ non-admin's own id. But the `ClaimsPrincipal` handed to a controller contains
     kill switches in [ADR-0007](0007-declarative-web-contributions.md) turn a
     contribution *off*, they do not express consent. Stated plainly because the
     absence is a policy choice, not an oversight.
-13. **Revocation is immediate** across the registry, in-flight calls, event
-    subscriptions, cached catalogs and outstanding action tokens. For events this
-    means re-checking at delivery and dropping the subscriber's reconnect buffer,
+13. **Revocation immediately denies new admission and kernel-owned effects.** It
+    requests cooperative cancellation, advances the applicable typed authority
+    generation, discards late results, audits the late/revoked outcome, and
+    generation-fences every kernel-owned commit and protected data release.
+    Releases include state/conflict reads, snapshots, exports, diagnostics,
+    catalogs, action results and each response/event stream chunk; stale
+    authority terminates delivery without another protected byte. Every
+    applicable current user, item, library, parental-access and elevation check
+    is repeated immediately before release. Check and bounded release/chunk are
+    serialized under a short typed-generation lease, so once a kernel-owned
+    generation advance/revoke transaction commits no old-generation protected
+    release begins or completes. Jellyfin policy changes are outside that lock;
+    the final live host check prevents release when it observes the change, and
+    the contract claims no host transaction boundary that Jellyfin does not
+    expose. For
+    events this means re-checking at delivery and dropping the reconnect buffer,
     not merely filtering at enqueue time
-    ([ADR-0006](0006-client-event-transport.md) decision 6) — and note that
-    "in-flight calls" is aspirational for a provider that ignores cancellation,
-    which cannot be stopped ([ADR-0004](0004-provider-invocation.md)).
+    ([ADR-0006](0006-client-event-transport.md) decision 6). A provider may
+    already have begun an irreversible upstream or provider-owned effect before
+    cancellation arrives; the kernel cannot stop or roll that back, even for
+    otherwise cooperative code. No contract may claim it can
+    ([ADR-0004](0004-provider-invocation.md)).
 14. **Audit records are redacted by construction:** extension, operation, actor
     attribution, decision, result, duration, correlation id. Never payloads,
     never tokens, never upstream keys.

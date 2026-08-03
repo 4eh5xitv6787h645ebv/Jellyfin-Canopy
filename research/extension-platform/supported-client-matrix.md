@@ -1,7 +1,7 @@
 # Supported-client matrix
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
-Status: **proposed** (EP-00). This table *is* the support boundary. A client class
+Status: **accepted support boundary**. A client class
 is listed as supported only when a conformance run passes on it.
 
 ## The distinction that matters
@@ -31,16 +31,19 @@ shape of the problem.
 | Jellyfin Web on mobile browser | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** |
 | Jellyfin Web TV mode (browser) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** — *not* evidence of native TV support |
 | Jellyfin Android (mobile, WebView portions) | 2 | partial | no | no | yes | **best effort**, untested |
-| **`4eh5xitv6787h645ebv/jellyfin-androidtv`** (first-party fork, Kotlin) | 4 | **no** | **planned — committed adopter** | deferred (C5); refetch in pilot | yes | **native-first pilot** — see below |
+| **`4eh5xitv6787h645ebv/jellyfin-androidtv`** (first-party fork, Kotlin) | 4 | **no** | bounded item-detail pilot evidence recorded by #626 | refetch only; no C5 adoption | yes | **first-party bounded consumer** — see below |
 | Jellyfin Android TV (upstream) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Findroid, Plethorafin and other native Android clients | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Swiftfin (iOS / tvOS) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Roku | 4 | **no** | no | no | yes | **unsupported** unless adopted |
 | Kodi (JellyCon / add-on) | 4 | **no** | no | no | yes | **unsupported** unless adopted |
-| Companion services, scripts, bots | — | n/a | n/a | deferred (C5) | yes | **platform credentials/contract deferred** |
+| Companion services, scripts, bots | — | n/a | n/a | planned server-tranche proof through the credential-bound Z3b headless fixture, limited to registry/provider events | yes | **contract/credentials not yet delivered; no user/media authority** |
 
-"planned" means the capability is in the active pilot but not shipped;
-"deferred" means it is outside the pilot. For the browser rows the *mechanism*
+"planned" means the capability is active but not shipped; "deferred" means it
+is outside the current tranche. Activating the registry/provider C5 subset for
+server-side conformance does not claim support in a browser or native row whose
+adapter remains deferred.
+For the browser rows the *mechanism*
 is verified — slot rendering, idempotent mounting, teardown and frame isolation
 all measured
 ([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)) — on the
@@ -61,15 +64,15 @@ half-rendered ([ADR-0007](adr/0007-declarative-web-contributions.md)).
 ## The first native adopter
 
 A first-party fork of the Android TV client —
-[`4eh5xitv6787h645ebv/jellyfin-androidtv`](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv) (Kotlin) — is in
-development by the same owner and intends to consume this protocol. That changes
-the programme's shape in three ways:
+[`4eh5xitv6787h645ebv/jellyfin-androidtv`](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv) (Kotlin) — supplied the bounded interop evidence recorded when
+Canopy issue #606 closed through #626. Client-repository work is maintained
+separately. That evidence changes the programme's shape in three ways:
 
-1. **The native protocol has a real design partner.** EP-08 can be validated
-   against a client that actually renders descriptors, instead of only against a
+1. **The native protocol had a real design partner.** The bounded EP-08 pilot was
+   checked against a client that renders descriptors as well as the independent
    headless fixture ([#492](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/492)).
-2. **First-party Kotlin models stop being speculative.** The Android TV adapter
-   needs schema-pinned models for its bounded pilot subset. That does not revive
+2. **First-party Kotlin models were not speculative.** The bounded pilot used
+   schema-pinned models. That does not revive
    EP-09's public Kotlin SDK or generated bindings for unrelated clients.
 3. **It does not change the rule.** This client is listed as an adopter only when
    a conformance run passes on it. Being the same owner earns no exemption, and
@@ -100,8 +103,9 @@ than against prose:
    action-result hints and refetch on relevant lifecycle transitions.
 
 The last step is deliberately not event delivery. C5's stream, reconnect cursor,
-retention window, event-gap and `resync-required` behavior remain deferred with
-EP-05.
+retention window, event-gap and `resync-required` behavior are active new EP-05
+server work; the existing native row remains refetch-only until a separate
+client-adoption decision and conformance run say otherwise.
 
 Every change needed lives in **that client's repository**. This repository will
 not modify official Jellyfin clients.
@@ -117,9 +121,9 @@ Stated plainly so the matrix is not read as stronger than the evidence:
   **Not** covered: the legacy, mobile and Web-TV layouts, accessibility,
   localisation, D-pad focus order and the jank budgets — which are the majority of
   EP-07's actual cost.
-- **No native or TV client was involved in any way**, including the first-party
-  fork above. Nothing in the spike supports any claim about Android TV, Roku,
-  Kodi or Swift behaviour.
+- **The EP-00 spike itself involved no native or TV client.** Later bounded
+  first-party evidence is recorded by #626; it supports no claim about upstream
+  Android TV, Roku, Kodi, Swift or any broader surface.
 - Whether a native client gracefully ignores or **hard-crashes** on an unexpected
   payload under a known `SessionMessageType` is untested, and is one reason the
   platform does not use that channel.

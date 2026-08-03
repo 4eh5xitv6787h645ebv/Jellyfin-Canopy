@@ -1,6 +1,6 @@
 # ADR-0004 — Provider invocation, binding and failure isolation
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted design** (ADR-0013; EP-04 implementation pending) · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 

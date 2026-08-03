@@ -1,6 +1,6 @@
 # ADR-0002 — Protocol, version negotiation and the error envelope
 
-Status: **proposed** (EP-00) · Owner: platform kernel
+Status: **accepted and implemented** (EP-01) · Owner: platform kernel
 
 ## Context
 

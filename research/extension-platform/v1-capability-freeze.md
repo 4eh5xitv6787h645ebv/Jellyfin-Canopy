@@ -1,16 +1,18 @@
 # Frozen v1 capability list
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
-Status: **re-scoped 2026-07-28**, with the native-pilot clarification tracked by
-[ADR-0012](adr/0012-native-first-scope.md) and
-[#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583) — v1
-is **native-first**. "Frozen" means *the list does not grow without a new
-EP-00-level decision* — not that it is implemented.
+Status: **post-pilot tranche activated 2026-08-04** by
+[ADR-0013](adr/0013-server-platform-tranche.md). The completed native-first
+starting scope remains recorded in [ADR-0012](adr/0012-native-first-scope.md)
+and [#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583).
+"Frozen" means *the list does not grow without a new EP-00-level decision* —
+not that every listed capability is implemented.
 
-**In the native-first pilot:** C1, C6, the bounded C8 subset, C9 and the
-first-party audit subset of C10. **Deferred:** C2, C3, C4, C5, C7, the broader
-C8 surface language, registry diagnostics, and every third-party runtime or SDK
-surface — see the table at the end.
+**Completed pilot floor:** C1, C6, the bounded C8 subset, C9 and the
+first-party audit subset of C10. **Active server tranche:** C2, C3, C4, the
+registry/provider subset of C5 and the registry/provider part of C10. **Still deferred:** C7, the broader C8
+surface language, public SDKs, external-adoption claims and GA — see the tables
+at the end.
 
 Adding to this list requires named consumers, a security and authority analysis,
 failure and lifecycle behaviour, a compatibility policy and a bounded tracking
@@ -23,7 +25,7 @@ child. Removing from it is cheap and encouraged.
 | | |
 |---|---|
 | **Anonymous** | platform availability and supported protocol range. Nothing else — no users, no installed extensions, no topology, no configuration. |
-| **Authenticated** | negotiated protocol version, feature flags, and a catalog filtered to the first-party actor's current Jellyfin access. Future extension grants apply only if C2 is reinstated. |
+| **Authenticated** | negotiated protocol version, feature flags, and a catalog filtered to the actor's current Jellyfin access. Extension grants apply only after the C2 milestone has delivered its bound registry and grant owner. |
 | Client declares | supported protocol range, surface schemas, component set, input modes, layout constraints, locale, accessibility, image support. |
 | ADR | [0002](adr/0002-protocol-and-version-negotiation.md) |
 
@@ -34,10 +36,11 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-**Deferred in the native-first pilot.** Built-in Canopy families need no
-third-party manifest, approval or grant registry. Their effective availability
-and compatibility still appear in the caller-filtered C1/C6 catalog, but that is
-not an implementation of C2. ADR [0005](adr/0005-manifest-discovery.md).
+**Activated for the server tranche; not yet delivered.** Built-in Canopy
+families continue to need no third-party manifest or grant. Their existing
+caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
+separate-plugin fixture, fingerprint-bound approval, grant/lifecycle tests and
+the EP-03 exit gate. ADR [0005](adr/0005-manifest-discovery.md).
 
 ## C3 — Server-plugin provider invocation
 
@@ -45,10 +48,12 @@ A convention-based entrypoint invoked over the JSON ABI with a derived context,
 a kernel-owned deadline, concurrency caps, bulkheads, circuit breakers, a
 response size cap, and stable failure codes.
 
-**Deferred in the native-first pilot.** EP-06 calls Canopy's in-process owning
-services; it does not ship a provider runtime. Provider-to-provider calls,
+**Activated for the server tranche; not yet delivered.** Existing EP-06 pilot
+routes continue to call Canopy's in-process owning services and do not silently
+become provider routes. C3 delivery requires an independently packaged fixture
+and the EP-04 failure/lifecycle/bounds gate. Provider-to-provider calls,
 provider access to Jellyfin DI, the database or the filesystem, and streaming
-provider responses also remain out of scope.
+provider responses remain out of scope.
 ADRs [0003](adr/0003-json-abi.md), [0004](adr/0004-provider-invocation.md).
 
 ## C4 — Namespaced state
@@ -58,22 +63,32 @@ bounded on every axis, with ETag/`If-Match` concurrency, atomic batch writes,
 crash-safe persistence, corruption quarantine, transactional migrations, and
 export/delete for a user and for an extension.
 
+**Activated for the server tranche; not yet delivered.** The first consumer is
+the reference provider fixture through a registry-owned namespace. Existing
+Canopy stores are reusable owners or patterns; they are not implicitly C4.
+
 Not in v1: blobs, media, a general database, cross-extension state, or a
 returnable secret. ADR [0008](adr/0008-storage-ownership.md).
 
 ## C5 — Events
 
-A curated, versioned catalog covering platform registry, health and contribution
-invalidation, plus approved Jellyfin/Canopy library, user-data, playback and
-settings changes. Authenticated `fetch()` stream plus bounded long-poll, with
-event ids, per-stream cursors, heartbeats, reconnect, bounded retention and
-`resync-required`.
+A full-program catalog would cover platform registry, health and contribution
+invalidation plus approved Jellyfin/Canopy library, user-data, playback and
+settings changes. The active server tranche is deliberately narrower: **only
+registry/provider lifecycle, health and contribution invalidation events**.
+Jellyfin library, user-data, playback, settings and Active Streams events remain
+deferred. The active subset uses authenticated `fetch()` streaming plus bounded
+long-poll, with event ids, per-stream cursors, heartbeats, reconnect, bounded
+retention and `resync-required`.
 
-**Deferred in the native-first pilot.** Android TV refreshes through catalog
-revision/ETag, action-result refresh hints and refetch on the relevant client
-lifecycle transitions. Those mechanisms do not provide an event stream,
-reconnect cursor, retention buffer or `resync-required`, and no pilot evidence
-may be cited as satisfying C5.
+**Activated for the server tranche; not yet delivered.** The native pilot still
+refreshes through catalog revision/ETag, action-result refresh hints and
+refetch. Those mechanisms do not provide an event stream, reconnect cursor,
+retention buffer or `resync-required`, and no pilot evidence may be cited as
+satisfying C5. The active C5 subset starts with registry/provider lifecycle,
+health and invalidation plus a new credential-bound Z3b headless service fixture
+and must pass the EP-05 isolation/retention gate. This is distinct from the S18
+Jellyfin-user native-client fixture.
 
 Also out of scope: webhooks, arbitrary outbound HTTP, exactly-once delivery,
 infinite retention and custom Jellyfin WebSocket message types.
@@ -87,10 +102,10 @@ nonce — re-authorized against current Jellyfin access at invocation. A device 
 is attribution, never authority. Idempotency keys, cancellation, bounded work
 and stable failure codes apply to every pilot mutation.
 
-Extension/grant bindings, provider operations, progress and a general
-operation-status resource remain deferred. Adding either of the latter two to
-the pilot requires a new EP-00-level scope decision rather than an implementation
-finding silently widening the freeze.
+Extension/grant bindings and provider operations are active server-tranche work
+under C2/C3; they must be additive and cannot change existing pilot authority.
+Progress and a general operation-status resource remain deferred unless a named
+C3 consumer and a separate programme decision establish their need.
 
 Not in the pilot: a client naming a provider method; a client supplying an
 arbitrary URL.
@@ -142,21 +157,21 @@ ADR [0007](adr/0007-declarative-web-contributions.md), plus the
 ## C9 — Reference capability families
 
 Three, chosen because each exercises a different axis. Each is exposed through
-its owning Canopy implementation/service layer — never reimplemented. Hidden
-Content does not yet have a single extracted owner service; that extraction is a
-prerequisite to its platform adapter, not permission to call its controller or
-duplicate its policy and mutation logic.
+its owning Canopy implementation/service layer — never reimplemented. The
+Spoiler Guard, Hidden Content and Seerr owners and their bounded Platform
+adapters are delivered by the completed native pilot; later provider work must
+compose those owners rather than copy them.
 
 | Family | Axis | Candidate |
 |---|---|---|
-| Per-title user state | opaque action + per-user isolation | **Spoiler Guard** — already driven from Android TV as a hardcoded route ([androidtv#1](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv/pull/1)); EP-06 turns it into a platform capability |
+| Per-title user state | opaque action + per-user isolation | **Spoiler Guard** — delivered through its shared owner and Platform adapter |
 | Per-user content workflow | state/filtering + cross-user isolation | **Hidden Content** — replaces the unclaimed bookmarks/selected-user-state candidate; it does not add a fourth family |
 | Integration action workflow | opaque action + upstream | a Seerr request action on item detail |
 
 These are the complete native-pilot product-family budget: **Spoiler Guard,
-Hidden Content and Seerr**. The admin live workflow (Active Streams) moves out of
-v1 with EP-05's events. Bookmarks/selected user state and the Discovery home row
-are deferred, not stretch additions to this pilot.
+Hidden Content and Seerr**. Active Streams is explicitly outside the activated
+C5 subset, alongside library, user-data, playback and settings events.
+Bookmarks/selected user state and the Discovery home row remain deferred.
 
 ## C10 — Diagnostics and audit
 
@@ -164,8 +179,8 @@ The native pilot includes redacted action audit records carrying operation,
 actor/client attribution, decision, result, duration and correlation id. Local
 recent-failure diagnostics may expose only the same redacted fields.
 
-Registry state, provider circuit state, diagnostic bundles and third-party
-extension attribution remain deferred with the registry/provider runtime.
+Bounded registry state, provider circuit state and third-party extension
+attribution are active server-tranche work. Diagnostic bundles remain deferred.
 
 Never: payloads, tokens, upstream keys, or any telemetry leaving the server.
 
@@ -179,19 +194,23 @@ proxy · provider-to-provider calls · cross-extension state · blob or media
 storage · webhooks · custom Jellyfin WebSocket message types · modifying official
 Jellyfin clients · Jellyfin 13 support · telemetry.
 
-## Dependency order — native-first
+## Dependency order — post-pilot server tranche
 
 ```
-EP-00 ─▶ EP-01 ─▶ EP-02 ─▶ EP-06 ─▶ EP-08          ← in scope
-                     ╎
-                     ╎ deferred: EP-03, EP-04, EP-05, EP-07,
-                     ╌╌╌╌╌╌╌╌╌╌  EP-09, EP-10, EP-11, EP-12
+completed pilot: EP-00 ─▶ EP-01 ─▶ EP-02 pilot ─▶ EP-06 pilot ─▶ EP-08 pilot
+
+active server tranche:
+EP-02 remainder ─▶ EP-03 ─▶ { EP-04, EP-05 implementation }
+                                  EP-04 health contract ─▶ EP-05 C5 exit
+                                  { EP-04, EP-05 exits } ─▶ EP-06 remainder
+
+deferred: EP-07, broader EP-08, EP-09, EP-10, EP-11, EP-12
 ```
 
-EP-06 no longer waits on EP-03/04/05. With no third-party extensions there is
-nothing to register and no provider to invoke, so the gateway calls Canopy's own
-owning services directly through the host adapter. Reinstating those milestones
-later is additive: the gateway gains a provider source, it does not change shape.
+The completed EP-06 pilot did not wait on EP-03/04/05: its gateway calls
+Canopy's own owning services through the host adapter. The remaining EP-06
+third-party work does wait on EP-03/04/05. It adds a provider source; it does not
+replace or reshape the first-party source.
 
 ### Native-first pilot gates
 
@@ -213,14 +232,32 @@ open unless their live exit gates are formally re-scoped or every original
 criterion has evidence. A pilot gate is never evidence for a deferred row in
 the table above.
 
-### What each deferred milestone was going to give us, and why it can wait
+### Post-pilot server-tranche gates
+
+Activation is not completion. These gates bind each active capability to a
+consumer and its owning milestone:
+
+| Capability | Owning exit gate | Required first proof |
+|---|---|---|
+| C2 | EP-02 authority foundation plus EP-03 registry/lifecycle | exact capability vocabulary, grant ceiling, manifest fingerprint and revoke/lifecycle matrix |
+| C3 | EP-04 provider runtime | separate-plugin JSON ABI fixture; load-order, absence, timeout, bounds, failure, disable, uninstall and upgrade |
+| C4 | EP-05 state | reference-provider namespace; cross-extension/user isolation, quotas, ETag, crash/corruption recovery and delete/export |
+| C5 subset | EP-05 events | registry/provider lifecycle, health and invalidation through the credential-bound Z3b headless service fixture; exact bounded provider-id grant, minimal non-C10 schema, authentication, reconnect, retention, gap, revoke and `resync-required`; no user/media events |
+| C10 remainder | EP-02, EP-03, EP-04 and EP-06 owners | admin-only bounded registry/provider diagnostics with token, payload and exception redaction |
+
+No row is a public-support claim. EP-09 through EP-11 remain the owners of
+public packaging, independent adoption and GA evidence.
+
+EP-04 and EP-05 implementation may proceed in parallel after EP-03. EP-05
+cannot pass its provider-health C5 exit proof until EP-04 owns the authoritative
+health/circuit contract and runtime.
+
+### What remains deferred and why
 
 | Deferred | Why it can wait |
 |---|---|
-| EP-03 registry, admin approval, manifest lifecycle | nothing third-party to register; the kernel is the only provider |
-| EP-04 provider SDK + JSON ABI runtime | the ABI is proven ([S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)) but has no consumer |
-| EP-05 namespaced state + events | EP-06 uses Canopy's existing stores; revisit when an extension needs its own |
 | EP-07 declarative web contributions | Canopy already owns the web surface; highest cost, lowest marginal value, layout breadth untested |
+| broader EP-08 native surfaces | no named client need beyond the completed item-detail pilot |
 | EP-09 SDKs, scaffolding, conformance kit | for external developers who do not exist yet |
 | EP-10 independent pilots | requires EP-09 |
 | EP-11 certification, beta, GA | requires a public contract, which this scope deliberately avoids |
@@ -229,12 +266,12 @@ the table above.
 | Capability | Delivered by | v1 scope |
 |---|---|---|
 | C1 discovery/negotiation | EP-01, EP-06 | **in** |
-| C2 registry + lifecycle | EP-03 | **deferred** — no third-party extensions |
-| C3 provider invocation | EP-04 | **deferred** — no providers |
-| C4 namespaced state | EP-05 | **deferred** |
-| C5 events | EP-05 | **deferred** |
+| C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; not yet delivered** |
+| C3 provider invocation | EP-04 | **active server tranche; not yet delivered** |
+| C4 namespaced state | EP-05 | **active server tranche; not yet delivered** |
+| C5 events | EP-05 | **registry/provider lifecycle-health-invalidation subset active; broader Jellyfin/Canopy events deferred** |
 | C6 opaque actions | EP-02, EP-06 | **in** |
 | C7 declarative web slots | EP-07 | **deferred** |
 | C8 native descriptor schema | EP-08 | **in, bounded pilot subset only** |
 | C9 reference capability families | EP-06 | **in** — exactly Spoiler Guard, Hidden Content and Seerr |
-| C10 diagnostics + audit | EP-02, EP-06 | **in, first-party action audit only**; registry/provider diagnostics deferred |
+| C10 diagnostics + audit | EP-02, EP-03, EP-04, EP-06 | **pilot audit delivered; bounded registry/provider diagnostics active** |

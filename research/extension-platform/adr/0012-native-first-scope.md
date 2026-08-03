@@ -1,6 +1,8 @@
 # ADR-0012 — Native-first scope for v1
 
-Status: **accepted** (2026-07-28); pilot clarification tracked by
+Status: **accepted** (2026-07-28); completed starting-scope decision. The
+post-pilot server tranche is activated separately by
+[ADR-0013](0013-server-platform-tranche.md). Pilot clarification tracked by
 [#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583) ·
 Owner: programme · Supersedes the implicit assumption in
 [`v1-capability-freeze.md`](../v1-capability-freeze.md) that all twelve

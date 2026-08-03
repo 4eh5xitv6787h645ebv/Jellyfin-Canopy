@@ -44,15 +44,36 @@ will get an empty string. Business and protocol failures reached after the authe
 actor boundary carry the one error envelope.
 
 **The acting user is the authenticated Jellyfin user.** For every authenticated
-Platform route, Canopy accepts only Jellyfin's `Jellyfin-UserId` authentication claim,
-then re-reads that current host user and elevation state for the request. Route, query,
+Platform route, Canopy requires an authenticated principal, rejects API-key
+principals, accepts exactly one Jellyfin `Jellyfin-UserId` authentication claim,
+then re-reads that current host user and elevation state for the request. Actor
+factories receive only that completed internal boundary result, never a raw
+claim/GUID or `ClaimsPrincipal`. Route, query,
 body, cookie, header, marker, IP, client-name and device-id values cannot select or
 elevate an actor. Client and device values are bounded attribution only. A missing,
-malformed or deleted authenticated user fails closed with a bare `403`; service/API-key
-actors remain outside the native-first pilot.
+malformed or deleted authenticated user fails closed with a bare `403`. The
+completed native-first surface still accepts no service/API-key actor. The
+post-pilot server tranche may add independently authenticated service actors
+only through additive routes and contracts; it does not widen authority on any
+existing operation.
 
-Every OpenAPI operation publishes `x-canopy-authority` as `anonymous`, `authenticated`,
-or `elevated`. CI compares that value with the live controller attributes, and the live
+Before the first service route ships, the authored contract must add its
+deny-by-default service authentication scheme and exact actor metadata. Missing,
+malformed, syntactically valid but unknown, expired, revoked, or rotated-old
+service credentials return a bare `401`. A current recognized credential whose
+registration, grant or operation ceiling denies access returns a bare `403`.
+Supplying both Jellyfin and service credentials, or a service credential on a
+non-service route, returns a bare `400`. Every one of these responses carries
+`Cache-Control: no-store`. The `401`/`403` distinction exposes only whether
+authentication succeeded; bare responses disclose no service identifier,
+registration, grant, operation, or denial detail. Service routes never use
+`[AllowAnonymous]` and never accept Jellyfin authentication.
+
+Every current OpenAPI operation publishes `x-canopy-authority` as `anonymous`,
+`authenticated`, or `elevated`. The first service operation additively extends
+that vocabulary with `service` and adds an exact `x-canopy-actor-kinds` allowlist;
+existing operations gain their current anonymous/user actor metadata without
+widening eligibility. CI compares that value with the live controller attributes, and the live
 conformance matrix exercises anonymous, ordinary-user, and administrator callers for
 every operation in `frozen.json`. A newly added operation cannot omit either its frozen
 inventory entry or its authorization class.

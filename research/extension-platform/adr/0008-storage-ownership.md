@@ -1,6 +1,6 @@
 # ADR-0008 — Storage ownership
 
-Status: **proposed** (EP-00) · Owner: platform kernel
+Status: **accepted design** (ADR-0013; EP-05 implementation pending) · Owner: platform kernel
 
 ## Context
 
@@ -37,7 +37,12 @@ that forbids `File.WriteAllText` anywhere outside `AtomicFile`. Bad: it is
 7. **Corruption quarantines** the namespace and surfaces an actionable admin
    diagnostic rather than silently reseeding defaults.
 8. **Export and delete** are first-class, for both a user and an extension.
-   Uninstall follows an explicit retain / export / purge policy.
+   Ordinary user/provider paths still derive their namespace. Service actors
+   cannot access extension-global or per-user C4 state in the ADR-0013 tranche.
+   Only a separate elevated administrator
+   management operation may name a target namespace as the audited object of a
+   bounded export/delete, never as acting identity or an ordinary read/write
+   selector. Uninstall follows an explicit retain / export / purge policy.
 9. **Secrets are write-only references at most**, and only if a later milestone
    proves the protection is real. A secret is never returned to a web or native
    client, and never appears in routine diagnostics.
