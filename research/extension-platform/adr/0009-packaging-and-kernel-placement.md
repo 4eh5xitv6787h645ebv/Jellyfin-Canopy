@@ -1,6 +1,6 @@
 # ADR-0009 — Packaging and kernel placement
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **accepted** (EP-00) · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S13](../spike-evidence.md#s13--lifecycle-matrix)
 
 ## Context
 

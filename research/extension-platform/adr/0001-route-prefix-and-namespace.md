@@ -1,6 +1,6 @@
 # ADR-0001 — Route prefix and namespace
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Supersedes: nothing
+Status: **accepted and implemented** (EP-01) · Owner: platform kernel · Supersedes: nothing
 
 ## Context
 
@@ -25,7 +25,12 @@ endpoint that forgets `[Authorize]` is anonymous, and nothing catches it.
 4. Every platform controller inherits a base that is **deny-by-default**:
    authorization is asserted in the base, and an endpoint that wants anonymity
    declares `[AllowAnonymous]` explicitly and is covered by an architecture test
-   enumerating the permitted anonymous set.
+   enumerating the permitted anonymous set. A future service operation does not
+   bypass that base with `[AllowAnonymous]`: it inherits a separate
+   deny-by-default Platform service base bound only to the Canopy service
+   authentication scheme. Architecture tests enumerate every service operation,
+   forbid mixing Jellyfin and service credentials, and forbid service headers on
+   anonymous/user/elevated controllers.
 5. The `v1` segment is a **major** version. Incompatible majors coexist as
    `/v1` and `/v2` rather than mutating in place.
 

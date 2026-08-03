@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **accepted design** (ADR-0013; EP-03 implementation pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
 
 ## Context
 

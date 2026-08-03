@@ -1,6 +1,7 @@
 # ADR-0010 — Deprecation and support policy
 
-Status: **proposed** (EP-00) · Owner: platform governance
+Status: **accepted** (Platform v1 policy enforced by EP-01; legacy-facade version
+field pending) · Owner: platform governance
 
 ## Context
 
@@ -60,6 +61,8 @@ Enforced by an OpenAPI/JSON-Schema breaking-change gate in CI, not by review.
 - They become adapters over the same owning service. Parity tests prove one owner
   serves both. Old and new business logic must never coexist.
 - The facade gains an explicit platform API version field — it has none today.
+  This legacy-surface follow-up is not evidence against the enforced Platform v1
+  compatibility gate and remains pending until a bounded consumer requires it.
 
 ### Security response
 

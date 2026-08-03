@@ -3,35 +3,37 @@
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
 Roadmap board: [Jellyfin Elevate Extension Platform](https://github.com/users/4eh5xitv6787h645ebv/projects/3)
 
-> **Scope decided 2026-07-28; clarification tracked by
-> [#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583):** v1 is
-> **native-first** — EP-01 plus the first-party pilot subsets of EP-02, EP-06 and
-> EP-08. Its three product families are exactly **Spoiler Guard, Hidden Content
-> and Seerr**; Hidden Content replaces the unclaimed bookmarks/selected-user-data
-> candidate. See [ADR-0012](adr/0012-native-first-scope.md). Everything else is
-> deferred, not cancelled.
+> **Post-pilot scope decided 2026-08-04:** the native-first pilot selected by
+> [ADR-0012](adr/0012-native-first-scope.md) remains the shipped compatibility
+> floor. [ADR-0013](adr/0013-server-platform-tranche.md) now activates the
+> server-platform tranche: the remaining EP-02 authority foundation, EP-03,
+> EP-04, EP-05 and the remaining EP-06 gateway work. It activates C2, C3, C4,
+> the registry/provider lifecycle-health-invalidation subset of C5 and their
+> bounded C10 diagnostics. Web contributions, broader native surfaces, public
+> SDKs, external-adoption claims and GA remain deferred.
 
-The pilot uses catalog revision/ETag, action-result refresh hints and refetch;
-it does **not** implement C5 events. EP-03 through EP-05, EP-07, EP-09 through
-EP-12, third-party grants/providers, service credentials, public SDKs and the
-broader native surface language remain deferred.
+The completed pilot uses catalog revision/ETag, action-result refresh hints and
+refetch; that behavior still does **not** implement C5 events. The active C5
+subset is new server-tranche work with its own event, isolation, retention and
+resync gates.
 
 The original EP-02, EP-06 and EP-08 parents retain their broader full-program
-checklists. The exact pilot gates and deferred rows are recorded once in
+checklists. The exact historical pilot gates and active/deferred rows are
+recorded once in
 [`v1-capability-freeze.md`](v1-capability-freeze.md#native-first-pilot-gates);
 passing a pilot gate does not silently close its parent.
 
-**Nothing described here is implemented.** This directory is the decision record
-for EP-00, the research milestone that has to be finished before any platform
-code is written. Every document is *proposed* until its milestone's exit gate.
+This directory began as EP-00 research. Implemented behavior is identified by
+the linked milestone evidence; future capability descriptions remain decisions,
+not claims that a route already ships.
 
 ## Start here
 
 | Document | What it answers |
 |---|---|
 | [`charter.md`](charter.md) | why this exists, who it serves, what v1 is and is not, where the kernel lives |
-| [`spike-evidence.md`](spike-evidence.md) | what Jellyfin 12 actually does — 14 live probes against a disposable server |
-| [`threat-model.md`](threat-model.md) | trust zones, data flow, 15 threats with residual ratings |
+| [`spike-evidence.md`](spike-evidence.md) | what Jellyfin 12 actually does — 18 live probes against a disposable server |
+| [`threat-model.md`](threat-model.md) | trust zones, data flow, 16 threats with residual ratings |
 | [`capability-inventory.md`](capability-inventory.md) | what exists, what is feasible, what needs client adoption, what the host will never give us |
 | [`supported-client-matrix.md`](supported-client-matrix.md) | which clients can actually see an extension |
 | [`v1-capability-freeze.md`](v1-capability-freeze.md) | the bounded list of what v1 contains |
@@ -43,18 +45,19 @@ code is written. Every document is *proposed* until its milestone's exit gate.
 
 | ADR | Subject | Status |
 |---|---|---|
-| [0001](adr/0001-route-prefix-and-namespace.md) | route prefix and namespace | proposed |
-| [0002](adr/0002-protocol-and-version-negotiation.md) | protocol, version negotiation, error envelope | proposed |
-| [0003](adr/0003-json-abi.md) | the load-context-safe JSON ABI | proposed |
-| [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | proposed |
-| [0005](adr/0005-manifest-discovery.md) | manifest discovery and registry binding | proposed |
-| [0006](adr/0006-client-event-transport.md) | client event transport | proposed |
+| [0001](adr/0001-route-prefix-and-namespace.md) | route prefix and namespace | accepted and implemented (EP-01) |
+| [0002](adr/0002-protocol-and-version-negotiation.md) | protocol, version negotiation, error envelope | accepted and implemented (EP-01) |
+| [0003](adr/0003-json-abi.md) | the load-context-safe JSON ABI | accepted design; EP-04 implementation pending |
+| [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | accepted design; EP-04 implementation pending |
+| [0005](adr/0005-manifest-discovery.md) | manifest discovery and registry binding | accepted design; EP-03 implementation pending |
+| [0006](adr/0006-client-event-transport.md) | client event transport | accepted for the registry/provider C5 subset; EP-05 implementation pending |
 | [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | proposed (1–6); the sandboxed-frame decision **deferred, not in v1** |
-| [0008](adr/0008-storage-ownership.md) | storage ownership | proposed |
-| [0009](adr/0009-packaging-and-kernel-placement.md) | packaging and kernel placement | proposed |
-| [0010](adr/0010-deprecation-and-support-policy.md) | deprecation and support policy | proposed |
-| [0011](adr/0011-identity-and-authority.md) | identity and authority | proposed |
+| [0008](adr/0008-storage-ownership.md) | storage ownership | accepted design; EP-05 implementation pending |
+| [0009](adr/0009-packaging-and-kernel-placement.md) | packaging and kernel placement | accepted (EP-00) |
+| [0010](adr/0010-deprecation-and-support-policy.md) | deprecation and support policy | accepted; Platform v1 enforced, legacy-facade field pending |
+| [0011](adr/0011-identity-and-authority.md) | identity and authority | accepted; pilot subset implemented, server remainder pending |
 | [0012](adr/0012-native-first-scope.md) | **native-first scope for v1** | **accepted** |
+| [0013](adr/0013-server-platform-tranche.md) | **post-pilot server-platform tranche** | **accepted** |
 
 ## The five results that shaped everything
 

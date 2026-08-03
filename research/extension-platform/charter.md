@@ -2,17 +2,18 @@
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
 Roadmap board: [Jellyfin Elevate Extension Platform](https://github.com/users/4eh5xitv6787h645ebv/projects/3)
-Status: **proposed** — this is EP-00 output, not a shipped contract. Nothing here
-is implemented, and no other milestone may treat it as available.
+Status: **accepted programme charter**. Capability delivery still requires the
+owning milestone exit evidence; a description here is not proof that a route
+ships.
 
-The original full-program model below remains as historical evidence. Accepted
-[ADR-0012](adr/0012-native-first-scope.md), with its pilot clarification tracked by
-[#583](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/583), narrows
-active v1 delivery to the native-first pilot frozen in
-[`v1-capability-freeze.md`](v1-capability-freeze.md): Android TV plus the
-headless fixture, exactly Spoiler Guard, Hidden Content and Seerr, and bounded
-EP-02/EP-06/EP-08 subsets. Registry/provider, C5 events, web, public SDK and
-broader third-party work below are deferred, not pilot acceptance criteria.
+The native-first starting scope in
+[ADR-0012](adr/0012-native-first-scope.md) remains historical and defines the
+completed compatibility floor. [ADR-0013](adr/0013-server-platform-tranche.md)
+activates the post-pilot server tranche: the remaining EP-02 foundation,
+EP-03, EP-04, EP-05 and the remaining EP-06 gateway work. Registry, provider,
+namespaced state, the registry/provider lifecycle-health-invalidation subset of
+C5 and their bounded diagnostics are active work. Web, broader native surfaces,
+public SDKs, external-adoption claims and GA remain deferred.
 
 ---
 
@@ -47,7 +48,8 @@ to solve again from scratch:
 - injecting UI into Jellyfin's web client without jank, leaks or collisions
 - doing all of the above without leaking one user's data to another
 
-Today none of that is reusable. The measurements are specific:
+At the EP-00 baseline none of that was reusable. These measurements are the
+historical starting point, not the current implementation state:
 
 - **183 routes** across 22 controllers, none versioned, with **at least four
   coexisting error-envelope shapes** (an anonymous `{success, code, message}`, two
@@ -68,6 +70,12 @@ Today none of that is reusable. The measurements are specific:
   frozen only by a compile-time conditional-type assertion in `src/entries/boot.ts`.
   It also carries **no API version field**.
 
+Since that baseline, EP-01 delivered the versioned Platform v1 route family,
+OpenAPI/JSON-Schema contracts, one error/correlation format and compatibility
+gates; the native pilot delivered three bounded shared-owner capability
+families. The remaining legacy measurements still explain why the broader
+server tranche exists, but they must not be quoted as current Platform gaps.
+
 So the platform's purpose is not "add an extension system". It is: *give the
 capabilities Canopy already has a versioned, authorized, documented boundary, so
 that a second party can use them without depending on Canopy's internals and
@@ -76,16 +84,17 @@ without Canopy losing the ability to change those internals.*
 ## 2. Original full-program consumer model
 
 The platform serves exactly four consumer classes. Anything that is not one of
-these is out of scope for the full programme. Under the native-first decision,
-only Android TV and the headless native fixture are active pilot consumers; the
-other classes remain recorded here for later work.
+these is out of scope for the full programme. The completed native-first pilot
+used a bounded native consumer plus the headless fixture. ADR-0013 now activates
+server-plugin and companion-service **conformance consumers** for the server
+tranche. Web contributions and public ecosystem support remain deferred.
 
 | Class | What it is | How it reaches the platform | Proven reachable? |
 |---|---|---|---|
 | **Server plugins** | another installed Jellyfin 12 .NET plugin | declares a manifest; the kernel invokes it in-process over a JSON ABI | **yes** — [S3](spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type) |
-| **Web extensions** | contributions rendered by Canopy's own web adapter | declarative surface schemas over HTTP | **not yet** — no browser spike ran |
-| **Native / TV clients** | Android TV, Roku, Kodi, Swift, third-party clients | HTTP + a deliberately small descriptor schema the client chooses to implement | **no** — and cannot be, without that client's authors. A first-party [Android TV fork](https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv) is a committed adopter; see the [client matrix](supported-client-matrix.md#the-first-native-adopter). |
-| **Automation / companion services** | scripts, bots, sidecar containers | HTTP + a service credential | **partly** — HTTP surface exists, credentials do not |
+| **Web extensions** | contributions rendered by Canopy's own web adapter | declarative surface schemas over HTTP | mechanism proven by S17; production adapter deferred |
+| **Native / TV clients** | Android TV, Roku, Kodi, Swift, third-party clients | HTTP + a deliberately small descriptor schema the client chooses to implement | bounded first-party evidence recorded by #626; every other client remains unsupported until its own conformance run |
+| **Automation / companion services** | scripts, bots, sidecar containers | HTTP + a service credential | active conformance target; service boundary and credentials not yet delivered |
 
 The asymmetry in that last column is the single most important thing in this
 charter. A server plugin can be made to work by us. A native client cannot: a
@@ -99,16 +108,19 @@ the asymmetry for every other client. See the
 
 **Canopy owns** the kernel, the protocol, the schemas, the registry, the web
 adapter, the reference SDKs and the conformance kit. **Canopy does not own** the
-extensions, and does not become responsible for their behaviour. Ownership of
-the deferred pieces is retained here; it does not put them into the native-first
-pilot.
+extensions, and does not become responsible for their behaviour. ADR-0013
+activates registry, provider, state, event and bounded diagnostic ownership; web,
+public SDK and conformance distribution remain deferred.
 
 The boundary is drawn at three specific places:
 
-1. **Authorization is never delegated.** Every operation is re-authorized from
-   Jellyfin's authenticated principal at invocation time. A manifest, a route
-   value, a header, a device identifier or a contribution's own claim about
-   context is untrusted input. [ADR-0011](adr/0011-identity-and-authority.md).
+1. **Authorization is never delegated.** Every user-facing operation is
+   re-authorized from Jellyfin's authenticated principal at invocation time. A
+   service actor has no acting Jellyfin user and is eligible only for an
+   explicitly service-capable operation within its current credential, grant
+   and actor-kind ceiling. A manifest, route value, header, device identifier or
+   contribution claim about context is untrusted input.
+   [ADR-0011](adr/0011-identity-and-authority.md).
 2. **Containment is honestly bounded.** An installed .NET plugin already runs
    with full server-process trust. The platform reduces *accidental* exposure —
    it cannot sandbox a *malicious* installed plugin, and [S6](spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors)
@@ -147,7 +159,7 @@ The original full-program design delivers:
 
 The authoritative active scope is
 [`v1-capability-freeze.md`](v1-capability-freeze.md); where this historical model
-is broader, the freeze and ADR-0012 control.
+is broader, the freeze and ADR-0013 control.
 
 ## 5. What v1 is explicitly not
 
@@ -253,11 +265,12 @@ exception: a platform adapter calls the owner, it never grows a second copy.
 
 ## 8. Success metrics
 
-The native-first EP-02/EP-06/EP-08 pilot gates are defined in the
-[capability freeze](v1-capability-freeze.md#native-first-pilot-gates). Passing
-them does not close a broader parent issue whose live checklist is still unmet.
-The original EP-11 full-program metrics remain below as deferred evidence, not
-pilot acceptance criteria.
+The completed native-first EP-02/EP-06/EP-08 pilot gates are defined in the
+[capability freeze](v1-capability-freeze.md#native-first-pilot-gates). The
+post-pilot server tranche adds a second, separate set of gates; neither partial
+proof closes a broader parent whose live checklist remains unmet. The original
+EP-11 public-program metrics remain deferred evidence, not server-tranche
+acceptance criteria.
 
 1. **Independence** — at least three independently packaged consumers (one
    server plugin, one web contribution, one headless/native) complete a real
@@ -268,8 +281,11 @@ pilot acceptance criteria.
    documented, machine-readable code. The silent-`null` DI failure in
    [S2](spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent)
    is the anti-pattern this metric exists to prevent.
-4. **Isolation** — a broken, slow, incompatible, disabled or uninstalled
-   extension leaves Jellyfin, Canopy and unrelated extensions healthy. The
+4. **Bounded failure isolation** — missing, incompatible, disabled, uninstalled
+   and kernel-observable provider failures do not block startup or unrelated
+   callers; cooperative slow work is bounded by deadline and bulkhead. A
+   malicious or runaway in-process plugin can still degrade Jellyfin and is the
+   explicit accepted T-03 exception. The
    [lifecycle matrix](spike-evidence.md#s13--lifecycle-matrix) is the template.
 5. **Bounded cost** — platform overhead against the equivalent direct path stays
    within published budgets for startup, catalog, surface resolution, action
@@ -279,12 +295,9 @@ pilot acceptance criteria.
 
 ## 9. How this milestone completes
 
-EP-00's exit gate is an approved charter, ADR set, threat model, risk register,
-compatibility terminology, supported-client matrix and frozen v1 capability list.
-The artifacts exist in this directory. The remaining work packages — the browser
-sandbox spike, the native descriptor fixture, and the deeper conformance
-questions [the spike did not
-establish](spike-evidence.md#what-this-spike-did-not-establish) — are decomposed
-into child issues under milestone EP-00 rather than declared done.
-
-Parent issue #39 stays open until every acceptance criterion has evidence.
+EP-00's exit gate was an approved charter, ADR set, threat model, risk register,
+compatibility terminology, supported-client matrix and frozen v1 capability
+list. Browser mechanism evidence S17 and the native descriptor fixture S18 were
+subsequently recorded, every EP-00 acceptance criterion gained evidence, and
+parent #39 closed. Deeper production breadth remains owned by its active or
+deferred milestone; closing EP-00 did not claim those later exit gates.

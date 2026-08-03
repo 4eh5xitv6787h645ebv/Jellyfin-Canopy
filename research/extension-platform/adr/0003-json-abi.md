@@ -1,6 +1,6 @@
 # ADR-0003 — The load-context-safe JSON ABI
 
-Status: **proposed** (EP-00) · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
+Status: **accepted design** (ADR-0013; EP-04 implementation pending) · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
 
 ## Context
 

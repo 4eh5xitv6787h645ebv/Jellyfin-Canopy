@@ -1,8 +1,8 @@
 # Canopy Extension Platform — trust boundaries and threat model
 
 Tracking issue: [#39 — EP-00](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/39)
-Status: **proposed** (EP-00). EP-02 refines this to implementation detail; EP-11
-revisits it in full before GA.
+Status: **accepted architecture** (EP-00). EP-02 through EP-06 refine active
+threats to implementation detail; EP-11 revisits it in full before GA.
 
 ## 1. Trust zones
 
@@ -11,7 +11,8 @@ revisits it in full before GA.
 | **Z0 — host process** | Jellyfin server, Canopy, the platform kernel, every installed .NET plugin | Fully trusted. Everything here can read the database and the filesystem. |
 | **Z1 — kernel boundary** | manifest reader, registry, provider binder, capability gate, audit | Trusted code enforcing policy **on** untrusted data |
 | **Z2 — extension declarations** | `jellyfin-canopy-extension.json`, requested scopes, contribution descriptors, provider responses | **Untrusted input**, authored by a third party |
-| **Z3 — authenticated client** | browser with a Canopy web adapter, native/TV client, companion service | Untrusted; authenticated; authority = its Jellyfin user |
+| **Z3a — authenticated user client** | browser with a Canopy web adapter, native/TV client | Untrusted; authority = its one current Jellyfin user; caller attribution never selects authority |
+| **Z3b — authenticated service actor** | companion service, script or bot | Untrusted; no acting Jellyfin user; authority = credential-bound service id intersected with exact grant and service-operation ceiling |
 | **Z4 — sandboxed frame** | opaque-origin iframe — **deferred, not in v1** ([ADR-0007](adr/0007-declarative-web-contributions.md)) | Untrusted, no host DOM, no token |
 | **Z5 — anonymous network** | unauthenticated callers, other web origins | Fully untrusted |
 
@@ -26,9 +27,11 @@ flowchart TB
   subgraph Z5["Z5 — anonymous network"]
     ANON["Unauthenticated caller"]
   end
-  subgraph Z3["Z3 — authenticated client"]
+  subgraph Z3A["Z3a — authenticated user client"]
     WEB["Browser + web adapter"]
     NATIVE["Native / TV client"]
+  end
+  subgraph Z3B["Z3b — authenticated service actor"]
     SVC["Companion service"]
   end
   subgraph Z4["Z4 — sandboxed frame"]
@@ -38,6 +41,7 @@ flowchart TB
     AUTH["Jellyfin authentication + policies"]
     subgraph Z1["Z1 — platform kernel"]
       GATE["Capability gate + re-authorization"]
+      SAUTH["Service credential authentication"]
       REG["Registry + manifest reader"]
       STORE["Namespaced state"]
       EVENTS["Event fan-out"]
@@ -55,7 +59,8 @@ flowchart TB
   ANON -->|"discovery only: availability + protocol range"| GATE
   WEB --> AUTH
   NATIVE --> AUTH
-  SVC -->|"service credential"| AUTH
+  SVC -->|"service credential; never a Jellyfin token"| SAUTH
+  SAUTH -->|"service id + current exact grant; no user"| GATE
   AUTH -->|"principal, never the raw token onward"| GATE
   FRAME -.->|"postMessage broker, capability-filtered"| WEB
   GATE --> REG
@@ -72,11 +77,16 @@ flowchart TB
   OWN --> JF
   EVENTS -->|"authorized before enqueue"| WEB
   EVENTS --> NATIVE
+  EVENTS -->|"service-capable registry/provider events only; recheck grant"| SVC
 ```
 
 Three crossings carry the risk: **Z2 → Z1** (untrusted declarations and provider
 responses entering trusted code), **Z1 → Z2** (what the kernel hands a provider),
-and **Z3/Z5 → Z1** (what a client may ask for).
+and **Z3a/Z3b/Z5 → Z1** (what a user client, service actor or anonymous caller
+may ask for). Existing anonymous, user and elevated operations reject Z3b.
+A service operation must be explicitly authored as service-capable, accepts no
+caller-selected Jellyfin user, and re-checks credential, grant and revocation at
+admission and delivery. Delegated-user service authority is not in this tranche.
 
 ## 3. Threats
 
@@ -97,8 +107,10 @@ Storage keys are kernel-derived, never caller-supplied
 are re-checked at invocation, using the existing fail-closed pattern that refuses
 to authorize against a truncated candidate list.
 *Residual.* **Low**, contingent on no code path accepting a caller-supplied user
-id. The two divergent caller-id resolvers in the current codebase must converge
-before v1 — that divergence is exactly how this defect gets introduced.
+id. The pilot Platform boundary is strict, but legacy resolver divergence
+remains. Issue #638 must converge authority-relevant callers before any new
+actor, service, provider, state or event authority route; that divergence is
+exactly how this defect gets introduced.
 
 ### T-02 · Privilege escalation to administrator — **critical**
 
@@ -191,10 +203,11 @@ build-failing HTML-escape and CSS-injection guards
 ([ADR-0007](adr/0007-declarative-web-contributions.md)). Extensions have no content channel into
 the page at all in v1, which is the whole reason
 [milestone 82 is superseded](milestone-82-disposition.md).
-*Residual.* **Medium — unverified.** No browser spike ran, so slot rendering,
-mounting/teardown and CSP behaviour are unproven
-([#491](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/491)). The
-sandboxed frame is not part of v1, so it neither helps nor hurts this residual.
+*Residual.* **Medium — mechanism measured, breadth unverified.** S17 proves
+modern-layout slot rendering, mounting/teardown and opaque-frame isolation. It
+does not prove legacy/mobile/Web-TV layouts, accessibility, localisation or
+production CSP behavior. EP-07 remains deferred, and the sandboxed frame is not
+part of the active tranche.
 
 ### T-07 · Cross-origin abuse of a held token — **medium**
 
@@ -251,8 +264,9 @@ concurrency caps, bulkheads, circuit breakers, coalescing, bounded retention and
 disconnect-and-resync for slow consumers. Native-action audit uses one fixed
 1,024-record FIFO ring with constant-size failure health state; concurrent appends
 cannot grow storage, and audit/logging failure never retries an action.
-*Residual.* **Medium.** No load or concurrency testing has been done; every spike
-probe was sequential.
+*Residual.* **Medium.** EP-00 provider/event probes were sequential. The native
+pilot later proved bounded action concurrency, but provider fan-out, event
+storms, backpressure and multi-hour soak remain untested.
 
 ### T-11 · Startup denial of service — **high**
 
@@ -275,11 +289,19 @@ extension's state.
 *Mitigation.* Authorize and filter **before enqueueing**, and re-check at
 delivery — enqueue-time filtering alone would let an event authorized before a
 permission change still be delivered out of a reconnect buffer afterwards. A
-grant change or a Jellyfin permission change drops the subscriber's buffer and
-forces `resync-required`. Per-subscriber cursors; reconnect buffers scoped to the
-subscriber ([ADR-0006](adr/0006-client-event-transport.md)).
-*Residual.* **Low by design, untested.** EP-05 must prove it under multi-user
-load, including a permission change mid-stream.
+grant or Jellyfin permission change drops the user subscriber's buffer and
+forces `resync-required`. A service stream is limited to the explicit bounded
+provider-id set in its grant and uses a minimal lifecycle/health/invalidation
+schema with no C10 inventory, attribution, manifest, circuit/error or user/media
+data. It rechecks credential generation, expiry, rotation, revoke, registration
+lifecycle, exact grant and operation ceiling before enqueue, filtered snapshot
+and each delivery chunk; any change destroys its buffer. A no-user service
+cannot subscribe to user/media families. Per-subscriber cursors; reconnect buffers
+scoped to the exact actor generation
+([ADR-0006](adr/0006-client-event-transport.md)).
+*Residual.* **Low by design, untested.** EP-05 must prove it under multi-user and
+multi-service load, including permission, credential and grant changes
+mid-stream.
 
 ### T-13 · Confused deputy via contribution-supplied context — **high**
 
@@ -343,6 +365,26 @@ in-process ([charter §6](charter.md#6-kernel-placement-decision)).
 honest fork or a namesake by accident, which makes it worth documenting even
 though the malicious case adds nothing to T-03.
 
+## 3.1 Post-pilot server-tranche ownership
+
+[ADR-0013](adr/0013-server-platform-tranche.md) activates C2 through C4, the
+registry/provider subset of C5 and the corresponding C10 diagnostics.
+Activation does not reduce a residual rating; only owning milestone evidence
+can do that.
+
+| Owner | Threats that block its exit |
+|---|---|
+| EP-02 authority foundation | T-01 caller identity, T-02 administrator ceiling and T-13 confused deputy |
+| EP-03 registry/lifecycle | T-04 manifest integrity, T-11 startup isolation and T-16 namesake collision honesty |
+| EP-04 provider runtime | T-03 containment limits, T-05 token hygiene, T-10 provider bounds and T-14 visible binding failure |
+| EP-05 state and bounded events | T-10 queue/retention bounds, T-12 subscriber isolation and T-15 state recovery |
+| C10 diagnostics across EP-02/03/04/06 | T-08 credential/log redaction and bounded administrator-only visibility |
+
+EP-07 and T-06 remain deferred. Jellyfin library, user-data, playback, settings
+and Active Streams events remain outside the active C5 subset. T-07 and T-09
+remain cross-cutting constraints; no activated capability is permission to
+trust browser origin or caller-supplied URLs.
+
 ## 4. Out of scope
 
 - Containing a malicious installed .NET plugin (**T-03**).
@@ -351,16 +393,21 @@ though the malicious case adds nothing to T-03.
 - Protecting a user who has already given their token to a third party.
 - Network-level attacks the reverse proxy owns (TLS termination, DDoS).
 
-## 5. Open questions for EP-02
+## 5. Open implementation questions and owners
 
 1. Should RFC1918 ranges be denied by default for **untrusted extensions**, given
    `ArrUrlGuard` deliberately allows them for first-party integrations (**T-09**)?
 2. Can a write-only secret reference be protected meaningfully in a
    single-process plugin, or should v1 simply not offer one
    ([ADR-0008](adr/0008-storage-ownership.md) §9)?
-3. What is the exact scope vocabulary, and how does an admin see an *effective*
-   permission preview rather than a raw scope list?
-4. Does revocation need to interrupt an in-flight provider call, given
-   **T-03** shows the call cannot actually be stopped?
-5. Do the two divergent caller-id resolvers converge before v1, or does the
-   platform pin one and leave the legacy surface alone (**T-01**)?
+3. ADR-0013 decides exact, case-sensitive, namespaced scopes with no wildcard or
+   prefix authority, plus a bounded effective grant ceiling. Issue
+   [#639](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/639)
+   owns the concrete vocabulary and preview decisions.
+4. Decided by ADR-0013: revoke denies admission, requests cancellation and
+   generation-fences all kernel-owned commits/delivery, but cannot stop or roll
+   back a provider-owned or external effect already begun; late/revoked outcomes
+   are discarded and audited.
+5. Issue [#638](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/638)
+   owns convergence of authority-relevant callers on one authenticated,
+   claims-only, fail-closed resolver (**T-01**).
