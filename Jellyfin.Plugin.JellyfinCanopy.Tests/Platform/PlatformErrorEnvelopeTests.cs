@@ -62,6 +62,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                     "conflict",
                     "internal_error",
                     "invalid_request",
+                    "not_acceptable",
                     "not_found",
                     "payload_too_large",
                     "precondition_failed",
@@ -76,6 +77,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
 
         [Theory]
         [InlineData(PlatformErrorCode.InvalidRequest, 400, false)]
+        [InlineData(PlatformErrorCode.NotAcceptable, 406, false)]
         [InlineData(PlatformErrorCode.UnsupportedMediaType, 415, false)]
         [InlineData(PlatformErrorCode.UnsupportedProtocol, 400, false)]
         [InlineData(PlatformErrorCode.NotFound, 404, false)]

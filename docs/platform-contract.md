@@ -10,6 +10,7 @@ The artifacts live in [`contracts/platform/v1/`](https://github.com/4eh5xitv6787
 |---|---|
 | `openapi.json` | The contract. Routes, parameters, responses and schemas. |
 | `frozen.json` | The published v1 surface, so CI can prove changes stay additive. |
+| `deprecations.json` | The bounded operation deprecation schedule; currently empty. |
 | `fixtures/` | Golden request/response examples. |
 
 ## The spec is authored, not generated
@@ -23,6 +24,7 @@ directions:
 
 - a route with no spec entry fails the build
 - a spec entry with no route fails the build
+- a spec entry missing from the frozen conformance inventory fails the build
 - a schema that drifts from the type it describes fails the build
 - a fixture that no longer round-trips fails the build
 
@@ -49,10 +51,23 @@ elevate an actor. Client and device values are bounded attribution only. A missi
 malformed or deleted authenticated user fails closed with a bare `403`; service/API-key
 actors remain outside the native-first pilot.
 
+Every OpenAPI operation publishes `x-canopy-authority` as `anonymous`, `authenticated`,
+or `elevated`. CI compares that value with the live controller attributes, and the live
+conformance matrix exercises anonymous, ordinary-user, and administrator callers for
+every operation in `frozen.json`. A newly added operation cannot omit either its frozen
+inventory entry or its authorization class.
+
 **Branch on `Code`, never on `Message`.** The message is human-readable and may be
 reworded or translated at any time. The code set is enumerated in the spec, and each code
 maps to exactly one HTTP status. Treat a code you do not recognise as a generic failure of
 its status class.
+
+**Keep the Jellyfin base path when composing URLs.** The OpenAPI server URL is relative
+to the configured Jellyfin server address. If that address is
+`https://media.example/jf/`, resolve the Platform path beneath `/jf/`; never resolve it
+against the bare origin, which would silently drop the reverse-proxy prefix. Route paths
+come from the spec. Cursors and other values belong in `URLSearchParams` as encoded data,
+not in the URL authority or path.
 
 ## JSON wire format
 
@@ -60,6 +75,9 @@ Platform v1 pins one JSON format without changing any older `/JellyfinCanopy/*` 
 
 - requests with a body must use `application/json`; after authentication, any other or
   missing `Content-Type` returns a structured `415` with code `unsupported_media_type`
+- responses use `application/json`; an absent `Accept`, `application/json`,
+  `application/*`, or `*/*` is compatible, while a request that excludes JSON returns a
+  structured `406` with code `not_acceptable` after authorization
 - unknown request object properties are ignored, so a newer client can send optional
   data to an older host
 - an unknown request enum value returns `400 invalid_request`; the safe message names
@@ -70,6 +88,11 @@ Platform v1 pins one JSON format without changing any older `/JellyfinCanopy/*` 
 Response readers must ignore properties they do not recognise. New optional response
 properties are additive within v1; rejecting the whole response would turn a compatible
 host upgrade into a client failure.
+
+`Accept` parsing is bounded to 16 field values, 4,096 combined characters, and 32 parsed
+media ranges. Quality values are honored: a more-specific `application/json;q=0`
+excludes JSON even if a less-specific wildcard has positive quality. Malformed or
+over-bound values fail closed with the same structured `406`.
 
 ## Versioning
 
@@ -240,6 +263,9 @@ upstream response, exception, or arbitrary message has a record or logging field
 corresponding structured log uses only the same fixed, reduced values; its correlation
 ID is the same one returned by an ordinary action response. A caller disconnect has no
 response to join, but the terminal audit still carries the host correlation ID.
+For every structured response, the body `CorrelationId` and `X-Correlation-Id` header
+are identical; live conformance also joins that value to the bounded dedicated Canopy
+log entry without exposing request or token data.
 
 Retention is an in-process fixed ring of exactly 1,024 records. Appends are serialized,
 constant-time, and evict the oldest completed record deterministically at capacity.
@@ -380,3 +406,8 @@ Cursors are opaque on purpose. Do not decode, construct or reuse one across list
 they are bound to the listing that issued them and signed, so a foreign or edited cursor
 is **rejected** rather than silently restarting the walk from the beginning. Maximum page
 size is 200; larger requests are clamped rather than refused.
+
+Issued cursors use a URL-safe token alphabet and never contain a scheme, slash, query, or
+fragment delimiter. No currently frozen Platform route exposes a paged collection, so
+the live conformance client does not claim a cursor round trip that does not exist; the
+shared paging kernel carries this invariant until an additive cursor-bearing route ships.

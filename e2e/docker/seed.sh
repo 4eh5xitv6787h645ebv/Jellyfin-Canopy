@@ -30,6 +30,7 @@
 #   JF_PORT               loopback host port; 0 asks Docker for a free port
 #   JF_CPUS               Jellyfin CPU quota (default 2)
 #   JF_FFMPEG_THREADS     host encoder threads per seed (default 2)
+#   JF_BASE_PATH          optional canonical reverse-proxy base path (for example /jf)
 #   JF_E2E_IMAGE_PREFETCHED true requires the exact JF_IMAGE to already exist
 #                         locally (used by CI after its parallel preparation)
 #   JF_BIND_ADDRESS       numeric bind address (default 127.0.0.1)
@@ -83,6 +84,7 @@ PLUGIN_DLL="${PLUGIN_DLL:-${REPO_ROOT}/Jellyfin.Plugin.JellyfinCanopy/bin/Releas
 PLUGIN_ID="9ffa12bc-f4b5-406c-ab1d-d575acbeea7b"
 CLIENT_AUTH='MediaBrowser Client="JC-E2E-Seed", Device="seed", DeviceId="jc-e2e-seed", Version="1.0.0"'
 LAYOUT_ENFORCEMENT="${JF_LAYOUT_ENFORCEMENT:-None}"
+BASE_PATH="${JF_BASE_PATH:-}"
 
 log() { echo "[seed] $*"; }
 fail() { echo "[seed] ERROR: $*" >&2; exit 1; }
@@ -148,6 +150,18 @@ case "${LAYOUT_ENFORCEMENT}" in
     None|ForceExperimental|ForceLegacy) ;;
     *) fail "JF_LAYOUT_ENFORCEMENT must be None, ForceExperimental, or ForceLegacy" ;;
 esac
+
+if [ -n "${BASE_PATH}" ]; then
+    [[ "${BASE_PATH}" =~ ^(/[A-Za-z0-9][A-Za-z0-9._~-]*)+$ ]] \
+        || fail "JF_BASE_PATH must be a canonical absolute path without a trailing slash, empty segments, query, fragment, escape, or backslash"
+    IFS='/' read -r -a base_path_segments <<< "${BASE_PATH#/}"
+    for segment in "${base_path_segments[@]}"; do
+        [[ "${segment}" =~ ^[A-Za-z0-9][A-Za-z0-9._~-]*$ ]] \
+            && [ "${segment}" != . ] \
+            && [ "${segment}" != .. ] \
+            || fail "JF_BASE_PATH segments must use only unescaped RFC 3986 path characters and may not be dot segments"
+    done
+fi
 
 # Resolve the state root without following a caller-controlled symlink chain.
 # The default source-adjacent state remains compatible with the documented
@@ -924,6 +938,43 @@ curl -fsS -X POST "${BASE}/UserPlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'C
     || curl -fsS -X POST "${BASE}/Users/${USER_ID}/PlayedItems/${S1E1_ID}" -H "${USER_AUTHED}" -H 'Content-Type: application/json' >/dev/null \
     || fail "could not mark S01E01 played for the seeded non-admin user"
 log "marked S01E01 (${S1E1_ID}) played for the seeded non-admin user"
+
+# Apply an optional reverse-proxy base path only after all ordinary seeding is
+# complete. Jellyfin persists this named configuration on POST and requires a
+# restart before routing changes. Every subsequent consumer receives BASE with
+# the path included, so discovery, authentication, and plugin routes all prove
+# inherited host routing rather than accidentally reaching the origin root.
+if [ -n "${BASE_PATH}" ]; then
+    log "configuring Jellyfin reverse-proxy base path ${BASE_PATH}"
+    NETWORK_CONFIGURATION="$(api GET /System/Configuration/network)"
+    NETWORK_CONFIGURATION="$(printf '%s' "${NETWORK_CONFIGURATION}" \
+        | jq -ce --arg basePath "${BASE_PATH}" '.BaseUrl = $basePath')" \
+        || fail "could not build the Jellyfin network configuration for JF_BASE_PATH"
+    api POST /System/Configuration/network "${NETWORK_CONFIGURATION}" >/dev/null \
+        || fail "could not persist JF_BASE_PATH in Jellyfin network configuration"
+    "${COMPOSE[@]}" restart jellyfin >/dev/null \
+        || fail "could not restart Jellyfin after setting JF_BASE_PATH"
+
+    ROOT_BASE="${BASE}"
+    BASE="${ROOT_BASE}${BASE_PATH}"
+    SERVER_VERSION=''
+    for _ in $(seq 1 60); do
+        if PUBLIC_INFO="$(curl -fsS -m 3 "${BASE}/System/Info/Public" 2>/dev/null)" \
+            && SERVER_VERSION="$(printf '%s' "${PUBLIC_INFO}" \
+                | jq -er '.Version | select(type == "string" and length > 0)' 2>/dev/null)"; then
+            break
+        fi
+        SERVER_VERSION=''
+        sleep 3
+    done
+    [ -n "${SERVER_VERSION}" ] \
+        || fail "server never returned parseable System/Info/Public JSON under JF_BASE_PATH ${BASE_PATH}"
+    ROOT_DISCOVERY_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' \
+        "${ROOT_BASE}/JellyfinCanopy/Platform/v1/discovery")"
+    [ "${ROOT_DISCOVERY_STATUS}" != 200 ] \
+        || fail "Platform discovery unexpectedly bypassed the configured JF_BASE_PATH"
+    log "verified Jellyfin and Platform routing under ${BASE_PATH}; bare Platform path returned ${ROOT_DISCOVERY_STATUS}"
+fi
 
 # Machine-readable evidence for local/CI diagnostics only. The spec deliberately
 # does not read this file: it must discover the current item through Jellyfin's

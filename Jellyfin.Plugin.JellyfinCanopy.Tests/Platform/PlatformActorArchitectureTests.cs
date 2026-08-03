@@ -177,6 +177,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Contains(typeof(PlatformActorBoundaryFilter), attributes.Keys);
             Assert.Equal(PlatformFilterOrder.ActorBoundary, attributes[typeof(PlatformActorBoundaryFilter)]);
             Assert.Equal(PlatformFilterOrder.Availability, attributes[typeof(PlatformAvailabilityFilter)]);
+            Assert.Equal(PlatformFilterOrder.AcceptMediaType, attributes[typeof(PlatformAcceptMediaTypeFilter)]);
             Assert.Equal(PlatformFilterOrder.JsonMediaType, attributes[typeof(PlatformJsonMediaTypeFilter)]);
             Assert.Equal(PlatformFilterOrder.BoundedBody, attributes[typeof(PlatformBoundedBodyFilter)]);
             Assert.Equal(PlatformFilterOrder.RequestLifecycle, attributes[typeof(PlatformRequestLifecycleFilter)]);
@@ -184,18 +185,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Equal(PlatformFilterOrder.Deprecation, attributes[typeof(PlatformDeprecationFilter)]);
             Assert.Equal(PlatformFilterOrder.Concurrency, attributes[typeof(PlatformConcurrency)]);
             Assert.True(attributes[typeof(PlatformActorBoundaryFilter)] < attributes[typeof(PlatformAvailabilityFilter)]);
-            Assert.True(attributes[typeof(PlatformAvailabilityFilter)] < attributes[typeof(PlatformJsonMediaTypeFilter)]);
+            Assert.True(attributes[typeof(PlatformAvailabilityFilter)] < attributes[typeof(PlatformAcceptMediaTypeFilter)]);
+            Assert.True(attributes[typeof(PlatformAcceptMediaTypeFilter)] < attributes[typeof(PlatformJsonMediaTypeFilter)]);
             Assert.True(attributes[typeof(PlatformJsonMediaTypeFilter)] < attributes[typeof(PlatformBoundedBodyFilter)]);
             Assert.True(attributes[typeof(PlatformBoundedBodyFilter)] < attributes[typeof(PlatformRequestLifecycleFilter)]);
             Assert.True(attributes[typeof(PlatformRequestLifecycleFilter)] < attributes[typeof(PlatformDeprecationFilter)]);
             Assert.True(attributes[typeof(PlatformDeprecationFilter)] < attributes[typeof(PlatformJsonResultFilter)]);
             Assert.True(attributes[typeof(PlatformJsonResultFilter)] < attributes[typeof(PlatformConcurrency)]);
+            Assert.Equal(PlatformFilterOrder.AcceptMediaType, new PlatformAcceptMediaTypeFilter().Order);
             Assert.Equal(PlatformFilterOrder.JsonMediaType, new PlatformJsonMediaTypeFilter().Order);
             Assert.Equal(PlatformFilterOrder.BoundedBody, new PlatformBoundedBodyFilter().Order);
             Assert.Equal(PlatformFilterOrder.RequestLifecycle, new PlatformRequestLifecycleFilter().Order);
             Assert.True(typeof(IAsyncResourceFilter).IsAssignableFrom(typeof(PlatformActorBoundaryFilter)));
             Assert.True(typeof(IAsyncResourceFilter).IsAssignableFrom(typeof(PlatformAvailabilityFilter)));
+            Assert.True(typeof(IAsyncResourceFilter).IsAssignableFrom(typeof(PlatformAcceptMediaTypeFilter)));
             Assert.False(typeof(IAsyncAuthorizationFilter).IsAssignableFrom(typeof(PlatformActorBoundaryFilter)));
+            Assert.False(typeof(IAsyncAuthorizationFilter).IsAssignableFrom(typeof(PlatformAcceptMediaTypeFilter)));
 
             var controllers = typeof(PlatformControllerBase).Assembly
                 .GetTypes()

@@ -317,7 +317,7 @@ jobs:
 
       - name: Run E2E shard ${{ matrix.shard }}/${{ matrix.total }}
         id: playwright
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           JF_E2E_REQUIRED: "true"
           JF_E2E_INVENTORY_FILE: ${{ runner.temp }}/jc-e2e-shard-results/shard-${{ matrix.shard }}.inventory
@@ -329,6 +329,13 @@ jobs:
         run: |
           date -u +'%Y-%m-%dT%H:%M:%SZ' > "${RUNNER_TEMP}/jc-e2e-playwright-started-at"
           npm run e2e -- --shard=${{ matrix.shard }}/${{ matrix.total }}
+          if [[ "${{ matrix.shard }}" == "1" ]]; then
+            JF_E2E_IMAGE_PREFETCHED=true JF_BASE_PATH=/jf bash e2e/docker/seed.sh
+            JF_E2E_REQUIRED=false \
+              JF_BASE_URL=http://127.0.0.1:8100/jf \
+              JF_E2E_OUTPUT_DIR=e2e/test-results/base-path \
+              npm run e2e -- e2e/platform-contract-smoke.spec.ts
+          fi
 
       - name: Sanitized server logs on failure
         if: always() && (steps.seed.outcome != 'success' || steps.playwright.outcome != 'success')

@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
@@ -117,6 +118,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             }
 
             return removed;
+        }
+
+        private static IReadOnlyList<string> PublishedOperationsMissingFromFrozen(JsonElement frozen, JsonElement spec)
+        {
+            var frozenOperations = frozen.GetProperty("paths").EnumerateObject()
+                .SelectMany(path => path.Value.EnumerateArray()
+                    .Select(method => $"{method.GetString()} {path.Name}"))
+                .ToHashSet(StringComparer.Ordinal);
+
+            return SpecOperations(spec)
+                .Select(entry => $"{entry.Method} {entry.Path}")
+                .Where(operation => !frozenOperations.Contains(operation))
+                .OrderBy(operation => operation, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static string LiveAuthority(MethodInfo action)
+        {
+            if (action.GetCustomAttribute<AllowAnonymousAttribute>(inherit: true) is not null
+                || action.DeclaringType!.GetCustomAttribute<AllowAnonymousAttribute>(inherit: true) is not null)
+            {
+                return "anonymous";
+            }
+
+            var authorization = action.GetCustomAttributes<AuthorizeAttribute>(inherit: true)
+                .Concat(action.DeclaringType!.GetCustomAttributes<AuthorizeAttribute>(inherit: true));
+            return authorization.Any(attribute =>
+                string.Equals(attribute.Policy, Policies.RequiresElevation, StringComparison.Ordinal))
+                    ? "elevated"
+                    : "authenticated";
         }
 
         private static IEnumerable<(string Path, string Method, JsonElement Operation)> SpecOperations(JsonElement spec)
@@ -359,6 +390,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.All(SpecOperations(), operation => Assert.Equal(
                 "#/components/responses/Timeout",
                 operation.Operation.GetProperty("responses").GetProperty("504").GetProperty("$ref").GetString()));
+        }
+
+        [Fact]
+        public void EveryPlatformOperationDocumentsTheStructuredNotAcceptableResponse()
+        {
+            var notAcceptable = Spec.RootElement.GetProperty("components").GetProperty("responses")
+                .GetProperty("NotAcceptable");
+            Assert.Equal(
+                "#/components/schemas/PlatformError",
+                notAcceptable.GetProperty("content").GetProperty("application/json")
+                    .GetProperty("schema").GetProperty("$ref").GetString());
+
+            Assert.All(SpecOperations(), operation => Assert.Equal(
+                "#/components/responses/NotAcceptable",
+                operation.Operation.GetProperty("responses").GetProperty("406").GetProperty("$ref").GetString()));
         }
 
         [Fact]
@@ -638,6 +684,45 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public void EveryPublishedOperationIsFrozenIntoTheConformanceInventory()
+        {
+            var unfrozen = PublishedOperationsMissingFromFrozen(Frozen.RootElement, Spec.RootElement);
+
+            Assert.True(
+                unfrozen.Count == 0,
+                "Published Platform v1 route(s) can dodge the frozen conformance matrix: "
+                    + string.Join(", ", unfrozen) + ". Add every additive v1 operation to frozen.json.");
+        }
+
+        [Fact]
+        public void DriftGateNamesAPublishedOperationMissingFromFrozen()
+        {
+            using var plantedFrozen = JsonDocument.Parse("""{"paths":{}}""");
+            using var plantedSpec = JsonDocument.Parse("""
+                {"paths":{"/JellyfinCanopy/Platform/v1/discovery":{"get":{}}}}
+                """);
+
+            var unfrozen = PublishedOperationsMissingFromFrozen(plantedFrozen.RootElement, plantedSpec.RootElement);
+
+            Assert.Equal(new[] { "get /JellyfinCanopy/Platform/v1/discovery" }, unfrozen);
+        }
+
+        [Fact]
+        public void EveryOperationPublishesItsLiveAuthorizationClassForTheMatrix()
+        {
+            foreach (var (path, method, action) in LiveRoutes())
+            {
+                var operation = SpecOperations().Single(entry =>
+                    string.Equals(entry.Path, path, StringComparison.Ordinal)
+                    && string.Equals(entry.Method, method, StringComparison.Ordinal)).Operation;
+                var published = operation.GetProperty("x-canopy-authority").GetString();
+
+                Assert.Contains(published, new[] { "anonymous", "authenticated", "elevated" });
+                Assert.Equal(LiveAuthority(action), published);
+            }
+        }
+
+        [Fact]
         public void DriftGateNamesAFrozenOperationRemovedEvenWhenDeprecated()
         {
             using var plantedFrozen = JsonDocument.Parse("""
@@ -720,6 +805,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
                 Assert.StartsWith("/JellyfinCanopy/Platform/v1/", operation.Path, StringComparison.Ordinal);
                 Assert.DoesNotContain("/latest", operation.Path, StringComparison.OrdinalIgnoreCase);
             });
+        }
+
+        [Fact]
+        public void OpenApiServerIsRelativeToTheConfiguredJellyfinBasePath()
+        {
+            var servers = Spec.RootElement.GetProperty("servers").EnumerateArray().ToArray();
+
+            Assert.Single(servers);
+            Assert.Equal(".", servers[0].GetProperty("url").GetString());
         }
 
         [Fact]

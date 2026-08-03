@@ -12,6 +12,7 @@ const compatibilityWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows
 const playwrightConfig = fs.readFileSync(path.join(ROOT, 'e2e/playwright.config.ts'), 'utf8');
 const compose = fs.readFileSync(path.join(ROOT, 'e2e/docker/compose.yml'), 'utf8');
 const seed = fs.readFileSync(path.join(ROOT, 'e2e/docker/seed.sh'), 'utf8');
+const authFixture = fs.readFileSync(path.join(ROOT, 'e2e/fixtures/auth.ts'), 'utf8');
 const pinnedImagePull = fs.readFileSync(path.join(__dirname, 'pull-pinned-image.sh'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -56,9 +57,11 @@ test('required E2E uses six native file shards with one fresh serial two-CPU ser
     );
     assert.match(
         shard,
-        /id: playwright\n\s+timeout-minutes: 15[\s\S]*?run: \|[\s\S]*jc-e2e-playwright-started-at[\s\S]*npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
+        /id: playwright\n\s+timeout-minutes: 25[\s\S]*?run: \|[\s\S]*jc-e2e-playwright-started-at[\s\S]*npm run e2e -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.total \}\}/
     );
-    assert.doesNotMatch(shard, /npm run e2e[^\n]*(--grep|\.spec\.ts)/);
+    const requiredRun = shard.match(/npm run e2e -- --shard=[^\n]+/)?.[0];
+    assert.ok(requiredRun, 'required sharded Playwright command is missing');
+    assert.doesNotMatch(requiredRun, /--grep|\.spec\.ts/);
     assert.match(shard, /name: Tear down\n\s+if: always\(\)/);
     assert.match(
         shard,
@@ -70,6 +73,21 @@ test('required E2E uses six native file shards with one fresh serial two-CPU ser
     assert.match(playwrightConfig, /workers:\s*1/);
     assert.match(playwrightConfig, /fullyParallel:\s*false/);
     assert.match(playwrightConfig, /retries:\s*required \? 0 : 1/);
+});
+
+test('one blocking shard repeats Platform conformance under a strict /jf base path', () => {
+    const shard = jobBlock('e2e_shard', 'e2e');
+
+    assert.match(shard, /if \[\[ "\$\{\{ matrix\.shard \}\}" == "1" \]\]; then/);
+    assert.match(shard, /JF_E2E_IMAGE_PREFETCHED=true JF_BASE_PATH=\/jf bash e2e\/docker\/seed\.sh/);
+    assert.match(shard, /JF_E2E_REQUIRED=false/);
+    assert.match(shard, /JF_BASE_URL=http:\/\/127\.0\.0\.1:8100\/jf/);
+    assert.match(shard, /npm run e2e -- e2e\/platform-contract-smoke\.spec\.ts/);
+    assert.match(shard, /JF_E2E_OUTPUT_DIR=e2e\/test-results\/base-path/);
+    assert.equal((shard.match(/JF_E2E_REQUIRED: "true"/g) || []).length, 1);
+    assert.match(authFixture, /process\.env\.JF_BASE_URL\?\.trim\(\)/);
+    assert.match(authFixture, /target\.pathname = `\$\{target\.pathname\.replace\(\/\\\/\+\$\/, ''\)\}\/web\/`/);
+    assert.doesNotMatch(authFixture, /page\.goto\('\/web\/'/);
 });
 
 test('E2E installs once and prepares independent prerequisites concurrently', () => {

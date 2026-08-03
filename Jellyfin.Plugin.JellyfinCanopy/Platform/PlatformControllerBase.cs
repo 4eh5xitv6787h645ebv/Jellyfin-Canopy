@@ -36,6 +36,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     [TypeFilter(typeof(PlatformActorBoundaryFilter), Order = PlatformFilterOrder.ActorBoundary)]
     [TypeFilter(typeof(PlatformAvailabilityFilter), Order = PlatformFilterOrder.Availability)]
     [TypeFilter(typeof(PlatformRequestFilter), Order = int.MinValue)]
+    [TypeFilter(typeof(PlatformAcceptMediaTypeFilter), Order = PlatformFilterOrder.AcceptMediaType)]
     [TypeFilter(typeof(PlatformJsonMediaTypeFilter), Order = PlatformFilterOrder.JsonMediaType)]
     [TypeFilter(typeof(PlatformBoundedBodyFilter), Order = PlatformFilterOrder.BoundedBody)]
     [TypeFilter(typeof(PlatformRequestLifecycleFilter), Order = PlatformFilterOrder.RequestLifecycle)]

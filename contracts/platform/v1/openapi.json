@@ -4,18 +4,19 @@
     "title": "Jellyfin Canopy \u2014 Platform v1",
     "version": "1.0.0",
     "summary": "The versioned, capability-scoped extension surface.",
-    "description": "This document is AUTHORED, not generated from the running server. Generating it from the code would document whatever the code happens to do, mistakes included, and would make a breaking change undetectable \u2014 the spec would simply move with the bug. Here the spec is the source of truth and the server is checked against it by PlatformContractTests.\n\nOnly routes under /JellyfinCanopy/Platform/v1 are described. The pre-platform /JellyfinCanopy/* routes are compatibility surfaces with their own shapes and are deliberately absent; they are never promoted into the platform implicitly.\n\nBody-bearing requests accept application/json only; a different or missing Content-Type is a structured 415 after authorization. Request readers ignore unknown object properties, reject unknown enum values as invalid_request, and require RFC 3339 UTC timestamps with an explicit UTC offset. GUIDs use lowercase canonical D form. Clients must ignore unknown response properties so additive v1 evolution remains usable.\n\nChanges within v1 are additive only (ADR-0010). Removing a path, removing a required property, or changing a property's type is a v2 concern, and contracts/platform/v1/frozen.json exists so CI can prove it rather than a reviewer having to notice."
+    "description": "This document is AUTHORED, not generated from the running server. Generating it from the code would document whatever the code happens to do, mistakes included, and would make a breaking change undetectable \u2014 the spec would simply move with the bug. Here the spec is the source of truth and the server is checked against it by PlatformContractTests.\n\nOnly routes under /JellyfinCanopy/Platform/v1 are described. The pre-platform /JellyfinCanopy/* routes are compatibility surfaces with their own shapes and are deliberately absent; they are never promoted into the platform implicitly.\n\nPlatform responses use application/json. An absent Accept header, application/json, application/*, or */* permits that representation; a malformed, over-bound, or excluding Accept header receives a structured 406 after any required authorization. Body-bearing requests accept application/json only; a different or missing Content-Type is a structured 415 after authorization. Request readers ignore unknown object properties, reject unknown enum values as invalid_request, and require RFC 3339 UTC timestamps with an explicit UTC offset. GUIDs use lowercase canonical D form. Clients must ignore unknown response properties so additive v1 evolution remains usable.\n\nChanges within v1 are additive only (ADR-0010). Removing a path, removing a required property, or changing a property's type is a v2 concern, and contracts/platform/v1/frozen.json exists so CI can prove it rather than a reviewer having to notice."
   },
   "servers": [
     {
-      "url": "/",
-      "description": "The Jellyfin server root. Platform routes sit under the plugin's own path because Jellyfin applies no prefix convention of its own, so an unprefixed family could collide with another plugin."
+      "url": ".",
+      "description": "The configured Jellyfin server base, including any reverse-proxy base path. Resolve Platform paths beneath this base rather than resetting to the bare origin."
     }
   ],
   "paths": {
     "/JellyfinCanopy/Platform/v1/discovery": {
       "get": {
         "operationId": "getDiscovery",
+        "x-canopy-authority": "anonymous",
         "summary": "Whether the platform is present, and which protocol versions it speaks.",
       "description": "The ONLY anonymous route in Platform v1. A client must be able to learn whether the native platform is serving requests before it has a reason to authenticate, and probing this reveals nothing an unauthenticated caller could not learn by noticing the plugin is installed. Available=false means the administrator has disabled Platform v1; the protocol range remains present so a client can distinguish a disabled compatible host from an unknown route. Disabled discovery responses use Cache-Control: no-store.\n\nThe payload is deliberately uninteresting: no users, no installed extensions, no topology, no configuration, no server identity. Adding a property here widens what an unauthenticated caller learns.",
       "security": [],
@@ -56,6 +57,9 @@
           "400": {
             "$ref": "#/components/responses/InvalidConditionalRequest"
           },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
           "412": {
             "$ref": "#/components/responses/PreconditionFailed"
           },
@@ -68,6 +72,7 @@
     "/JellyfinCanopy/Platform/v1/negotiate": {
       "get": {
         "operationId": "negotiate",
+        "x-canopy-authority": "authenticated",
         "summary": "The highest protocol version both sides speak.",
         "description": "A client offers the range it supports; the host answers with what it will actually use.\n\nNo overlap is reported as a 200 with compatible=false, NOT as an error. A negotiation that concludes \"no common version\" has succeeded \u2014 it answered the question asked \u2014 and a client renders that differently from \"unavailable\" and from \"denied\". Collapsing the three would make a version mismatch indistinguishable from a permissions problem.\n\nA client that supplies no range is treated as speaking the oldest protocol only. Assuming it supports the newest would be optimistic about software the host knows nothing about.",
         "parameters": [
@@ -126,6 +131,9 @@
         "400": {
           "$ref": "#/components/responses/InvalidConditionalRequest"
         },
+        "406": {
+          "$ref": "#/components/responses/NotAcceptable"
+        },
         "412": {
           "$ref": "#/components/responses/PreconditionFailed"
         },
@@ -144,6 +152,7 @@
     "/JellyfinCanopy/Platform/v1/surfaces/item-detail/resolve": {
       "post": {
         "operationId": "resolveNativeItemDetail",
+        "x-canopy-authority": "authenticated",
         "summary": "Resolve the current actor's bounded native item-detail contributions.",
         "description": "Canopy re-authorizes the Jellyfin item and composes only the fixed Spoiler Guard, Hidden Content, and Seerr pilot families. Unknown or unavailable families are omitted. The response is capped at twelve contributions, retaining bounded headroom for another native-safe family. Opaque prepare handles carry no client-interpretable authority. This POST receives a strong ETag over its exact response bytes, but intentionally has no conditional-GET or 304 behavior because the bounded client capability body is part of the representation key.",
         "x-canopy-validated-representation": true,
@@ -185,6 +194,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
@@ -203,6 +215,7 @@
     "/JellyfinCanopy/Platform/v1/actions/prepare": {
       "post": {
         "operationId": "prepareNativeAction",
+        "x-canopy-authority": "authenticated",
         "summary": "Re-authorize an opaque catalog action and mint a short-lived invocation capability.",
         "description": "The prepare handle is resolved only for the current Jellyfin user. Canopy rechecks the user, item, configuration, feature state, client field support, and owner authorization before returning a bounded native form. Expired, restarted, cross-user, stale, or unauthorized handles are deliberately indistinguishable as not_found.",
         "requestBody": {
@@ -238,6 +251,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
@@ -256,6 +272,7 @@
     "/JellyfinCanopy/Platform/v1/actions/invoke": {
       "post": {
         "operationId": "invokeNativeAction",
+        "x-canopy-authority": "authenticated",
         "summary": "Invoke one prepared first-party action through Canopy's fixed dispatcher.",
         "description": "The idempotency key is carried exactly once in the JSON body; the Idempotency-Key header is forbidden on this route. Canopy consumes the opaque capability only after fresh Jellyfin and owning-service authorization, validates answers against the server-bound form and feature variant, and executes only one of the three fixed pilot ports. Clients must treat refresh targets as allowlisted hints and ignore unknown targets.",
         "requestBody": {
@@ -290,6 +307,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
           },
           "409": {
             "$ref": "#/components/responses/IdempotencyConflict"
@@ -456,6 +476,16 @@
       },
       "UnsupportedMediaType": {
         "description": "The authenticated request carries a body with a missing or non-JSON Content-Type.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PlatformError"
+            }
+          }
+        }
+      },
+      "NotAcceptable": {
+        "description": "The Accept header is malformed, exceeds the negotiation bounds, or excludes the application/json representation returned by Platform v1.",
         "content": {
           "application/json": {
             "schema": {
@@ -1117,6 +1147,7 @@
         "enum": [
           "invalid_request",
           "unsupported_media_type",
+          "not_acceptable",
           "unsupported_protocol",
           "not_found",
           "conflict",
