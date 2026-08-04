@@ -177,6 +177,10 @@
       "reason": "First-party Android TV client repository, referenced by the Android TV client developer guide."
     },
     {
+      "url": "https://github.com/4eh5xitv6787h645ebv/jellyfin-androidtv/blob/master/docs/features.md",
+      "reason": "Android TV feature walkthrough hosting the screen recordings, which stay with the client because the docs theme has no prefers-reduced-motion handling."
+    },
+    {
       "url": "https://github.com/BobHasNoSoul/",
       "reason": "Reviewed public third-party documentation or asset."
     },
