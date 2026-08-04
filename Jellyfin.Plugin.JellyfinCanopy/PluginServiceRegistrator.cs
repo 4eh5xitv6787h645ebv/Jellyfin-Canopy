@@ -314,6 +314,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton(serviceProvider => new PlatformProviderBindingService(
                 serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),
                 serviceProvider.GetRequiredService<IPlatformProviderBindingHost>()));
+            serviceCollection.AddSingleton(serviceProvider => new PlatformProviderInvocationService(
+                serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),
+                serviceProvider.GetRequiredService<IPlatformProviderBindingHost>()));
             serviceCollection.AddSingleton(serviceProvider => new PlatformProviderRegistryOrchestrator(
                 serviceProvider.GetRequiredService<IPlatformInstalledManifestSweepSource>(),
                 serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),

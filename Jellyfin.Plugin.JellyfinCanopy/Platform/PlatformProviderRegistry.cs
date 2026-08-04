@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Platform
@@ -23,16 +24,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     {
         internal const int MaximumProviderCount = PlatformInstalledManifestDiscovery.MaximumPluginCount;
         internal const int MaximumReasonLength = 256;
+        internal const int MaximumConcurrentInvocationsPerProvider = 2;
 
         private readonly object _gate = new();
+        private readonly object _authorityTransitionGate = new();
         private readonly IPlatformProviderRegistryStateStore _store;
         private readonly TimeProvider _timeProvider;
+        private readonly Dictionary<Guid, int> _activeProviderInvocations = new();
         private PlatformProviderRegistryDurableState _durable;
         private ImmutableDictionary<Guid, PlatformInstalledManifestObservation> _current;
         private PlatformProviderRegistrySnapshot _snapshot;
         private IPlatformProviderRegistryReconciliationEpoch? _currentReconciliationEpoch;
         private bool _authorityReleaseFenced = true;
-        private object _operationBindingClaimEpoch = new();
+        private InvocationAuthorityEpoch? _operationAuthorityEpoch;
 
         /// <summary>
         /// Opaque one-use registry-owned reconciliation authority. Reference identity is
@@ -43,6 +47,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             internal ReconciliationEpoch()
             {
             }
+        }
+
+        /// <summary>
+        /// One non-serializable live invocation generation. Counts are protected by
+        /// <see cref="_gate"/>; cancellation callbacks are never invoked while it is held.
+        /// </summary>
+        private sealed class InvocationAuthorityEpoch
+        {
+            internal CancellationTokenSource Cancellation { get; } = new();
+
+            internal int ActiveInvocationLeases { get; set; }
+
+            internal int ActiveResultReleaseLeases { get; set; }
+
+            internal bool ReleaseAdmissionFenced { get; set; }
+
+            internal bool Retired { get; set; }
+
+            internal bool CancellationCompleted { get; set; }
+
+            internal bool CancellationDisposed { get; set; }
         }
 
         internal PlatformProviderRegistry(
@@ -92,12 +117,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         internal IPlatformProviderRegistryReconciliationEpoch BeginReconciliation()
         {
-            lock (_gate)
+            InvocationAuthorityEpoch? retired;
+            IPlatformProviderRegistryReconciliationEpoch epoch;
+            lock (_authorityTransitionGate)
             {
-                FenceAuthorityRelease();
-                _currentReconciliationEpoch = new ReconciliationEpoch();
-                return _currentReconciliationEpoch;
+                lock (_gate)
+                {
+                    retired = FenceAuthorityReleaseUnderLock();
+                    _currentReconciliationEpoch = new ReconciliationEpoch();
+                    epoch = _currentReconciliationEpoch;
+                }
             }
+
+            CancelAndDrainRetiredAuthority(retired);
+            return epoch;
         }
 
         /// <summary>
@@ -116,7 +149,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
 
                 _currentReconciliationEpoch = null;
-                FenceAuthorityRelease();
+                _ = FenceAuthorityReleaseUnderLock();
             }
         }
 
@@ -146,7 +179,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     || observations.Any(value => value is null || value.PluginId == Guid.Empty)
                     || observations.GroupBy(value => value.PluginId).Any(group => group.Count() != 1))
                 {
-                    FenceAuthorityRelease();
+                    _ = FenceAuthorityReleaseUnderLock();
                     return Result(PlatformProviderRegistryMutationStatus.InvalidSweep);
                 }
 
@@ -196,19 +229,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         PlatformProviderRegistryStoreHealth.Healthy);
                     if (!TrySave(nextDurable))
                     {
-                        FenceAuthorityRelease();
+                        _ = FenceAuthorityReleaseUnderLock();
                         return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
                     }
 
                     _durable = nextDurable;
                     _current = nextCurrent;
+                    _operationAuthorityEpoch = new InvocationAuthorityEpoch();
                     _authorityReleaseFenced = false;
                     Volatile.Write(ref _snapshot, nextSnapshot);
                     return Result(PlatformProviderRegistryMutationStatus.Applied);
                 }
                 catch (InvalidOperationException)
                 {
-                    FenceAuthorityRelease();
+                    _ = FenceAuthorityReleaseUnderLock();
                     return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
                 }
             }
@@ -218,6 +252,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformProviderAdminCommand command,
             PlatformProviderAdminAuthorization? authorization)
         {
+            PlatformProviderRegistryMutationResult result;
+            InvocationAuthorityEpoch? retiredEpoch;
+            lock (_authorityTransitionGate)
+            {
+                result = ApplyUnderAuthorityTransition(
+                    command,
+                    authorization,
+                    out retiredEpoch);
+            }
+
+            CancelAndDrainRetiredAuthority(retiredEpoch);
+            return result;
+        }
+
+        private PlatformProviderRegistryMutationResult ApplyUnderAuthorityTransition(
+            PlatformProviderAdminCommand command,
+            PlatformProviderAdminAuthorization? authorization,
+            out InvocationAuthorityEpoch? retiredEpoch)
+        {
+            retiredEpoch = null;
             ArgumentNullException.ThrowIfNull(command);
 
             if (!IsValidCommandShape(command))
@@ -376,16 +430,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     nextDurable,
                     _current,
                     PlatformProviderRegistryStoreHealth.Healthy);
+                var currentEpoch = _operationAuthorityEpoch;
+                if (currentEpoch is null)
+                {
+                    return Result(PlatformProviderRegistryMutationStatus.StaleProvider);
+                }
+
+                _authorityReleaseFenced = true;
+                currentEpoch.ReleaseAdmissionFenced = true;
+                while (currentEpoch.ActiveResultReleaseLeases > 0)
+                {
+                    Monitor.Wait(_gate);
+                }
+
                 if (!TrySave(nextDurable))
                 {
+                    currentEpoch.ReleaseAdmissionFenced = false;
+                    _authorityReleaseFenced = false;
                     return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
                 }
 
                 _durable = nextDurable;
-                RotateOperationBindingClaims();
+                currentEpoch.Retired = true;
+                _operationAuthorityEpoch = new InvocationAuthorityEpoch();
+                _authorityReleaseFenced = false;
                 Volatile.Write(ref _snapshot, nextSnapshot);
-                return Result(PlatformProviderRegistryMutationStatus.Applied);
+                retiredEpoch = currentEpoch;
             }
+
+            return Result(PlatformProviderRegistryMutationStatus.Applied);
         }
 
         internal PlatformProviderRegistryMutationResult Recover(
@@ -425,7 +498,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 _durable = PlatformProviderRegistryDurableState.Empty;
                 _current = ImmutableDictionary<Guid, PlatformInstalledManifestObservation>.Empty;
                 _currentReconciliationEpoch = null;
-                FenceAuthorityRelease();
+                _ = FenceAuthorityReleaseUnderLock();
                 Volatile.Write(
                     ref _snapshot,
                     new PlatformProviderRegistrySnapshot(
@@ -551,7 +624,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
                 var claim = PlatformProviderOperationBindingClaim.EstablishCurrentRegistryClaim(
                     _gate,
-                    _operationBindingClaimEpoch,
+                    _operationAuthorityEpoch!,
                     pluginId,
                     entry.Fingerprint!,
                     entry.Generation,
@@ -575,39 +648,130 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ArgumentNullException.ThrowIfNull(claim);
             lock (_gate)
             {
-                if (!claim.IsOwnedBy(_gate, _operationBindingClaimEpoch)
-                    || !TryGetCurrentApprovedProvider(
-                        claim.PluginId,
-                        out var entry,
-                        out _,
-                        out var manifest,
-                        out var currentGrant)
-                    || entry.Generation != claim.Generation
-                    || !string.Equals(entry.Fingerprint, claim.Fingerprint, StringComparison.Ordinal)
-                    || !Equals(manifest.HostVersion, claim.HostVersion)
-                    || !string.Equals(
-                        manifest.AssemblyIdentity,
-                        claim.AssemblyIdentity,
-                        StringComparison.Ordinal)
-                    || !currentGrant.SequenceEqual(claim.GrantedCapabilityIds, StringComparer.Ordinal))
-                {
-                    return false;
-                }
-
-                var operation = manifest.Manifest.ProviderOperations.FirstOrDefault(value =>
-                    string.Equals(value.Id, claim.Operation.Id, StringComparison.Ordinal));
-                if (operation is null
-                    || claim.NegotiatedProtocol < operation.ProtocolRange.Min
-                    || claim.NegotiatedProtocol > operation.ProtocolRange.Max
-                    || !SameOperation(operation, claim.Operation))
-                {
-                    return false;
-                }
-
-                var grantedIds = currentGrant.ToHashSet(StringComparer.Ordinal);
-                return operation.RequiredCapabilities.Capabilities.All(required =>
-                    grantedIds.Contains(required.Id.Value));
+                return IsOperationBindingClaimCurrentUnderLock(claim);
             }
+        }
+
+        /// <summary>
+        /// Acquires one exact-generation provider slot without queueing. Authority is checked
+        /// before capacity so foreign or stale callers cannot inspect live provider load.
+        /// </summary>
+        internal PlatformProviderInvocationLeaseResult TryAcquireInvocationLease(
+            PlatformProviderOperationBindingClaim claim)
+        {
+            ArgumentNullException.ThrowIfNull(claim);
+            lock (_gate)
+            {
+                if (_operationAuthorityEpoch is not { } currentEpoch
+                    || currentEpoch.ReleaseAdmissionFenced
+                    || currentEpoch.Retired
+                    || !IsOperationBindingClaimCurrentUnderLock(claim))
+                {
+                    return PlatformProviderInvocationLeaseResult.Refused(
+                        PlatformProviderInvocationLeaseStatus.AuthorityUnavailable);
+                }
+
+                _activeProviderInvocations.TryGetValue(claim.PluginId, out var active);
+                if (active >= MaximumConcurrentInvocationsPerProvider)
+                {
+                    return PlatformProviderInvocationLeaseResult.Refused(
+                        PlatformProviderInvocationLeaseStatus.ProviderBusy);
+                }
+
+                _activeProviderInvocations[claim.PluginId] = active + 1;
+                currentEpoch.ActiveInvocationLeases++;
+                return PlatformProviderInvocationLeaseResult.Acquired(
+                    PlatformProviderInvocationLease.Establish(
+                        this,
+                        currentEpoch,
+                        claim,
+                        currentEpoch.Cancellation.Token));
+            }
+        }
+
+        /// <summary>
+        /// Atomically transfers one completed invocation into a short protected-result release.
+        /// The per-provider slot remains owned until the returned release lease is disposed.
+        /// </summary>
+        internal PlatformProviderResultReleaseLease? TryAcquireResultReleaseLease(
+            PlatformProviderInvocationLease invocationLease,
+            CancellationToken callerCancellation,
+            CancellationToken deadlineCancellation)
+        {
+            ArgumentNullException.ThrowIfNull(invocationLease);
+            lock (_gate)
+            {
+                if (callerCancellation.IsCancellationRequested
+                    || invocationLease.GenerationCancellation.IsCancellationRequested
+                    || deadlineCancellation.IsCancellationRequested
+                    || _operationAuthorityEpoch is not { } currentEpoch
+                    || currentEpoch.ReleaseAdmissionFenced
+                    || currentEpoch.Retired
+                    || !invocationLease.TryGetOwnedClaim(this, currentEpoch, out var claim)
+                    || !IsOperationBindingClaimCurrentUnderLock(claim)
+                    || currentEpoch.ActiveInvocationLeases <= 0
+                    || !_activeProviderInvocations.TryGetValue(invocationLease.PluginId, out var active)
+                    || active <= 0
+                    || !invocationLease.TryTransferToResultRelease())
+                {
+                    return null;
+                }
+
+                currentEpoch.ActiveInvocationLeases--;
+                currentEpoch.ActiveResultReleaseLeases++;
+                return PlatformProviderResultReleaseLease.Establish(
+                    this,
+                    currentEpoch,
+                    invocationLease.PluginId,
+                    invocationLease.Generation);
+            }
+        }
+
+        /// <summary>Returns an invocation slot only when the real provider task is complete.</summary>
+        internal void ReleaseInvocationLease(PlatformProviderInvocationLease invocationLease)
+        {
+            ArgumentNullException.ThrowIfNull(invocationLease);
+            CancellationTokenSource? cancellationToDispose = null;
+            lock (_gate)
+            {
+                if (!invocationLease.TryGetOwnedEpoch(this, out var authorityEpoch)
+                    || authorityEpoch is not InvocationAuthorityEpoch epoch
+                    || !invocationLease.IsOwnedBy(this, epoch)
+                    || epoch.ActiveInvocationLeases <= 0)
+                {
+                    return;
+                }
+
+                epoch.ActiveInvocationLeases--;
+                ReleaseProviderSlotUnderLock(invocationLease.PluginId);
+                cancellationToDispose = TryTakeCancellationForDisposalUnderLock(epoch);
+            }
+
+            cancellationToDispose?.Dispose();
+        }
+
+        /// <summary>Completes one short protected-result linearization lease.</summary>
+        internal void ReleaseResultReleaseLease(PlatformProviderResultReleaseLease resultReleaseLease)
+        {
+            ArgumentNullException.ThrowIfNull(resultReleaseLease);
+            CancellationTokenSource? cancellationToDispose = null;
+            lock (_gate)
+            {
+                if (!resultReleaseLease.TryGetOwnedEpoch(this, out var authorityEpoch)
+                    || authorityEpoch is not InvocationAuthorityEpoch epoch
+                    || !resultReleaseLease.IsOwnedBy(this, epoch)
+                    || epoch.ActiveResultReleaseLeases <= 0)
+                {
+                    return;
+                }
+
+                epoch.ActiveResultReleaseLeases--;
+                ReleaseProviderSlotUnderLock(resultReleaseLease.PluginId);
+                Monitor.PulseAll(_gate);
+                cancellationToDispose = TryTakeCancellationForDisposalUnderLock(epoch);
+            }
+
+            cancellationToDispose?.Dispose();
         }
 
         private static PlatformProviderRegistryDurableRecord ReconcileObservation(
@@ -834,6 +998,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             return true;
         }
 
+        private bool IsOperationBindingClaimCurrentUnderLock(
+            PlatformProviderOperationBindingClaim claim)
+        {
+            if (_operationAuthorityEpoch is not { } currentEpoch
+                || currentEpoch.ReleaseAdmissionFenced
+                || currentEpoch.Retired
+                || !claim.IsOwnedBy(_gate, currentEpoch)
+                || !TryGetCurrentApprovedProvider(
+                    claim.PluginId,
+                    out var entry,
+                    out _,
+                    out var manifest,
+                    out var currentGrant)
+                || entry.Generation != claim.Generation
+                || !string.Equals(entry.Fingerprint, claim.Fingerprint, StringComparison.Ordinal)
+                || !Equals(manifest.HostVersion, claim.HostVersion)
+                || !string.Equals(
+                    manifest.AssemblyIdentity,
+                    claim.AssemblyIdentity,
+                    StringComparison.Ordinal)
+                || !currentGrant.SequenceEqual(claim.GrantedCapabilityIds, StringComparer.Ordinal))
+            {
+                return false;
+            }
+
+            var operation = manifest.Manifest.ProviderOperations.FirstOrDefault(value =>
+                string.Equals(value.Id, claim.Operation.Id, StringComparison.Ordinal));
+            if (operation is null
+                || claim.NegotiatedProtocol < operation.ProtocolRange.Min
+                || claim.NegotiatedProtocol > operation.ProtocolRange.Max
+                || !SameOperation(operation, claim.Operation))
+            {
+                return false;
+            }
+
+            var grantedIds = currentGrant.ToHashSet(StringComparer.Ordinal);
+            return operation.RequiredCapabilities.Capabilities.All(required =>
+                grantedIds.Contains(required.Id.Value));
+        }
+
         private static bool SameOperation(
             PlatformProviderOperationDeclaration current,
             PlatformProviderOperationDeclaration claimed) =>
@@ -877,13 +1081,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
             catch (Exception)
             {
-                FenceAuthorityRelease();
+                _ = FenceAuthorityReleaseUnderLock();
                 return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
             }
 
             _durable = PlatformProviderRegistryDurableState.Empty;
             _current = ImmutableDictionary<Guid, PlatformInstalledManifestObservation>.Empty;
-            FenceAuthorityRelease();
+            _ = FenceAuthorityReleaseUnderLock();
             Volatile.Write(
                 ref _snapshot,
                 new PlatformProviderRegistrySnapshot(
@@ -1007,13 +1211,124 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             return true;
         }
 
-        private void FenceAuthorityRelease()
+        private InvocationAuthorityEpoch? FenceAuthorityReleaseUnderLock()
         {
             _authorityReleaseFenced = true;
-            RotateOperationBindingClaims();
+            var retired = _operationAuthorityEpoch;
+            _operationAuthorityEpoch = null;
+            if (retired is not null)
+            {
+                retired.ReleaseAdmissionFenced = true;
+                retired.Retired = true;
+            }
+
+            return retired;
         }
 
-        private void RotateOperationBindingClaims() => _operationBindingClaimEpoch = new object();
+        private void CancelAndDrainRetiredAuthority(InvocationAuthorityEpoch? retired)
+        {
+            if (retired is null)
+            {
+                return;
+            }
+
+            Task cancellation;
+            try
+            {
+                // Cancellation callbacks can contain arbitrary provider code. This method is
+                // called only after the registry and transition gates have been released.
+                cancellation = retired.Cancellation.CancelAsync();
+            }
+            catch (Exception)
+            {
+                // Retirement is authoritative even when cooperative cleanup misbehaves.
+                cancellation = Task.CompletedTask;
+            }
+
+            lock (_gate)
+            {
+                while (retired.ActiveResultReleaseLeases > 0)
+                {
+                    Monitor.Wait(_gate);
+                }
+            }
+
+            if (cancellation.IsCompleted)
+            {
+                CompleteRetiredAuthorityCancellation(retired, cancellation);
+                return;
+            }
+
+            _ = ObserveRetiredAuthorityCancellationAsync(retired, cancellation);
+        }
+
+        private async Task ObserveRetiredAuthorityCancellationAsync(
+            InvocationAuthorityEpoch retired,
+            Task cancellation)
+        {
+            try
+            {
+                await cancellation.ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Provider cancellation callback failures remain redacted and observed.
+            }
+
+            CompleteRetiredAuthorityCancellation(retired, Task.CompletedTask);
+        }
+
+        private void CompleteRetiredAuthorityCancellation(
+            InvocationAuthorityEpoch retired,
+            Task cancellation)
+        {
+            if (cancellation.IsFaulted)
+            {
+                _ = cancellation.Exception;
+            }
+
+            CancellationTokenSource? cancellationToDispose;
+            lock (_gate)
+            {
+                retired.CancellationCompleted = true;
+                cancellationToDispose = TryTakeCancellationForDisposalUnderLock(retired);
+            }
+
+            cancellationToDispose?.Dispose();
+        }
+
+        private CancellationTokenSource? TryTakeCancellationForDisposalUnderLock(
+            InvocationAuthorityEpoch epoch)
+        {
+            if (!epoch.Retired
+                || !epoch.CancellationCompleted
+                || epoch.CancellationDisposed
+                || epoch.ActiveInvocationLeases != 0
+                || epoch.ActiveResultReleaseLeases != 0)
+            {
+                return null;
+            }
+
+            epoch.CancellationDisposed = true;
+            return epoch.Cancellation;
+        }
+
+        private void ReleaseProviderSlotUnderLock(Guid pluginId)
+        {
+            if (!_activeProviderInvocations.TryGetValue(pluginId, out var active) || active <= 0)
+            {
+                return;
+            }
+
+            if (active == 1)
+            {
+                _activeProviderInvocations.Remove(pluginId);
+            }
+            else
+            {
+                _activeProviderInvocations[pluginId] = active - 1;
+            }
+        }
 
         private static PlatformProviderOperationBindingClaimResult ClaimRefused(
             PlatformProviderOperationBindingClaimStatus status) =>

@@ -501,6 +501,198 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             new(status, null);
     }
 
+    /// <summary>Closed outcomes for zero-queue provider invocation admission.</summary>
+    internal enum PlatformProviderInvocationLeaseStatus
+    {
+        Acquired = 1,
+        AuthorityUnavailable = 2,
+        ProviderBusy = 3,
+    }
+
+    /// <summary>
+    /// One registry-owned provider slot in an exact ephemeral authority generation. The
+    /// cancellation source remains registry-owned; consumers receive only its token.
+    /// </summary>
+    internal sealed class PlatformProviderInvocationLease : IDisposable
+    {
+        private const int Active = 0;
+        private const int TransferredToResultRelease = 1;
+        private const int Disposed = 2;
+
+        private readonly PlatformProviderRegistry _owner;
+        private readonly object _authorityEpoch;
+        private readonly PlatformProviderOperationBindingClaim _claim;
+        private int _state;
+
+        private PlatformProviderInvocationLease(
+            PlatformProviderRegistry owner,
+            object authorityEpoch,
+            PlatformProviderOperationBindingClaim claim,
+            CancellationToken generationCancellation)
+        {
+            _owner = owner;
+            _authorityEpoch = authorityEpoch;
+            _claim = claim;
+            PluginId = claim.PluginId;
+            Generation = claim.Generation;
+            GenerationCancellation = generationCancellation;
+        }
+
+        internal Guid PluginId { get; }
+
+        internal long Generation { get; }
+
+        internal CancellationToken GenerationCancellation { get; }
+
+        internal bool IsOwnedBy(PlatformProviderRegistry owner, object authorityEpoch) =>
+            ReferenceEquals(_owner, owner)
+            && ReferenceEquals(_authorityEpoch, authorityEpoch);
+
+        internal bool TryGetOwnedClaim(
+            PlatformProviderRegistry owner,
+            object authorityEpoch,
+            out PlatformProviderOperationBindingClaim claim)
+        {
+            claim = _claim;
+            return IsOwnedBy(owner, authorityEpoch);
+        }
+
+        internal bool TryGetOwnedEpoch(PlatformProviderRegistry owner, out object authorityEpoch)
+        {
+            authorityEpoch = _authorityEpoch;
+            return ReferenceEquals(_owner, owner);
+        }
+
+        internal bool TryTransferToResultRelease() =>
+            Interlocked.CompareExchange(
+                ref _state,
+                TransferredToResultRelease,
+                Active) == Active;
+
+        internal static PlatformProviderInvocationLease Establish(
+            PlatformProviderRegistry owner,
+            object authorityEpoch,
+            PlatformProviderOperationBindingClaim claim,
+            CancellationToken generationCancellation)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            ArgumentNullException.ThrowIfNull(authorityEpoch);
+            ArgumentNullException.ThrowIfNull(claim);
+            return new PlatformProviderInvocationLease(
+                owner,
+                authorityEpoch,
+                claim,
+                generationCancellation);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.CompareExchange(ref _state, Disposed, Active) == Active)
+            {
+                _owner.ReleaseInvocationLease(this);
+            }
+        }
+    }
+
+    /// <summary>One atomic invocation-admission result with no partial lease publication.</summary>
+    internal readonly record struct PlatformProviderInvocationLeaseResult
+    {
+        private PlatformProviderInvocationLeaseResult(
+            PlatformProviderInvocationLeaseStatus status,
+            PlatformProviderInvocationLease? lease)
+        {
+            if (!Enum.IsDefined(status)
+                || (status == PlatformProviderInvocationLeaseStatus.Acquired) != (lease is not null))
+            {
+                throw new ArgumentException("The provider invocation lease result is inconsistent.");
+            }
+
+            Status = status;
+            Lease = lease;
+        }
+
+        internal PlatformProviderInvocationLeaseStatus Status { get; }
+
+        internal PlatformProviderInvocationLease? Lease { get; }
+
+        internal static PlatformProviderInvocationLeaseResult Acquired(
+            PlatformProviderInvocationLease lease)
+        {
+            ArgumentNullException.ThrowIfNull(lease);
+            return new PlatformProviderInvocationLeaseResult(
+                PlatformProviderInvocationLeaseStatus.Acquired,
+                lease);
+        }
+
+        internal static PlatformProviderInvocationLeaseResult Refused(
+            PlatformProviderInvocationLeaseStatus status) => new(status, null);
+    }
+
+    /// <summary>
+    /// A short, registry-serialized protected-result publication lease. It contains no
+    /// provider payload or reusable authority and must span no await or foreign work.
+    /// </summary>
+    internal sealed class PlatformProviderResultReleaseLease : IDisposable
+    {
+        private readonly PlatformProviderRegistry _owner;
+        private readonly object _authorityEpoch;
+        private int _disposed;
+
+        private PlatformProviderResultReleaseLease(
+            PlatformProviderRegistry owner,
+            object authorityEpoch,
+            Guid pluginId,
+            long generation)
+        {
+            _owner = owner;
+            _authorityEpoch = authorityEpoch;
+            PluginId = pluginId;
+            Generation = generation;
+        }
+
+        internal Guid PluginId { get; }
+
+        internal long Generation { get; }
+
+        internal bool IsOwnedBy(PlatformProviderRegistry owner, object authorityEpoch) =>
+            ReferenceEquals(_owner, owner)
+            && ReferenceEquals(_authorityEpoch, authorityEpoch);
+
+        internal bool TryGetOwnedEpoch(PlatformProviderRegistry owner, out object authorityEpoch)
+        {
+            authorityEpoch = _authorityEpoch;
+            return ReferenceEquals(_owner, owner);
+        }
+
+        internal static PlatformProviderResultReleaseLease Establish(
+            PlatformProviderRegistry owner,
+            object authorityEpoch,
+            Guid pluginId,
+            long generation)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            ArgumentNullException.ThrowIfNull(authorityEpoch);
+            if (pluginId == Guid.Empty || generation <= 0)
+            {
+                throw new ArgumentException("A result-release lease requires exact provider facts.");
+            }
+
+            return new PlatformProviderResultReleaseLease(
+                owner,
+                authorityEpoch,
+                pluginId,
+                generation);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _owner.ReleaseResultReleaseLease(this);
+            }
+        }
+    }
+
     /// <summary>One immutable persisted provider record with no reusable authority proof.</summary>
     internal sealed class PlatformProviderRegistryDurableRecord
     {

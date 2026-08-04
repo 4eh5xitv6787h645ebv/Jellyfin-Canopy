@@ -1,6 +1,6 @@
 # ADR-0003 — The load-context-safe JSON ABI
 
-Status: **accepted; ABI frozen by EP-04.1 and exact binding/schema admission implemented by EP-04.2; invocation pending** · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
+Status: **accepted; ABI frozen by EP-04.1, exact binding/schema admission implemented by EP-04.2, and bounded Alpha invocation implemented by EP-04.3** · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
 
 ## Context
 
@@ -58,11 +58,12 @@ Concretely:
    `JellyfinCanopy.ProviderSchemas.{sha256}.json`. No manifest path, URL, CLR
    type, or resource name is executable or selectable.
 
-EP-04.2 implements only the exact lazy binding and embedded-schema acquisition
-portion of this decision. It publishes an ephemeral, non-authoritative binding,
-caches no foreign reflection/service/schema state, and invokes no provider
-method. Payload evaluation and invocation/result-release authority remain with
-the later bounded invocation owner. Schema acquisition rejects an inventory over
+EP-04.2 implements the exact lazy binding and embedded-schema acquisition
+portion of this decision. It publishes an ephemeral, non-authoritative binding
+and caches no foreign reflection/service/schema state. EP-04.3 owns bounded
+payload evaluation, reflective invocation and protected result release without
+introducing any runtime type across the provider load context. Schema
+acquisition rejects an inventory over
 1,024 resources or a resource name over 512 UTF-8 bytes before scanning for the
 two fixed digest-derived names; each admitted document retains its separate
 64 KiB and structural bounds.
