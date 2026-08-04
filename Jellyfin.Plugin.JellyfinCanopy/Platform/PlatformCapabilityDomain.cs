@@ -239,6 +239,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             return IsValidVariableSegment(segments[2]) && IsValidVariableSegment(segments[3]);
         }
 
+        internal static bool IsWithinInstalledProviderCeiling(string? capabilityId)
+        {
+            var definition = Find(capabilityId);
+            return definition is not null
+                && definition.AllowedActorKinds.Contains(PlatformActorKind.InstalledProvider)
+                && !definition.RequiresElevation;
+        }
+
         private static PlatformCapabilityDefinition Definition(
             string value,
             PlatformCapabilityDomain domain,

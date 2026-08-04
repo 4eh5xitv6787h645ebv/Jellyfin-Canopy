@@ -36,14 +36,19 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-**Activated for the server tranche; acquisition foundation delivered by #645 and #647.** The
+**Activated for the server tranche; authority-domain foundation delivered by #645, #647 and #650.** The
 strict installed-provider manifest v1 envelope and its canonical semantic
 fingerprint are frozen. An explicit descriptor-safe sweep can now bind that
 declaration to an immutable Jellyfin host GUID/version/assembly observation
-without creating authority. Approval/grants, lifecycle and persistence remain undelivered.
+without creating authority. The internal #650 registry now owns exact
+fingerprint/request approval, provider-ceiling grants, one-use elevated decisions,
+generation-fenced lifecycle, dormant restart hydration, strict atomic persistence
+and evidence-preserving corruption recovery. It adds no routes, startup work or
+provider invocation. Orchestration, independent provider fixtures, runtime health
+and the EP-03 exit gate remain undelivered.
 Built-in Canopy families continue to need no third-party manifest or grant. Their existing
 caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
-separate-plugin fixture, fingerprint-bound approval, grant/lifecycle tests and
+separate-plugin fixtures, orchestration, runtime admission tests and
 the EP-03 exit gate. ADR [0005](adr/0005-manifest-discovery.md).
 
 The immutable v1 authority-name floor is authored in this order:

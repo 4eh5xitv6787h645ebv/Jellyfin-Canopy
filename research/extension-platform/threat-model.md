@@ -183,7 +183,17 @@ UTF-8 JSON, closed fields, canonical identifiers/versions/ranges, exact
 provider-eligible requests through the #639 vocabulary, stable closed rejection
 reasons and a domain-separated semantic SHA-256 fingerprint over every validated
 field. Parse success still proves no installation, host binding, compatibility,
-approval, grant, enablement or authority; those remain registry-owned checks.
+approval, grant, enablement or authority. The #650 registry consumes only a
+discovery-minted completed sweep and releases an opaque identity only from the
+live exact intersection of GUID, fingerprint/request set, compatible active host
+facts, provider-ceiling grant, enabled disposition and generation. Durable facts
+hydrate dormant; every admin decision advances generation; stale, disabled,
+restart-pending, incompatible, rejected, revoked and absent records are inert.
+Approval/recovery proofs are one-use, repeat the elevated-user lookup when
+consumed and are never serialized, so deletion or demotion after minting fails
+closed. Strict bounded state corruption quarantines the whole store; explicit
+recovery commits a new bounded immutable epoch while preserving the corrupt base
+and prior epochs.
 *Residual.* **Low.** Four defects found during the spike were fixed rather than
 documented away: separators are normalised before any test; every path component
 is resolved, not just the leaf; resolution runs to a **fixed point**, because one

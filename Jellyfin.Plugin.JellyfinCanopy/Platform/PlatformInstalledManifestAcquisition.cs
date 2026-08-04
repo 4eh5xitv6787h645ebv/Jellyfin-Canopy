@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
@@ -25,13 +24,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             _reader = reader;
         }
 
-        internal async ValueTask<ImmutableArray<PlatformInstalledManifestObservation>> SweepAsync(
+        internal async ValueTask<PlatformInstalledManifestSweep> SweepAsync(
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var inventory = _plugins.InstalledSnapshots();
             cancellationToken.ThrowIfCancellationRequested();
-            return await PlatformInstalledManifestDiscovery.SweepAsync(
+            var sweep = await PlatformInstalledManifestDiscovery.SweepAsync(
                     inventory,
                     _reader,
                     (pluginId, token) =>
@@ -41,6 +40,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return sweep;
         }
     }
 }

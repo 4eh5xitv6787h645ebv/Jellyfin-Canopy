@@ -77,6 +77,7 @@ public sealed class PlatformActorAuthorityTests
         Assert.Equal(shared, provider.InstalledPluginId);
         Assert.Equal(shared, service.RegistrationId);
         Assert.Equal(new string('b', 64), provider.ManifestFingerprint);
+        Assert.Equal(1, provider.ProviderGeneration);
         Assert.Equal(7, service.CredentialGeneration);
         Assert.False(provider.Authority.IsElevated);
         Assert.False(service.Authority.IsElevated);
@@ -147,7 +148,8 @@ public sealed class PlatformActorAuthorityTests
     {
         var identity = ConstructPrivately<PlatformApprovedProviderIdentity>(
             InstalledPluginId(pluginId),
-            ManifestFingerprint(fingerprint));
+            ManifestFingerprint(fingerprint),
+            ProviderGeneration(1));
         return PlatformActorFactory.CreateProvider(identity);
     }
 
@@ -164,6 +166,9 @@ public sealed class PlatformActorAuthorityTests
 
     private static PlatformManifestFingerprint ManifestFingerprint(string value) =>
         ConstructPrivately<PlatformManifestFingerprint>(value);
+
+    private static PlatformProviderGeneration ProviderGeneration(long value) =>
+        ConstructPrivately<PlatformProviderGeneration>(value);
 
     private static PlatformServiceRegistrationId ServiceRegistrationId(Guid value) =>
         ConstructPrivately<PlatformServiceRegistrationId>(value);

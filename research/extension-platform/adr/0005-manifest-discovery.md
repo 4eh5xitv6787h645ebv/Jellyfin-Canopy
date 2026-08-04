@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **accepted; bounded manifest contract, descriptor-safe acquisition and immutable host binding implemented** (#645, #647; registry lifecycle pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)
+Status: **accepted; bounded manifest/acquisition and authoritative registry domain implemented** (#645, #647, #650; orchestration and external fixtures pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)
 
 ## Context
 
@@ -86,6 +86,38 @@ declared scopes — are each a distinct vulnerability.
    primitive (temp sibling → fsync contents → rename → fsync parent directory),
    with quarantine-on-corruption and a versioned unhealthy marker — the same
    model `UserConfigurationStore` already uses.
+13. **One authoritative registry owner.** It accepts only a sealed completed-sweep
+   value minted by discovery, so cancellation or a caller-selected partial array
+   cannot imply absence. A complete sweep and each typed admin decision linearize
+   under one lock; persistence succeeds before a new immutable snapshot is
+   published. Startup hydration is dormant and releases no provider authority.
+   A failed reconcile write preserves the byte-exact durable file and published
+   snapshot object but installs a transient live-release fence until a complete
+   sweep commits successfully; stale observed authority is never released merely
+   because persistence failed. A discovery-completed inventory whose host
+   identities are empty, duplicated or over the bound installs the same transient
+   fence instead of leaving the preceding authority live.
+14. **Authority is the live exact intersection.** Release requires the current
+   compatible active observation, exact plugin GUID, semantic fingerprint,
+   requested set, provider-ceiling grant, enabled disposition and provider
+   generation. Every admin decision advances the generation. Fingerprint,
+   scope, host version, verified assembly, host state, compatibility and presence
+   drift fence old releases. Disabled/restart facts may retain approval only when
+   every exact bound fact returns unchanged.
+15. **Admin and recovery decisions are fresh and non-reusable.** Approve,
+   replace-grant, disable, enable, revoke and explicit quarantine recovery consume
+   a one-use proof that re-reads the same elevated Jellyfin user again when the
+   command consumes it. A retained proof therefore fails after deletion or
+   demotion. The proof is never serialized. Durable decisions retain only bounded
+   administrator id, reason, UTC time and decision revision.
+16. **Corruption is store-wide and recovery preserves evidence.** Strict 1 MiB
+   versioned JSON preflights record, field and capability bounds before DTO
+   allocation. Invalid state publishes no records. Recovery writes one of eight
+   immutable prepared epochs and commits its audit evidence last; the corrupt base
+   or earlier epoch is never overwritten. A recovered epoch that later corrupts is
+   durably fenced before another epoch may be selected. Missing recovered state is
+   fenced likewise, epochs advance monotonically past malformed evidence, and a
+   recovery succeeds only after reproving that its committed epoch is authoritative.
 
 ## Rationale
 
@@ -107,8 +139,10 @@ declared scopes — are each a distinct vulnerability.
 - An extension update that changes scopes needs admin action before it works
   again. This is intended; the admin UI must make the diff obvious rather than
   presenting an opaque re-approval prompt.
-- The registry is a persisted store with migrations, recovery and its own
-  corruption tests.
+- The registry is a persisted store with strict schema/version checks, immutable
+  recovery evidence and corruption/capacity/concurrency tests. Its eight recovery
+  epochs are deliberately bounded; exhaustion requires operator preservation and
+  repair rather than deleting evidence automatically.
 - Discovery is restart-driven, and that is now a measured fact rather than a
   caution: a fully formed plugin directory dropped into `/config/plugins` on a
   running server is **not discovered**, and neither disable nor enable takes effect
@@ -126,6 +160,10 @@ declared scopes — are each a distinct vulnerability.
   await native I/O ownership returning before buffers can be reclaimed. Killable
   isolation for both residuals is tracked by #648; #647 does not claim to sandbox
   or kill a wedged kernel/driver.
+- #650 does not register startup/background discovery, expose routes, load or
+  invoke providers, or claim provider health. Those remain bounded EP-03.4/EP-04
+  work. `Unhealthy` is therefore reserved for EP-04 rather than emitted by this
+  registry domain.
 
 ## Rejected alternatives
 

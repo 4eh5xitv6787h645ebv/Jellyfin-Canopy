@@ -1,6 +1,6 @@
 # ADR-0011 — Identity and authority
 
-Status: **accepted** (pilot, canonical user boundary, closed actor/capability domains and pure manifest fingerprint implemented; grants/credentials/provider-service activation pending) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted** (canonical user/capability domain and generation-bound installed-provider approval owner implemented; provider runtime and service credentials pending) · Owner: platform security · Evidence: [S9](../spike-evidence.md#s9--authorization-semantics-verified-on-plugin-routes), [S10](../spike-evidence.md#s10--host-cors-is-permissive), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 

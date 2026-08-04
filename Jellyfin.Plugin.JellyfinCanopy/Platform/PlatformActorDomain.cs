@@ -173,6 +173,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         }
 
         internal Guid Value { get; }
+
+        internal static PlatformInstalledPluginId EstablishCurrentRegistryId(Guid value) => new(value);
     }
 
     /// <summary>An immutable canonical SHA-256 manifest fingerprint.</summary>
@@ -210,12 +212,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         }
     }
 
+    /// <summary>The positive current generation of an installed provider.</summary>
+    internal readonly struct PlatformProviderGeneration
+    {
+        private PlatformProviderGeneration(long value)
+        {
+            if (value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+
+            Value = value;
+        }
+
+        internal long Value { get; }
+
+        internal static PlatformProviderGeneration EstablishCurrentRegistryGeneration(long value) => new(value);
+    }
+
     /// <summary>Opaque registry approval proof for one installed provider.</summary>
     internal sealed class PlatformApprovedProviderIdentity
     {
         private PlatformApprovedProviderIdentity(
             PlatformInstalledPluginId installedPluginId,
-            PlatformManifestFingerprint manifestFingerprint)
+            PlatformManifestFingerprint manifestFingerprint,
+            PlatformProviderGeneration providerGeneration)
         {
             if (installedPluginId.Value == Guid.Empty)
             {
@@ -227,13 +248,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 throw new ArgumentException("A provider approval requires a manifest fingerprint.", nameof(manifestFingerprint));
             }
 
+            if (providerGeneration.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(providerGeneration));
+            }
+
             InstalledPluginId = installedPluginId;
             ManifestFingerprint = manifestFingerprint;
+            ProviderGeneration = providerGeneration;
         }
 
         internal PlatformInstalledPluginId InstalledPluginId { get; }
 
         internal PlatformManifestFingerprint ManifestFingerprint { get; }
+
+        internal PlatformProviderGeneration ProviderGeneration { get; }
+
+        internal static PlatformApprovedProviderIdentity EstablishCurrentRegistryApproval(
+            Guid installedPluginId,
+            string manifestFingerprint,
+            long providerGeneration) =>
+            new(
+                PlatformInstalledPluginId.EstablishCurrentRegistryId(installedPluginId),
+                PlatformManifestFingerprint.EstablishValidatedManifestFingerprint(manifestFingerprint),
+                PlatformProviderGeneration.EstablishCurrentRegistryGeneration(providerGeneration));
     }
 
     /// <summary>A typed companion-service registration identifier.</summary>
@@ -302,6 +340,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             ArgumentNullException.ThrowIfNull(identity);
             InstalledPluginId = identity.InstalledPluginId.Value;
             ManifestFingerprint = identity.ManifestFingerprint.Value;
+            ProviderGeneration = identity.ProviderGeneration.Value;
         }
 
         /// <summary>Gets the actor kind.</summary>
@@ -312,6 +351,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         /// <summary>Gets the immutable approved manifest fingerprint.</summary>
         public string ManifestFingerprint { get; }
+
+        /// <summary>Gets the registry generation that must be rechecked at invocation.</summary>
+        public long ProviderGeneration { get; }
 
         internal PlatformActorAuthority Authority => PlatformActorAuthority.ProjectInstalledProviderAuthority();
     }
