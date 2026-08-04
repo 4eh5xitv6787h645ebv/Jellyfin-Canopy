@@ -111,5 +111,8 @@ test('parallel jobs publish stable rerun-safe evidence and required E2E gates co
     assert.match(workflow, /name: build-plugin-bundle-\$\{\{ github\.run_id \}\}[\s\S]*overwrite: true/);
     assert.match(workflow, /name: client-scripts-bundle-\$\{\{ github\.run_id \}\}[\s\S]*overwrite: true/);
     assert.doesNotMatch(workflow, /(?:build-plugin|client-scripts)-bundle-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
-    assert.match(workflow, /e2e:[\s\S]*needs: \[e2e_shard, bundle-equivalence\][\s\S]*BUNDLE_EQUIVALENCE_RESULT/);
+    assert.match(
+        workflow,
+        /e2e:[\s\S]*needs: \[e2e_shard, bundle-equivalence, provider-conformance\][\s\S]*BUNDLE_EQUIVALENCE_RESULT[\s\S]*PROVIDER_CONFORMANCE_RESULT/
+    );
 });

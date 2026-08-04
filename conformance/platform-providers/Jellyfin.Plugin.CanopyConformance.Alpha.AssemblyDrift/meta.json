@@ -1,0 +1,17 @@
+{
+  "category": "General",
+  "changelog": "Deterministic same-version assembly drift.",
+  "description": "Independent no-op Canopy provider fixture Alpha assembly drift.",
+  "guid": "0a110000-1111-4222-8333-444455556666",
+  "name": "AAA Canopy Conformance Alpha",
+  "overview": "Test-only installed-provider conformance fixture.",
+  "owner": "Jellyfin Canopy conformance",
+  "targetAbi": "12.0.0.0",
+  "timestamp": "2026-08-04T00:00:00Z",
+  "version": "1.0.0.0",
+  "status": "Active",
+  "autoUpdate": false,
+  "assemblies": [
+    "Jellyfin.Plugin.CanopyConformance.Alpha.dll"
+  ]
+}

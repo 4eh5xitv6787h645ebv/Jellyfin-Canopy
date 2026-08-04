@@ -257,7 +257,9 @@ versioned exact capability identifiers and a pure grant-ceiling evaluator; it
 depends on #640 for the actor-authority input. Routes, grant persistence,
 credentials, manifests and provider calls are explicitly later children.
 Issue [#645](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/645)
-is the next bounded child: it freezes only the strict installed-provider manifest
-v1 contract and deterministic semantic content fingerprint. Filesystem acquisition,
-Jellyfin plugin binding, approval/grants, registry persistence and every route
-remain later slices.
+froze the strict installed-provider manifest v1 contract and deterministic
+semantic content fingerprint; #647 added descriptor-safe host binding; #650 added
+the authoritative persisted lifecycle registry; and #652 composes those owners
+behind one lazy post-start, epoch-fenced, single-flight worker with independent
+test-only provider packages. Every public/admin route and provider invocation
+remains a later slice.

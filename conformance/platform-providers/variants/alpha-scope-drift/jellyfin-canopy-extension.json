@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "org.jellyfin.canopy-alpha",
+  "pluginId": "0a110000-1111-4222-8333-444455556666",
+  "version": "1.0.0.0",
+  "kind": "installed-provider",
+  "displayName": "Canopy Conformance Alpha",
+  "description": "Independent no-op provider fixture Alpha.",
+  "platform": { "min": 1, "max": 1 },
+  "host": { "minMajor": 12, "maxMajor": 12 },
+  "requestedCapabilities": [
+    "jellyfin.canopy.items.lookup",
+    "jellyfin.canopy.storage.read",
+    "jellyfin.canopy.user-data.read"
+  ]
+}

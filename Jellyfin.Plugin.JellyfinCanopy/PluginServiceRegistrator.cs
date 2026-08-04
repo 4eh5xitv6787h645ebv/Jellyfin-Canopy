@@ -1,4 +1,6 @@
 using System.Net.Http;
+using System.IO;
+using System.Threading;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.EventHandlers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
@@ -11,6 +13,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using MediaBrowser.Controller;
+using MediaBrowser.Common.Configuration;
+using Microsoft.Extensions.Hosting;
 
 namespace Jellyfin.Plugin.JellyfinCanopy
 {
@@ -137,6 +141,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             // stays extractable, and PlatformHostSeamTests fails the build if any kernel
             // file reaches past it to MediaBrowser directly (risk R-07).
             serviceCollection.AddSingleton<Platform.Hosting.IPlatformHost, Platform.Hosting.Jellyfin.JellyfinPlatformHost>();
+            RegisterPlatformProviderRegistryServices(serviceCollection);
 
             // Live view over the plugin configuration (re-read per access, never
             // snapshotted) so admin saves take effect immediately in consumers.
@@ -280,6 +285,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 o.Filters.AddService<SpoilerFieldStripFilter>();
                 o.Filters.AddService<SpoilerBlurImageFilter>();
             });
+        }
+
+        internal static void RegisterPlatformProviderRegistryServices(
+            IServiceCollection serviceCollection)
+        {
+            ArgumentNullException.ThrowIfNull(serviceCollection);
+            serviceCollection.AddSingleton<IPlatformInstalledManifestReader, PlatformInstalledManifestFileReader>();
+            serviceCollection.AddSingleton(serviceProvider => new PlatformInstalledManifestAcquisition(
+                serviceProvider.GetRequiredService<Platform.Hosting.IPlatformHost>().Plugins,
+                serviceProvider.GetRequiredService<IPlatformInstalledManifestReader>()));
+            serviceCollection.AddSingleton<IPlatformInstalledManifestSweepSource>(serviceProvider =>
+                serviceProvider.GetRequiredService<PlatformInstalledManifestAcquisition>());
+            serviceCollection.AddSingleton<IPlatformProviderRegistryStateStore>(serviceProvider =>
+                new PlatformProviderRegistryJsonStateStore(
+                    Path.Combine(
+                        serviceProvider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath,
+                        "Jellyfin.Plugin.JellyfinCanopy.platform-provider-registry-v1.json")));
+            serviceCollection.AddSingleton(serviceProvider => new PlatformProviderRegistry(
+                serviceProvider.GetRequiredService<IPlatformProviderRegistryStateStore>(),
+                TimeProvider.System));
+            serviceCollection.AddSingleton(serviceProvider => new Lazy<PlatformProviderRegistry>(
+                () => serviceProvider.GetRequiredService<PlatformProviderRegistry>(),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+            serviceCollection.AddSingleton(serviceProvider => new PlatformProviderRegistryOrchestrator(
+                serviceProvider.GetRequiredService<IPlatformInstalledManifestSweepSource>(),
+                serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),
+                serviceProvider.GetRequiredService<IHostApplicationLifetime>(),
+                serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PlatformProviderRegistryOrchestrator>>()));
+            serviceCollection.AddSingleton<IHostedService>(serviceProvider =>
+                serviceProvider.GetRequiredService<PlatformProviderRegistryOrchestrator>());
         }
 
         internal static void RegisterMaintainerrHttpClient(IServiceCollection serviceCollection)

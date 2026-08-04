@@ -28,7 +28,7 @@ public sealed class PlatformProviderRegistryTests
         var store = new RecordingStore();
         var registry = Registry(store);
 
-        var reconcile = registry.Reconcile(Completed(Acquired()));
+        var reconcile = Reconcile(registry, Completed(Acquired()));
 
         Assert.Equal(PlatformProviderRegistryMutationStatus.Applied, reconcile.Status);
         var pending = AssertEntry(registry, PlatformProviderLifecycleState.Pending);
@@ -58,13 +58,128 @@ public sealed class PlatformProviderRegistryTests
     }
 
     [Fact]
+    public void ReconciliationEpochIsOneUseRegistryBoundAndStaleBeforePersistence()
+    {
+        var store = new RecordingStore();
+        var registry = Registry(store);
+        var other = Registry(new RecordingStore());
+        var stale = registry.BeginReconciliation();
+        var current = registry.BeginReconciliation();
+        var foreign = other.BeginReconciliation();
+        var snapshot = registry.Snapshot;
+
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(stale, Completed(Acquired())).Status);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(foreign, Completed(Acquired())).Status);
+        Assert.Same(snapshot, registry.Snapshot);
+        Assert.Equal(0, store.SaveCount);
+
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.Applied,
+            registry.Reconcile(current, Completed(Acquired())).Status);
+        var committed = registry.Snapshot;
+        Assert.Equal(1, store.SaveCount);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(current, Completed()).Status);
+        Assert.Same(committed, registry.Snapshot);
+        Assert.Equal(1, store.SaveCount);
+    }
+
+    [Fact]
+    public void InvalidCurrentSweepConsumesEpochKeepsAuthorityFencedAndRequiresFreshSuccess()
+    {
+        var store = new RecordingStore();
+        var registry = Registry(store);
+        Reconcile(registry, Completed(Acquired()));
+        ApproveCurrent(registry);
+        var enabled = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
+        var before = registry.Snapshot;
+        var savesBefore = store.SaveCount;
+        Assert.NotNull(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
+
+        var epoch = registry.BeginReconciliation();
+        var invalid = registry.Reconcile(epoch, Completed(Acquired(), Acquired()));
+
+        Assert.Equal(PlatformProviderRegistryMutationStatus.InvalidSweep, invalid.Status);
+        Assert.Same(before, registry.Snapshot);
+        Assert.Equal(savesBefore, store.SaveCount);
+        Assert.Null(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(epoch, Completed(Acquired())).Status);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.Applied,
+            registry.Reconcile(registry.BeginReconciliation(), Completed(Acquired())).Status);
+        Assert.NotNull(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
+    }
+
+    [Fact]
+    public void CancellationAbandonmentIsRegistryBoundAndLinearizedAgainstCommit()
+    {
+        var store = new RecordingStore();
+        var registry = Registry(store);
+        var other = Registry(new RecordingStore());
+        var abandoned = registry.BeginReconciliation();
+        var foreign = other.BeginReconciliation();
+
+        registry.AbandonReconciliation(foreign);
+        registry.AbandonReconciliation(abandoned);
+
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(abandoned, Completed(Acquired())).Status);
+        Assert.Equal(0, store.SaveCount);
+
+        var older = registry.BeginReconciliation();
+        var current = registry.BeginReconciliation();
+        registry.AbandonReconciliation(older);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.Applied,
+            registry.Reconcile(current, Completed(Acquired())).Status);
+        Assert.Equal(1, store.SaveCount);
+
+        ApproveCurrent(registry);
+        var enabled = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
+        registry.AbandonReconciliation(current);
+        Assert.NotNull(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
+    }
+
+    [Fact]
+    public void SuccessfulRecoveryRetiresPreRecoveryEpochAndRemainsFencedUntilFreshSweep()
+    {
+        var store = new RecordingStore { ReturnQuarantinedOnLoad = true };
+        var registry = Registry(store);
+        var preRecoveryEpoch = registry.BeginReconciliation();
+
+        var recovered = registry.Recover(
+            new PlatformProviderRegistryRecoveryCommand("Explicit registry recovery"),
+            AdminAuthorization(currentlyElevated: true));
+
+        Assert.Equal(PlatformProviderRegistryMutationStatus.Applied, recovered.Status);
+        Assert.Equal(PlatformProviderRegistryStoreHealth.Healthy, registry.Snapshot.StoreHealth);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.StaleReconciliation,
+            registry.Reconcile(preRecoveryEpoch, Completed(Acquired())).Status);
+        Assert.Empty(registry.Snapshot.Entries);
+        Assert.Equal(0, store.SaveCount);
+        Assert.Equal(
+            PlatformProviderRegistryMutationStatus.Applied,
+            registry.Reconcile(registry.BeginReconciliation(), Completed(Acquired())).Status);
+        AssertEntry(registry, PlatformProviderLifecycleState.Pending);
+    }
+
+    [Fact]
     public void CompleteMixedSweepPublishesEveryPeerInCanonicalOrder()
     {
         var lower = new Guid("01111111-2222-3333-4444-555555555555");
         var rejected = new Guid("21111111-2222-3333-4444-555555555555");
         var registry = Registry(new RecordingStore());
 
-        var result = registry.Reconcile(Completed(
+        var result = Reconcile(registry, Completed(
             Rejected(
                 PlatformInstalledPluginHostStatus.Active,
                 PlatformInstalledManifestOutcome.ManifestRejected,
@@ -109,13 +224,13 @@ public sealed class PlatformProviderRegistryTests
         records.Add(ApprovedRecord(oldB));
         store.Seed(new PlatformProviderRegistryDurableState(1, records.ToImmutable()));
         var registry = Registry(store);
-        registry.Reconcile(Completed(oldA, oldB));
+        Reconcile(registry, Completed(oldA, oldB));
         var enabledA = registry.Snapshot.Entries.Single(entry => entry.PluginId == PluginId);
         var enabledB = registry.Snapshot.Entries.Single(entry => entry.PluginId == secondOldId);
         Assert.NotNull(registry.TryRelease(PluginId, enabledA.Fingerprint!, enabledA.Generation));
         Assert.NotNull(registry.TryRelease(secondOldId, enabledB.Fingerprint!, enabledB.Generation));
 
-        var result = registry.Reconcile(Completed(
+        var result = Reconcile(registry, Completed(
             Acquired(pluginId: new Guid("41111111-2222-3333-4444-555555555555")),
             Acquired(pluginId: new Guid("51111111-2222-3333-4444-555555555555")),
             Acquired(pluginId: new Guid("61111111-2222-3333-4444-555555555555"))));
@@ -143,13 +258,13 @@ public sealed class PlatformProviderRegistryTests
         records.Add(ApprovedRecord(old));
         store.Seed(new PlatformProviderRegistryDurableState(1, records.ToImmutable()));
         var registry = Registry(store);
-        registry.Reconcile(Completed(old));
+        Reconcile(registry, Completed(old));
         var before = registry.Snapshot;
         var enabled = before.Entries.Single(entry => entry.PluginId == PluginId);
         Assert.NotNull(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
         store.ThrowOnSave = true;
 
-        var result = registry.Reconcile(Completed(
+        var result = Reconcile(registry, Completed(
             Acquired(pluginId: new Guid("41111111-2222-3333-4444-555555555555")),
             Acquired(pluginId: new Guid("51111111-2222-3333-4444-555555555555"))));
 
@@ -164,13 +279,13 @@ public sealed class PlatformProviderRegistryTests
     {
         var registry = Registry(new RecordingStore());
         var acquired = Acquired();
-        registry.Reconcile(Completed(acquired));
+        Reconcile(registry, Completed(acquired));
         ApproveCurrent(registry);
         var before = registry.Snapshot;
         var enabled = Assert.Single(before.Entries);
         Assert.NotNull(registry.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
 
-        var invalid = registry.Reconcile(Completed(acquired, acquired));
+        var invalid = Reconcile(registry, Completed(acquired, acquired));
 
         Assert.Equal(PlatformProviderRegistryMutationStatus.InvalidSweep, invalid.Status);
         Assert.Same(before, registry.Snapshot);
@@ -178,7 +293,7 @@ public sealed class PlatformProviderRegistryTests
 
         Assert.Equal(
             PlatformProviderRegistryMutationStatus.Applied,
-            registry.Reconcile(Completed(acquired)).Status);
+            Reconcile(registry, Completed(acquired)).Status);
         var restored = Assert.Single(registry.Snapshot.Entries);
         Assert.NotNull(registry.TryRelease(PluginId, restored.Fingerprint!, restored.Generation));
     }
@@ -188,7 +303,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         var durableBefore = store.LastSaved;
@@ -224,7 +339,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         var durableBefore = store.LastSaved;
@@ -273,7 +388,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
 
@@ -297,11 +412,11 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var approved = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
-        registry.Reconcile(Completed(Acquired(
+        Reconcile(registry, Completed(Acquired(
             version: "1.2.3.5",
             hostVersion: new Version(1, 2, 3, 5))));
 
@@ -311,7 +426,7 @@ public sealed class PlatformProviderRegistryTests
         Assert.Empty(changed.GrantedCapabilityIds);
         Assert.Null(registry.TryRelease(PluginId, approved.Fingerprint!, approved.Generation));
 
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
 
         var reverted = AssertEntry(registry, PlatformProviderLifecycleState.Pending);
         Assert.Equal(changed.Generation + 1, reverted.Generation);
@@ -324,18 +439,18 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var enabled = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
-        registry.Reconcile(Completed());
+        Reconcile(registry, Completed());
 
         var absent = AssertEntry(registry, PlatformProviderLifecycleState.Absent);
         Assert.Equal(enabled.Generation + 1, absent.Generation);
         Assert.Null(absent.ApprovedFingerprint);
         Assert.Empty(absent.GrantedCapabilityIds);
 
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
 
         var reinstalled = AssertEntry(registry, PlatformProviderLifecycleState.Pending);
         Assert.Equal(absent.Generation + 1, reinstalled.Generation);
@@ -347,7 +462,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var enabled = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
@@ -362,8 +477,8 @@ public sealed class PlatformProviderRegistryTests
         Assert.Equal(PlatformProviderRegistryMutationStatus.Applied, revoked.Status);
         AssertEntry(registry, PlatformProviderLifecycleState.Revoked);
 
-        registry.Reconcile(Completed());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed());
+        Reconcile(registry, Completed(Acquired()));
 
         var reinstalled = AssertEntry(registry, PlatformProviderLifecycleState.Revoked);
         Assert.Null(registry.TryRelease(PluginId, reinstalled.Fingerprint!, reinstalled.Generation));
@@ -374,7 +489,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         store.ThrowOnSave = true;
@@ -399,14 +514,14 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var before = registry.Snapshot;
         var enabled = Assert.Single(before.Entries);
         var durableBefore = store.LastSaved;
         store.ThrowOnSave = true;
 
-        var result = registry.Reconcile(Completed(Acquired(
+        var result = Reconcile(registry, Completed(Acquired(
             version: "1.2.3.5",
             hostVersion: new Version(1, 2, 3, 5))));
 
@@ -420,12 +535,12 @@ public sealed class PlatformProviderRegistryTests
     public void PublishedSnapshotsRemainImmutableAcrossLaterMutations()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var oldSnapshot = registry.Snapshot;
         var oldEntry = Assert.Single(oldSnapshot.Entries);
 
         ApproveCurrent(registry);
-        registry.Reconcile(Completed(Acquired(version: "1.2.3.5", hostVersion: new Version(1, 2, 3, 5))));
+        Reconcile(registry, Completed(Acquired(version: "1.2.3.5", hostVersion: new Version(1, 2, 3, 5))));
 
         Assert.Equal(1, oldSnapshot.Revision);
         Assert.Same(oldEntry, Assert.Single(oldSnapshot.Entries));
@@ -440,7 +555,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var first = Registry(store);
-        first.Reconcile(Completed(Acquired()));
+        Reconcile(first, Completed(Acquired()));
         ApproveCurrent(first);
         var enabled = AssertEntry(first, PlatformProviderLifecycleState.Enabled);
 
@@ -450,7 +565,7 @@ public sealed class PlatformProviderRegistryTests
         Assert.Equal(enabled.Generation, dormant.Generation);
         Assert.Null(restarted.TryRelease(PluginId, enabled.Fingerprint!, enabled.Generation));
 
-        restarted.Reconcile(Completed(Acquired()));
+        Reconcile(restarted, Completed(Acquired()));
 
         var restored = AssertEntry(restarted, PlatformProviderLifecycleState.Enabled);
         Assert.Equal(enabled.Generation, restored.Generation);
@@ -469,7 +584,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var registry = Registry(new RecordingStore());
 
-        registry.Reconcile(Completed(Rejected(
+        Reconcile(registry, Completed(Rejected(
             (PlatformInstalledPluginHostStatus)hostStatusValue,
             PlatformInstalledManifestOutcome.HostStatusNotActive)));
 
@@ -488,7 +603,7 @@ public sealed class PlatformProviderRegistryTests
             ? Acquired(platformMin: 2, platformMax: 2)
             : Acquired(hostMin: 13, hostMax: 13);
 
-        registry.Reconcile(Completed(observation));
+        Reconcile(registry, Completed(observation));
 
         var entry = AssertEntry(registry, PlatformProviderLifecycleState.Incompatible);
         Assert.Null(registry.TryRelease(PluginId, entry.Fingerprint!, entry.Generation));
@@ -518,7 +633,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var registry = Registry(new RecordingStore());
 
-        registry.Reconcile(Completed(Rejected(
+        Reconcile(registry, Completed(Rejected(
             PlatformInstalledPluginHostStatus.Active,
             (PlatformInstalledManifestOutcome)outcomeValue)));
 
@@ -531,11 +646,11 @@ public sealed class PlatformProviderRegistryTests
     public void CanonicalCapabilityReorderingPreservesFingerprintGenerationAndApproval()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired(capabilities: Requested)));
+        Reconcile(registry, Completed(Acquired(capabilities: Requested)));
         ApproveCurrent(registry);
         var before = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
-        registry.Reconcile(Completed(Acquired(capabilities: Requested.Reverse().ToArray())));
+        Reconcile(registry, Completed(Acquired(capabilities: Requested.Reverse().ToArray())));
 
         var after = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
         Assert.Equal(before.Fingerprint, after.Fingerprint);
@@ -547,7 +662,7 @@ public sealed class PlatformProviderRegistryTests
     public void GrantReplacementDisableAndEnableAreDurableExactTransitions()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var enabled = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
@@ -607,11 +722,11 @@ public sealed class PlatformProviderRegistryTests
     public void DormantHostStateCannotRestoreApprovalAcrossAssemblyDrift(int hostStatusValue)
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired(assemblyIdentity: "Example.Provider, Hash=A")));
+        Reconcile(registry, Completed(Acquired(assemblyIdentity: "Example.Provider, Hash=A")));
         ApproveCurrent(registry);
         var approved = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
 
-        registry.Reconcile(Completed(Rejected(
+        Reconcile(registry, Completed(Rejected(
             (PlatformInstalledPluginHostStatus)hostStatusValue,
             PlatformInstalledManifestOutcome.HostStatusNotActive)));
         var dormant = Assert.Single(registry.Snapshot.Entries);
@@ -619,7 +734,7 @@ public sealed class PlatformProviderRegistryTests
             dormant.State,
             new[] { PlatformProviderLifecycleState.RestartPending, PlatformProviderLifecycleState.Disabled });
 
-        registry.Reconcile(Completed(Acquired(assemblyIdentity: "Example.Provider, Hash=B")));
+        Reconcile(registry, Completed(Acquired(assemblyIdentity: "Example.Provider, Hash=B")));
 
         var changed = AssertEntry(registry, PlatformProviderLifecycleState.Pending);
         Assert.True(changed.Generation > approved.Generation);
@@ -634,9 +749,9 @@ public sealed class PlatformProviderRegistryTests
     public void DormantApprovedProviderCanBeExplicitlyRevoked(int hostStatusValue)
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
-        registry.Reconcile(Completed(Rejected(
+        Reconcile(registry, Completed(Rejected(
             (PlatformInstalledPluginHostStatus)hostStatusValue,
             PlatformInstalledManifestOutcome.HostStatusNotActive)));
         var dormant = Assert.Single(registry.Snapshot.Entries);
@@ -679,7 +794,7 @@ public sealed class PlatformProviderRegistryTests
     public void FreshAdministratorAuthorizationIsSingleUse()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         var authorization = AdminAuthorization(currentlyElevated: true);
@@ -711,7 +826,7 @@ public sealed class PlatformProviderRegistryTests
     public void AdministratorDemotedAfterAuthorizationMintCannotUseItOnce()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         var boundaryActor = PlatformActorTestFactory.Create(
@@ -749,14 +864,14 @@ public sealed class PlatformProviderRegistryTests
         var store = new RecordingStore();
         var registry = Registry(store);
         var acquired = Acquired();
-        registry.Reconcile(Completed(acquired));
+        Reconcile(registry, Completed(acquired));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         using var saveEntered = new ManualResetEventSlim(false);
         using var continueSave = new ManualResetEventSlim(false);
         store.SaveEntered = saveEntered;
         store.ContinueSave = continueSave;
-        var holdingMutation = Task.Run(() => registry.Reconcile(Completed(acquired)));
+        var holdingMutation = Task.Run(() => Reconcile(registry, Completed(acquired)));
         Assert.True(saveEntered.Wait(TimeSpan.FromSeconds(5)));
 
         var boundaryActor = PlatformActorTestFactory.Create(
@@ -797,7 +912,7 @@ public sealed class PlatformProviderRegistryTests
     {
         var store = new RecordingStore();
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var before = registry.Snapshot;
         var entry = Assert.Single(before.Entries);
         var results = new ConcurrentBag<PlatformProviderRegistryMutationStatus>();
@@ -832,7 +947,7 @@ public sealed class PlatformProviderRegistryTests
         {
             var registry = Registry(new RecordingStore());
             var acquired = Acquired();
-            registry.Reconcile(Completed(acquired));
+            Reconcile(registry, Completed(acquired));
             var before = registry.Snapshot;
             var entry = Assert.Single(before.Entries);
             using var start = new ManualResetEventSlim(false);
@@ -860,7 +975,7 @@ public sealed class PlatformProviderRegistryTests
             var reconcileTask = Task.Run(() =>
             {
                 start.Wait();
-                return registry.Reconcile(Completed(acquired));
+                return Reconcile(registry, Completed(acquired));
             });
 
             start.Set();
@@ -872,7 +987,13 @@ public sealed class PlatformProviderRegistryTests
             Assert.InRange(winners, 0, 1);
             Assert.All(
                 adminResults.Where(result => result.Status != PlatformProviderRegistryMutationStatus.Applied),
-                result => Assert.Equal(PlatformProviderRegistryMutationStatus.StaleRevision, result.Status));
+                result => Assert.Contains(
+                    result.Status,
+                    new[]
+                    {
+                        PlatformProviderRegistryMutationStatus.StaleRevision,
+                        PlatformProviderRegistryMutationStatus.StaleProvider,
+                    }));
             Assert.Equal(PlatformProviderRegistryMutationStatus.Applied, reconcileResult.Status);
             Assert.Equal(before.Revision + 1 + winners, registry.Snapshot.Revision);
             Assert.Null(registry.TryRelease(PluginId, entry.Fingerprint!, entry.Generation));
@@ -895,7 +1016,7 @@ public sealed class PlatformProviderRegistryTests
         {
             var registry = Registry(new RecordingStore());
             var acquired = Acquired();
-            registry.Reconcile(Completed(acquired));
+            Reconcile(registry, Completed(acquired));
             ApproveCurrent(registry);
             var before = registry.Snapshot;
             var entry = Assert.Single(before.Entries);
@@ -930,7 +1051,7 @@ public sealed class PlatformProviderRegistryTests
             var reconcileTask = Task.Run(() =>
             {
                 start.Wait();
-                return registry.Reconcile(Completed(acquired));
+                return Reconcile(registry, Completed(acquired));
             });
 
             start.Set();
@@ -942,7 +1063,13 @@ public sealed class PlatformProviderRegistryTests
             Assert.InRange(winners, 0, 1);
             Assert.All(
                 adminResults.Where(result => result.Status != PlatformProviderRegistryMutationStatus.Applied),
-                result => Assert.Equal(PlatformProviderRegistryMutationStatus.StaleRevision, result.Status));
+                result => Assert.Contains(
+                    result.Status,
+                    new[]
+                    {
+                        PlatformProviderRegistryMutationStatus.StaleRevision,
+                        PlatformProviderRegistryMutationStatus.StaleProvider,
+                    }));
             Assert.Equal(PlatformProviderRegistryMutationStatus.Applied, reconcileResult.Status);
             Assert.Equal(before.Revision + 1 + winners, registry.Snapshot.Revision);
             if (winners == 0)
@@ -970,7 +1097,7 @@ public sealed class PlatformProviderRegistryTests
     public async Task ParallelReadersObserveOnlyWholeEnabledOrDisabledSnapshots()
     {
         var registry = Registry(new RecordingStore());
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         ApproveCurrent(registry);
         var baseline = AssertEntry(registry, PlatformProviderLifecycleState.Enabled);
         using var start = new ManualResetEventSlim(false);
@@ -1037,6 +1164,11 @@ public sealed class PlatformProviderRegistryTests
 
     private static PlatformProviderRegistry Registry(RecordingStore store) =>
         new(store, new FixedTimeProvider(Now));
+
+    private static PlatformProviderRegistryMutationResult Reconcile(
+        PlatformProviderRegistry registry,
+        PlatformInstalledManifestSweep sweep) =>
+        registry.Reconcile(registry.BeginReconciliation(), sweep);
 
     private static PlatformInstalledManifestSweep Completed(
         params PlatformInstalledManifestObservation[] observations) =>
@@ -1169,6 +1301,8 @@ public sealed class PlatformProviderRegistryTests
 
     private sealed class RecordingStore : IPlatformProviderRegistryStateStore
     {
+        internal bool ReturnQuarantinedOnLoad { get; set; }
+
         internal bool ThrowOnSave { get; set; }
 
         internal ManualResetEventSlim? SaveEntered { get; set; }
@@ -1183,9 +1317,11 @@ public sealed class PlatformProviderRegistryTests
 
         internal void Seed(PlatformProviderRegistryDurableState state) => LastSaved = state;
 
-        public PlatformProviderRegistryStoreLoadResult Load() => LastSaved is null
-            ? PlatformProviderRegistryStoreLoadResult.Healthy(PlatformProviderRegistryDurableState.Empty)
-            : PlatformProviderRegistryStoreLoadResult.Healthy(LastSaved);
+        public PlatformProviderRegistryStoreLoadResult Load() => ReturnQuarantinedOnLoad
+            ? PlatformProviderRegistryStoreLoadResult.Quarantined()
+            : LastSaved is null
+                ? PlatformProviderRegistryStoreLoadResult.Healthy(PlatformProviderRegistryDurableState.Empty)
+                : PlatformProviderRegistryStoreLoadResult.Healthy(LastSaved);
 
         public void Save(PlatformProviderRegistryDurableState state)
         {
@@ -1209,6 +1345,7 @@ public sealed class PlatformProviderRegistryTests
             }
 
             LastSaved = PlatformProviderRegistryDurableState.Empty;
+            ReturnQuarantinedOnLoad = false;
             WasFenced = false;
         }
 

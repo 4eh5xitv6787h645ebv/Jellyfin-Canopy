@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **accepted; bounded manifest/acquisition and authoritative registry domain implemented** (#645, #647, #650; orchestration and external fixtures pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)
+Status: **accepted; bounded manifest/acquisition, authoritative registry and post-start orchestration implemented** (#645, #647, #650, #652) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)
 
 ## Context
 
@@ -118,6 +118,25 @@ declared scopes — are each a distinct vulnerability.
    durably fenced before another epoch may be selected. Missing recovered state is
    fenced likewise, epochs advance monotonically past malformed evidence, and a
    recovery succeeds only after reproving that its committed epoch is authoritative.
+17. **Post-start reconciliation has one authority-critical owner.** A singleton
+   hosted orchestrator subscribes to Jellyfin's `ApplicationStarted` token and
+   resolves the registry lazily only after that boundary. Every accepted trigger
+   first mints an opaque, registry-owned, one-use reconciliation epoch, which
+   immediately fences live release. One observed worker performs at most one
+   acquisition at a time; a burst retains only the latest follow-up. A newer
+   trigger, recovery or stop makes an older epoch stale before it can persist.
+   Cancellation atomically abandons its exact epoch when that abandonment wins
+   the registry gate; a complete current reconcile already linearized at that
+   gate may finish its whole commit. Only a complete current sweep can commit
+   and clear the fence.
+   There is no periodic timer, public route, provider resolution or second state
+   owner. Stop unsubscribes, fences without forcing lazy construction, requests
+   cooperative cancellation and joins the retained worker. Absolute termination
+   for a kernel or storage operation that never returns remains #648.
+   The fence governs subsequent registry release attempts; an immutable release
+   object already returned to a future consumer is not remotely revocable. EP-04
+   must therefore acquire or revalidate exact current authority at its final
+   admission boundary before provider work begins.
 
 ## Rationale
 
@@ -160,10 +179,9 @@ declared scopes — are each a distinct vulnerability.
   await native I/O ownership returning before buffers can be reclaimed. Killable
   isolation for both residuals is tracked by #648; #647 does not claim to sandbox
   or kill a wedged kernel/driver.
-- #650 does not register startup/background discovery, expose routes, load or
-  invoke providers, or claim provider health. Those remain bounded EP-03.4/EP-04
-  work. `Unhealthy` is therefore reserved for EP-04 rather than emitted by this
-  registry domain.
+- #652 registers one lazy post-start reconciliation owner, but exposes no route,
+  loads or invokes no provider, and claims no provider health. `Unhealthy` is
+  therefore reserved for EP-04 rather than emitted by this registry domain.
 
 ## Rejected alternatives
 

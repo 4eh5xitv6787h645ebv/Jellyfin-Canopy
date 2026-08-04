@@ -39,6 +39,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         PersistenceFailed = 8,
         StoreQuarantined = 9,
         InvalidSweep = 10,
+        StaleReconciliation = 11,
     }
 
     /// <summary>Durable administrator disposition; it is never current authority.</summary>
