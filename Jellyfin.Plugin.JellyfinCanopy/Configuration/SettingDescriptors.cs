@@ -126,10 +126,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("TmdbEnabled", c => !string.IsNullOrWhiteSpace(c.TMDB_API_KEY)),
                 Public("ToastDuration", c => c.ToastDuration),
                 Public("HelpPanelAutocloseDelay", c => c.HelpPanelAutocloseDelay),
-                // Public (incl. pre-login): the boot loader reads this before the
-                // login screen paints so it can steer the client layout at the
-                // earliest possible point (see js/plugin.js applyLayoutEnforcement).
-                // It carries no secret — only the enforcement mode string.
+                // Public (incl. pre-login): the boot loader reads the modern-layout
+                // steering choice before login. It carries no secret.
                 Public("LayoutEnforcement", c => c.LayoutEnforcement),
                 Public("ClientRefreshMode", c => c.ClientRefreshMode),
                 Public("ClientRefreshOnCanopyUpdate", c => c.ClientRefreshOnCanopyUpdate),

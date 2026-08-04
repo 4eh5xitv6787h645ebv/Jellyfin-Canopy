@@ -97,11 +97,11 @@ are:
   shared state; live-config generation ownership. Each side effect has exactly
   one owner.
 - **Bounds & performance** — bounded memory and work; no unbounded growth,
-  polling, or hidden N×; no jank (flicker/reflow/layout shift) on any layout;
+  polling, or hidden N×; no jank (flicker/reflow/layout shift) on the supported layout;
   respects the repo's performance rules.
-- **Compatibility & platform** — Jellyfin 12 / .NET 10 boundary; modern MUI
-  **and** legacy web layouts both remain valid; native Jellyfin markup and local
-  assets; server/runtime API used as it actually exists (verify against the
+- **Compatibility & platform** — Jellyfin 12 / .NET 10 boundary; modern MUI is
+  the only supported Canopy web layout and the unsupported-layout boot boundary
+  fails open to Jellyfin; native Jellyfin markup and local assets; server/runtime API used as it actually exists (verify against the
   sanctioned reference trees, not memory).
 - **Test strength** — tests fail before the fix and pass after; cover admin and
   non-admin, negative/fallback paths, and prove the intended lower tier ran

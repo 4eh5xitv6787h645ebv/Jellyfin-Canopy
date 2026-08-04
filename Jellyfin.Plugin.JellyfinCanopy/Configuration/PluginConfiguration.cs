@@ -32,9 +32,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             DisableBrandingMiddleware = false;
             PlatformEnabled = true;
 
-            // Client layout enforcement. Jellyfin 12's modern-vs-legacy layout is a
-            // per-DEVICE choice stored in each browser's localStorage; "None" leaves
-            // it entirely to the user. See the LayoutEnforcement property below.
+            // Client layout enforcement. Canopy supports Jellyfin 12's modern
+            // React/MUI web layout only. "None" preserves the browser's own choice;
+            // "ForceExperimental" steers browser clients to the supported layout.
             LayoutEnforcement = "None";
 
             // Smart client refresh. Open Canopy web/WebView clients compare the
@@ -401,24 +401,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // are not served and jellyfin-web's stock assets are used. Default false.
         public bool DisableBrandingMiddleware { get; set; }
 
-        // Server-wide default/override for Jellyfin 12's client layout. The layout
-        // (modern React/MUI vs classic legacy) is a per-DEVICE choice each browser
-        // stores in localStorage['layout'] ('experimental' = modern, 'desktop' =
-        // legacy); the plugin's boot loader is the only server-controlled point that
-        // can steer it. Values:
-        //   "None"                — no behavior change (default); the user's device
-        //                            choice (or Jellyfin's own default) stands.
-        //   "DefaultExperimental" — set the modern layout only on devices that have
-        //                            made no explicit choice yet. Never overrides a
-        //                            user's stored pick; takes effect without a reload.
-        //   "ForceExperimental"   — always steer devices to the modern layout,
-        //                            overriding a stored legacy pick (one reload on the
-        //                            first transition per session).
-        //   "ForceLegacy"         — symmetric hard override to the classic layout.
-        // Unknown values are treated as "None". Because the layout is per-device, this
-        // is intentionally admin-only (no per-user override): a per-user setting would
-        // have no device to attach to.
-        public string LayoutEnforcement { get; set; }
+        // Server-wide steering for Jellyfin 12's client layout. Canopy supports the
+        // modern React/MUI web layout only; choosing Jellyfin's legacy layout leaves
+        // the host usable but prevents the Canopy client runtime from starting.
+        // Supported values:
+        //   "None"              — preserve the browser's own layout choice.
+        //   "ForceExperimental" — steer non-TV browser clients to modern, with one
+        //                          guarded reload when a legacy choice was stored.
+        // Retired/unknown values (including the former DefaultExperimental and
+        // ForceLegacy options) normalize to None while loading or saving so old
+        // configuration remains readable without retaining a legacy-support switch.
+        private string _layoutEnforcement = "None";
+        public string LayoutEnforcement
+        {
+            get => _layoutEnforcement;
+            set => _layoutEnforcement = string.Equals(value, "ForceExperimental", StringComparison.Ordinal)
+                ? "ForceExperimental"
+                : "None";
+        }
 
         // Cross-device client refresh policy. ClientRefreshMode values:
         //   "Smart"    — refresh any safe, non-editing page after the idle delay.

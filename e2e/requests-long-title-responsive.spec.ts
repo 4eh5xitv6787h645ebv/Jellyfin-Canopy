@@ -12,15 +12,13 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 
 const LAYOUTS: ReadonlyArray<{ name: Layout; seed: string }> = [
     { name: 'modern', seed: 'modern' },
-    { name: 'legacy', seed: 'mobile-legacy' },
 ];
 const LAYOUT_STAMP: Record<Layout, string> = {
     modern: 'jc-modern-layout',
-    legacy: 'jc-legacy-layout',
 };
 const VIEWPORTS = [
     { width: 320, height: 568 },
@@ -41,18 +39,15 @@ async function seedLayout(page: Page, value: string): Promise<void> {
 
 async function requireExactLayoutStamp(page: Page, layout: Layout): Promise<void> {
     const wanted = LAYOUT_STAMP[layout];
-    const other = LAYOUT_STAMP[layout === 'modern' ? 'legacy' : 'modern'];
     await page.waitForFunction(
         (stamp) => document.documentElement.classList.contains(stamp),
         wanted,
         { timeout: 20_000 }
     );
-    expect(
-        await page.locator('html').evaluate((root, stamps) => ({
-            wanted: root.classList.contains(stamps.wanted),
-            other: root.classList.contains(stamps.other),
-        }), { wanted, other })
-    ).toEqual({ wanted: true, other: false });
+    expect(await page.locator('html').evaluate(
+        (root, stamp) => root.classList.contains(stamp),
+        wanted,
+    )).toBe(true);
 }
 
 async function capture(page: Page, fileName: string): Promise<void> {

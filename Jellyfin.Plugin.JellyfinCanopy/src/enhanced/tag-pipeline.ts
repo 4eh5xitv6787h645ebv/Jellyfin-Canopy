@@ -1412,8 +1412,8 @@ export function disposeTagPipeline(): void {
  * (server cache first, then localStorage/hot cache), queueing misses for the
  * batch fetch. Shared by the idle-scheduled chunk scan and the synchronous
  * pre-paint pass. List rows (`.listItem`) are excluded here via shouldSkipElement
- * (issue 34) as legacy-layout belt-and-suspenders plus recycling safety — see
- * isListViewRow for why the modern React scan can't surface a list row anyway.
+ * (issue 34) as recycling safety — see isListViewRow for why the modern React
+ * scan cannot surface a list row through the normal card path anyway.
  * @param el - The cardImageContainer element.
  * @param fadeIn - True for async (post-paint) passes: newly added overlays get
  *   the compositor-only fade so late tags appear smoothly. The pre-paint pass

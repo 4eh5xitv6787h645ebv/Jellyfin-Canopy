@@ -37,7 +37,7 @@ type RawUserFile =
     | 'shortcuts.json'
     | 'hidden-content.json'
     | 'spoilerblur.json';
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 type JsonRecord = Record<string, any>;
 
 interface ResolvedUser {
@@ -174,7 +174,7 @@ const SPOILER_CONTROLS: ReadonlyArray<{
 
 const LAYOUTS: ReadonlyArray<{
     layout: Layout;
-    seed: 'modern' | 'mobile-legacy';
+    seed: 'modern';
     route(targetUserId: string): string;
 }> = [
     {
@@ -182,16 +182,10 @@ const LAYOUTS: ReadonlyArray<{
         seed: 'modern',
         route: targetUserId => `/mypreferencesmenu?userId=${targetUserId}`,
     },
-    {
-        layout: 'legacy',
-        seed: 'mobile-legacy',
-        route: targetUserId => `/mypreferencesmenu.html?userId=${targetUserId}`,
-    },
 ];
 
 const LAYOUT_STAMP: Record<Layout, string> = {
     modern: 'jc-modern-layout',
-    legacy: 'jc-legacy-layout',
 };
 
 const SHORTCUT_CHOICES: readonly ShortcutChoice[] = [
@@ -753,8 +747,7 @@ function expectFixture(
 async function chooseSpoilerOverrideFixtures(
     baseURL: string,
     users: ResolvedUsers,
-    original: JsonRecord,
-    layout: Layout
+    original: JsonRecord
 ): Promise<readonly SpoilerOverrideFixture[]> {
     const response = await apiRaw(
         baseURL,
@@ -809,7 +802,7 @@ async function chooseSpoilerOverrideFixtures(
     const collection = targetVisible('BoxSet', 'Collections');
     const pendingTvId = uniqueTmdb('tv', 900_000_000);
     const pendingMovieId = uniqueTmdb('movie', 910_000_000);
-    const label = layout === 'modern' ? 'Modern' : 'Legacy';
+    const label = 'Modern';
     return [
         {
             kind: 'series',
@@ -1096,19 +1089,15 @@ async function seedLayout(page: Page, seed: string): Promise<void> {
 
 async function expectExactLayout(page: Page, layout: Layout): Promise<void> {
     const wanted = LAYOUT_STAMP[layout];
-    const other = LAYOUT_STAMP[layout === 'modern' ? 'legacy' : 'modern'];
     await page.waitForFunction(
         stamp => document.documentElement.classList.contains(stamp),
         wanted,
         { timeout: 20_000 }
     );
     expect(await page.locator('html').evaluate(
-        (root, stamps) => ({
-            wanted: root.classList.contains(stamps.wanted),
-            other: root.classList.contains(stamps.other),
-        }),
-        { wanted, other }
-    )).toEqual({ wanted: true, other: false });
+        (root, stamp) => root.classList.contains(stamp),
+        wanted,
+    )).toBe(true);
 }
 
 async function browserUserId(page: Page): Promise<string> {
@@ -1654,8 +1643,7 @@ async function exerciseSpoilerPersistentOverrides(
     const fixtures = await chooseSpoilerOverrideFixtures(
         baseURL,
         users,
-        loaded.data,
-        layout
+        loaded.data
     );
     const conflictKey = Object.keys(
         overrideSection(loaded.data, 'PendingTmdb')

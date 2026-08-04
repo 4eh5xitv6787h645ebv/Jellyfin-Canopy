@@ -20,7 +20,7 @@ describe('page entry-point identity lifecycle', () => {
             render: vi.fn(),
         });
         const sidebar = document.createElement('div');
-        sidebar.className = 'mainDrawer-scrollContainer';
+        sidebar.className = 'MuiDrawer-paper';
         Object.defineProperty(sidebar, 'offsetParent', { get: () => document.body });
         document.body.appendChild(sidebar);
         initEntryPoints();

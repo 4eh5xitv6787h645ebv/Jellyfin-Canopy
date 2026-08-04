@@ -88,7 +88,7 @@
   "IconStyle": "cfg-IconStyle",
   "LanguageTagsEnabled": true,
   "LanguageTagsPosition": "cfg-LanguageTagsPosition",
-  "LayoutEnforcement": "cfg-LayoutEnforcement",
+  "LayoutEnforcement": "None",
   "LetterboxdEnabled": true,
   "LongPress2xEnabled": true,
   "MaintainerrEnabled": false,

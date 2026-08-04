@@ -94,7 +94,7 @@ describe('anime filler warnings', () => {
     });
 
     it('keeps every card and list badge an out-of-flow overlay, with or without an image wrapper', async () => {
-        // Containment contract for episode rows on both layouts: a card/list
+        // Containment contract for modern episode rows: a card/list
         // badge must always be an absolute overlay so it can never add
         // in-flow width to its row or the page.
         //  - .listItemImage is the REAL shape of the seeded partial-library

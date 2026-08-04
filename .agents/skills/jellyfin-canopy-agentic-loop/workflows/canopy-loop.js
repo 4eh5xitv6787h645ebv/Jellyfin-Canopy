@@ -114,7 +114,7 @@ const ALL_LENSES = [
   'Security & privacy (fail closed)',
   'Lifecycle & concurrency',
   'Bounds & performance / no-jank',
-  'Compatibility & platform (JF12/.NET10, MUI + legacy)',
+  'Compatibility & platform (JF12/.NET10, modern React/MUI only)',
   'Test strength',
   'Product semantics & scope',
   'Docs, locale & generated artifacts',
@@ -620,7 +620,7 @@ const CONTRACTS = `You are working on the Jellyfin Canopy plugin repository in t
 ALWAYS \`cd ${WORKTREE}\` first. The repository documents are the source of truth:
 read AGENTS.md, CONTRIBUTING.md, SECURITY.md, the nearest instructions to the
 files in scope, and .agents/skills/jellyfin-canopy-engineering/SKILL.md. Obey
-every contract there (JF12/.NET10 boundary; MUI + legacy layouts both valid;
+every contract there (JF12/.NET10 boundary; modern React/MUI is the only supported client layout;
 fail-closed auth/isolation/escaping/disposal/bounded work; coverage & lint caps
 are ratchets; rebuild generated bundles/manifests/snapshots/translations from
 source). Only this repository is writable; the Jellyfin-Enhanced repos are
@@ -832,7 +832,7 @@ const exploreAngles = (SURFACE === 'docs'
       'every PRODUCER and CONSUMER of the affected behavior (grep the whole tree)',
       'the nearest ALREADY-IMPLEMENTED analogue and the existing cross-cutting helpers to reuse',
       'the CONTRACTS at risk (auth/isolation/escaping/disposal/bounded-work/live-config) and the TEST SEAMS',
-      'the CLIENT surface: MUI + legacy layouts, native markup, locale keys, docs impacted',
+      'the CLIENT surface: modern MUI layout, unsupported-layout boot boundary, native markup, locale keys, docs impacted',
       'the SERVER surface: controllers/services/scheduled tasks, .NET tests, generated artifacts',
       'the DATA/STATE/CONCURRENCY surface: persistence, caches, revisions, invalidation, and the races the change can introduce',
       'the PERFORMANCE/BOUNDS surface: allocations, N+1 / manager-call counts, unbounded work, and the measurable budgets to assert',
@@ -1161,7 +1161,7 @@ function claudeReview(roundNo, i, lens) {
 Assume the change is WRONG and prove how, THROUGH THIS LENS ONLY.`
     : `PHASE: ADVERSARIAL REVIEW — whole diff.
 Assume the change is WRONG and prove how, across correctness, security/privacy
-(fail-closed), lifecycle/concurrency, bounds/perf/no-jank, JF12 + MUI/legacy
+(fail-closed), lifecycle/concurrency, bounds/perf/no-jank, JF12 + modern-MUI-only
 compatibility, test strength, product scope, and docs/locale/generated-artifact gaps.`
   const prompt = `${reviewCtx()}
 
@@ -1188,7 +1188,7 @@ function solThunk(roundNo, i, lens) {
   const scope = lens
     ? `THROUGH THIS LENS ONLY: "${lens}".`
     : `across correctness, security/privacy (fail-closed), lifecycle/concurrency,
-bounds/perf/no-jank, JF12 + MUI/legacy compatibility, test strength, product
+bounds/perf/no-jank, JF12 + modern-MUI-only compatibility, test strength, product
 scope, and docs/locale/generated-artifact gaps.`
   const solPrompt = `${reviewCtx()}
 

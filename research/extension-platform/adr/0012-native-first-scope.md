@@ -80,7 +80,7 @@ any Canopy capability reaches Android TV.
 
 **It defers the most expensive and least proven work.** EP-07 is the bulk of the
 remaining cost, and the browser spike verified the mechanism on the **modern
-layout only**; legacy, mobile, Web-TV, accessibility, localisation and jank
+layout only**; modern mobile, Web-TV, accessibility, localisation and jank
 budgets are all untested. EP-08's protocol, by contrast, is already exercised end
 to end by the headless fixture
 ([S18](../spike-evidence.md#s18--a-headless-native-client-can-drive-the-protocol-and-every-refusal-is-distinct)):

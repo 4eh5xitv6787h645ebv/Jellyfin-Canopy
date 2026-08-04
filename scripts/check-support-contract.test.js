@@ -47,7 +47,7 @@ Describe the actual behavior or what happens instead.
 ## Client environment
 - Client or browser and version:
 - Operating system and version:
-- Jellyfin modern MUI or legacy layout:
+- Confirm Jellyfin modern MUI, or state that this is an unsupported-layout boundary report:
 - Local or externally proxied access:
 ## Relevant configuration
 List the relevant Canopy features and configuration. Do not include API keys or credentials.

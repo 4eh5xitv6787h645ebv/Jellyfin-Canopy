@@ -418,7 +418,7 @@ The **server-wide enable** and the **integration method** are admin-only and liv
 - Enable or disable the feature server-wide.
 - Set the admin defaults for the per-user toggles below.
 
-When enabled, the Hidden Content management page is a routed destination reachable at `/web/index.html#/hidden-content`, with entry points added automatically on every layout (the **Jellyfin Canopy** sidebar-drawer link, the modern-layout header-tray button, and the user-preferences-menu link). Its position among the pages follows the admin **Pages order** setting.
+When enabled, the Hidden Content management page is a routed destination reachable at `/web/index.html#/hidden-content`, with entry points added automatically to the modern-layout header tray, modern mobile drawer, and user-preferences menu. Its position among the pages follows the admin **Pages order** setting.
 
 **Per-user** — Canopy User Settings (press `?`) → **Settings** → **Hidden Content**. Each toggle has a matching admin default:
 
@@ -509,7 +509,7 @@ Clean up the home screen without losing anything: this adds a lightweight, **non
 
 ### Hiding the Favorites tab
 
-Don't use the Home page's **Favorites** tab? You can remove it. This hides the native **Favorites** tab (the one next to **Home** at the top of the Home page) so the Home page opens straight to your main feed. It only hides that tab — your favorites are still saved, still marked with the star, and still reachable everywhere else (the sidebar, search, and item pages). The change is scoped to the Home page, so the second tab on library pages is never affected. It applies on both the modern and legacy layouts.
+Don't use the Home page's **Favorites** tab? You can remove it. This hides the native **Favorites** tab (the one next to **Home** at the top of the Home page) so the Home page opens straight to your main feed. It only hides that tab — your favorites are still saved, still marked with the star, and still reachable everywhere else (the drawer, search, and item pages). The change is scoped to the Home page, so the second tab on library pages is never affected. It applies to the supported modern layout.
 
 **Enable it (per-user):** Canopy User Settings (press `?`) → **Settings** → **UI** → **Hide the Favorites Tab**. The change takes effect immediately, without a reload.
 

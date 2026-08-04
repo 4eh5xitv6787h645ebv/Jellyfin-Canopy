@@ -1,8 +1,8 @@
 // src/arr/search/menu.ts
 //
 // Injects the admin-only Search / Interactive Search / Manage items into the native per-item
-// action sheet. The sheet DOM is identical on the modern and legacy layouts, so this one path
-// covers both (and touch via the card "…" button). It mirrors the proven Remove-from-Continue-
+// action sheet. The modern sheet DOM is shared across pointer and touch activation. It mirrors
+// the proven Remove-from-Continue-
 // Watching technique: reconcile idempotently against a freshly-captured context, build items that
 // clone a sibling's classes (pixel-identical), re-fit the sheet, and act on click.
 

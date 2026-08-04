@@ -42,7 +42,6 @@ ui.addMainStyles = function () {
         @keyframes seerr-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .seerr-status-badge.status-processing svg { animation: seerr-spin 1s linear infinite; }
         .seerr-media-badge { position: absolute; top: 8px; left: 8px; z-index: 100; color: #fff; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(0,0,0,0.2); font-size: 1em; font-weight: 500; text-transform: uppercase; letter-spacing: 1.5px; text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8); box-shadow: 0 4px 4px -1px rgba(0,0,0,0.1), 0 2px 2px -2px rgba(0,0,0,0.1); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-        .layout-mobile .seerr-media-badge { font-size: 0.8em !important; }
         .seerr-media-badge-movie { background-color: rgba(59, 130, 246, .9); box-shadow: 0 0 0 1px rgba(59,130,246,.35), 0 8px 24px rgba(59,130,246,.25); }
         .seerr-media-badge-series { background-color: rgba(243, 51, 214, .9); box-shadow: 0 0 0 1px rgba(236,72,153,.35), 0 8px 24px rgba(236,72,153,.25); }
         .seerr-media-badge-collection { background-color: rgba(16, 185, 129, .9); box-shadow: 0 0 0 1px rgba(16,185,129,.35), 0 8px 24px rgba(16,185,129,.25); }
@@ -72,16 +71,8 @@ ui.addMainStyles = function () {
         /* REQUEST BUTTONS */
         .seerr-request-button { display: flex; justify-content: center; align-items: center; gap: 0.5em; white-space: normal; text-align: center; padding: 0.6em 1.2em; line-height: 1.2; font-size: 0.9em; transition: background .2s, border-color .2s, color .2s, transform .2s; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; position: relative; z-index: 10; }
         .seerr-request-button svg { width: 1.2em; height: 1.2em; flex-shrink: 0; vertical-align: middle; }
-        .layout-mobile .seerr-request-button svg { width: 1em; height: 1em; }
-        .layout-mobile .seerr-request-button span { font-size: 0.8em !important; }
-        /* Phone sizing for Seerr card overlays — keyed on the VIEWPORT, not the
-           inert .layout-mobile html class. On the Jellyfin 12 modern layout the
-           html carries layout-desktop at every viewport (see the layout modes
-           and enforcement section in docs/developers.md), so the .layout-mobile
-           rules above never fired on a real phone:
-           the MOVIE/SERIES badge, provider-logo strip, request button and hide
-           overlay all stayed desktop-sized on top of the cards — most visible in
-           the collection "Missing from …" grid once the cards match native width. */
+        /* Phone sizing for Seerr card overlays follows the viewport because the
+           supported MUI shell keeps layout-desktop at every width. */
         @media (max-width: 768px) {
             .seerr-media-badge { font-size: 0.75em; padding: 2px 7px; letter-spacing: 1px; }
             .seerr-request-button svg { width: 1em; height: 1em; }

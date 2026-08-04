@@ -218,9 +218,7 @@ test.describe('Auto-Skip v2 (native media segments)', () => {
             await page.waitForFunction(
                 () => {
                     const toolbar = document.querySelector<HTMLElement>('.MuiAppBar-root .MuiToolbar-root');
-                    const legacy = document.querySelector<HTMLElement>('.headerRight');
-                    return !!toolbar && toolbar.getClientRects().length > 0
-                        && (!legacy || legacy.offsetParent === null);
+                    return !!toolbar && toolbar.getClientRects().length > 0;
                 },
                 undefined,
                 { timeout: 30_000 }

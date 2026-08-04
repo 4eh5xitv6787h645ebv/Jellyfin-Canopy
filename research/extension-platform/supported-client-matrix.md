@@ -27,7 +27,7 @@ shape of the problem.
 | Client | Class | Injection | Descriptor UI | Events | Server-side effects | v1 status |
 |---|---|---|---|---|---|---|
 | Jellyfin Web (browser, modern layout) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** |
-| Jellyfin Web (legacy layout) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** — the existing Canopy client still supports both layouts |
+| Jellyfin Web (classic layout) | 1 | loader boundary only | no | no | yes | **unsupported** — Jellyfin remains usable and Canopy's client feature graph does not initialize |
 | Jellyfin Web on mobile browser | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** |
 | Jellyfin Web TV mode (browser) | 1 | yes | deferred (EP-07) | deferred (C5) | yes | **platform adapter deferred** — *not* evidence of native TV support |
 | Jellyfin Android (mobile, WebView portions) | 2 | partial | no | no | yes | **best effort**, untested |
@@ -118,7 +118,7 @@ Stated plainly so the matrix is not read as stronger than the evidence:
   rendering, idempotent mounting, teardown, coexistence of two contributions and
   opaque-origin frame isolation are all measured
   ([S17](spike-evidence.md#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp)).
-  **Not** covered: the legacy, mobile and Web-TV layouts, accessibility,
+  **Not** covered: modern mobile and Web-TV modes, accessibility,
   localisation, D-pad focus order and the jank budgets — which are the majority of
   EP-07's actual cost.
 - **The EP-00 spike itself involved no native or TV client.** Later bounded

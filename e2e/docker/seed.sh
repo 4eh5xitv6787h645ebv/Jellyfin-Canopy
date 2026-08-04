@@ -24,7 +24,7 @@
 #   SEERR_API_KEY         its API key                   > SeerrEnabled
 #   SEERR_RESPECT_PARENTAL  true|false (default true) — parental gating
 #   JF_IMAGE              compose image override (required default is digest-pinned)
-#   JF_LAYOUT_ENFORCEMENT None|ForceExperimental|ForceLegacy (default None)
+#   JF_LAYOUT_ENFORCEMENT None|ForceExperimental (default None)
 #   JF_E2E_PROJECT        validated Compose namespace (default docker)
 #   JF_E2E_STATE_DIR      marker-owned config/cache/media root (default HERE)
 #   JF_PORT               loopback host port; 0 asks Docker for a free port
@@ -147,8 +147,8 @@ esac
     || fail "seeded admin and non-admin usernames must be distinct"
 
 case "${LAYOUT_ENFORCEMENT}" in
-    None|ForceExperimental|ForceLegacy) ;;
-    *) fail "JF_LAYOUT_ENFORCEMENT must be None, ForceExperimental, or ForceLegacy" ;;
+    None|ForceExperimental) ;;
+    *) fail "JF_LAYOUT_ENFORCEMENT must be None or ForceExperimental" ;;
 esac
 
 if [ -n "${BASE_PATH}" ]; then

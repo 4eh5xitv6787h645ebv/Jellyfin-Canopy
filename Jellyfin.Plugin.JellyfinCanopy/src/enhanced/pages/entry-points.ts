@@ -6,14 +6,14 @@
 // previously produced nondeterministic drawer ordering).
 //
 // Surfaces:
-//  * Drawer — the legacy sidebar or the modern MUI mobile drawer (one
-//    resolver: getSidebarContainer). One link per available page, ordered
+//  * Drawer — the modern MUI mobile drawer (resolved by
+//    getSidebarContainer). One link per available page, ordered
 //    by PagesOrder, reconciled on every body-mutation pass so live config
 //    changes add AND remove entries.
 //  * Header tray — modern desktop's only persistent chrome; one compact
 //    icon button per available page (fixes: no entry point at all on the
 //    modern desktop layout with default config).
-//  * User menu — links on the preferences menu page, both layouts.
+//  * User menu — links on the modern preferences menu page.
 //
 // R9: entry points render unconditionally and resolve the router lazily at
 // click time (router-bridge.openPage) — no readiness gate can strand the
@@ -151,9 +151,7 @@ function trayButtonId(descriptor: PageDescriptor): string {
 function reconcileTray(): void {
     const context = JC.identity.capture();
     if (!context) return;
-    // The tray is the modern layout's surface; the legacy header has the
-    // drawer instead. getHeaderRightContainer resolves per layout — on the
-    // legacy layout the drawer covers discovery, so skip the tray there.
+    // Do not probe header internals until the supported MUI shell is ready.
     if (!document.documentElement.classList.contains('jc-modern-layout')) return;
     const tray = getHeaderRightContainer();
     if (!tray) return;

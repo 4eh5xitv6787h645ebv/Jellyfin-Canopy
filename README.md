@@ -99,7 +99,7 @@ Five new pages living right in Jellyfin's navigation, reorderable, native on des
 - **Session control** — see active streams from the header, and stop or message any remote-control-capable session without opening the dashboard.
 - **Sonarr/Radarr in the item menu** — trigger an automatic search on movies, series, seasons, or episodes; hand-pick a release (quality, size, seeders, rejection reasons — with one-tap Grab) for movies, seasons, and episodes; monitor/unmonitor and add missing movies or series with bounded, normalized download/import progress.
 - **Maintainerr without a second dashboard tab** — inspect safe collection, cleanup, queue, and item-protection status from Jellyfin, with no destructive proxy controls.
-- **Layout enforcement** — default or force the modern Jellyfin layout on your users' desktop and mobile web devices (TV-mode devices are deliberately exempt).
+- **Modern-layout enforcement** — Canopy supports Jellyfin's React/MUI web layout; administrators can preserve each browser's choice or steer non-TV browsers onto modern with one guarded reload.
 - **Maintenance mode** — temporarily lock users out with a friendly banner while you work on the server.
 - **Custom branding** — your own logos, banners, login image, and favicon; plus a theme selector and deep CSS customization.
 

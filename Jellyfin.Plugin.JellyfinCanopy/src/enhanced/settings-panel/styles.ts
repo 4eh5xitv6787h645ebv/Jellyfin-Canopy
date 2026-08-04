@@ -28,42 +28,18 @@ export function injectGlobalStyles(): void {
                This padding is the ONLY header clearance these custom
                'page type-interior' pages get: they carry none of the per-page
                classes (.libraryPage 7em etc.) that give native pages their
-               offset under the fixed header. On the LEGACY layout .skinHeader
-               is position:fixed, so the full ~5em is real clearance and must
-               stay at every viewport or headings clip under the header. The 5em
-               is over-generous on the modern (MUI) layout, where it wasted about
-               a third of a phone screen, so the compact phone offset is scoped to
-               .jc-modern-layout (stamped on html by core/layout.ts). Before
-               the layout resolves, or on legacy, the safe 5em default holds.
-               Legacy at phone widths needs MORE than 5em: the legacy header
-               stacks a second row (the tab strip) under the title row there,
-               measuring ~110px on a 390px viewport (live-verified on
-               jellyfin-12 with layout=desktop), so phones get 7em on legacy —
-               matching the native .libraryPage clearance. */
+               offset under the fixed header. The 5em desktop clearance is
+               intentionally compacted on modern MUI phones after layout
+               readiness is stamped by core/layout.ts. */
             .jc-interior-page-top { padding-top: 5em; }
             @media (max-width: 768px) {
                 .jc-modern-layout .jc-interior-page-top { padding-top: 1.25em; }
-                .jc-legacy-layout .jc-interior-page-top { padding-top: 7em; }
             }
             /* Remove menu items render like native action-sheet items; only dim them while the removal is in flight. */
             .actionSheetMenuItem[data-id="remove-continue-watching"]:disabled,
             .actionSheetMenuItem[data-id="jc-multiselect-remove"]:disabled { opacity: 0.6; cursor: default; }
-            /* Phone layout for the settings/help panel. Keyed on the VIEWPORT
-               (@media), not the legacy .layout-mobile html class: on the Jellyfin 12
-               modern (MUI) layout the html carries layout-desktop at every viewport
-               (docs/developers.md#layout-modes-and-enforcement — "html classes cannot discriminate layouts"),
-               so a .layout-mobile-gated rule never applied on a real phone and the
-               panel kept its desktop widths (50vw settings tab, two 400px shortcut
-               columns) → horizontal clipping. The .layout-mobile selectors are kept
-               as a belt-and-braces for the legacy mobile layout. */
-            .layout-mobile #jellyfin-canopy-panel { width: 95vw; max-width: 95vw; }
-            .layout-mobile #jellyfin-canopy-panel .shortcuts-container { flex-direction: column; }
-            .layout-mobile #jellyfin-canopy-panel #settings-content { width: auto !important; }
-            .layout-mobile #jellyfin-canopy-panel .panel-main-content { padding: 0 15px; }
-            .layout-mobile #jellyfin-canopy-panel .panel-footer { flex-direction: row; gap: 16px; }
-            .layout-mobile #jellyfin-canopy-panel .close-helptext { display: none; }
-            .layout-mobile #jellyfin-canopy-panel .footer-buttons { flex-direction: column; align-items: flex-end !important; width: 100%; gap: 10px; }
-            .layout-mobile #jellyfin-canopy-panel .footer-buttons > * { justify-content: center; }
+            /* Phone layout is keyed on the viewport because the supported MUI
+               shell keeps layout-desktop on the html element at every width. */
             #jellyfin-canopy-panel .jc-pause-delay-row,
             #jellyfin-canopy-panel .jc-subtitle-color-layout,
             #jellyfin-canopy-panel .jc-subtitle-color-controls,

@@ -774,7 +774,7 @@ Carried into later milestones rather than assumed.
 5. ~~No declarative web contribution, sandboxed frame or `postMessage` broker.~~
    **Done — see [S17](#s17--browser-slots-render-idempotently-the-frame-is-genuinely-isolated-and-there-is-no-csp).**
    The "Playwright is not provisioned" reason was simply wrong; it needed `npm ci`.
-   Still unproven: rendering across the legacy, mobile and Web-TV layouts, and
+   Still unproven: rendering across modern mobile and Web-TV modes, and
    behaviour under a11y and localisation requirements.
 6. **Version negotiation.** `/Ep00Spike/Discovery` returns a static
    `{min:1,max:1}` and nothing negotiates against it, so

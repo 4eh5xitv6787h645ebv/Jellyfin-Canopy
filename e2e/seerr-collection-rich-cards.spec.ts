@@ -20,12 +20,11 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 type ViewportKind = 'mobile' | 'desktop';
 
 const LAYOUT_STAMP: Record<Layout, string> = {
     modern: 'jc-modern-layout',
-    legacy: 'jc-legacy-layout',
 };
 
 const LONG_COLLECTION_TITLE =
@@ -69,8 +68,6 @@ const CASES: ReadonlyArray<{
 }> = [
     { layout: 'modern', viewportKind: 'mobile', viewport: { width: 320, height: 568 }, seed: 'modern' },
     { layout: 'modern', viewportKind: 'desktop', viewport: { width: 1280, height: 640 }, seed: 'modern' },
-    { layout: 'legacy', viewportKind: 'mobile', viewport: { width: 320, height: 568 }, seed: 'mobile-legacy' },
-    { layout: 'legacy', viewportKind: 'desktop', viewport: { width: 1280, height: 640 }, seed: 'desktop-legacy' },
 ];
 
 interface RowVisual {
@@ -160,20 +157,15 @@ test.describe('Seerr collection request rich cards (#463)', () => {
             await loginAs(page, 'admin', consoleErrors);
 
             const wantedStamp = LAYOUT_STAMP[testCase.layout];
-            const otherStamp = LAYOUT_STAMP[testCase.layout === 'modern' ? 'legacy' : 'modern'];
             await page.waitForFunction(
                 (stamp) => document.documentElement.classList.contains(stamp),
                 wantedStamp,
                 { timeout: 20_000 }
             );
-            const stamps = await page.locator('html').evaluate(
-                (root, values) => ({
-                    wanted: root.classList.contains(values.wanted),
-                    other: root.classList.contains(values.other),
-                }),
-                { wanted: wantedStamp, other: otherStamp }
-            );
-            expect(stamps).toEqual({ wanted: true, other: false });
+            expect(await page.locator('html').evaluate(
+                (root, stamp) => root.classList.contains(stamp),
+                wantedStamp,
+            )).toBe(true);
 
             const modal = await openHermeticCollection(page);
             const rows = modal.locator('.seerr-collection-movie-row');
@@ -422,7 +414,7 @@ test.describe('Seerr collection request rich cards (#463)', () => {
 });
 
 test.describe('Seerr collection responsive device audit (#463 follow-up)', () => {
-    for (const layout of ['modern', 'legacy'] as const) {
+    for (const layout of ['modern'] as const) {
         test(`${layout} / 50-device popularity proxy / 23 portrait viewports`, async ({ page, consoleErrors }) => {
             expect(POPULAR_MOBILE_DEVICES, 'the researched device roster stays complete').toHaveLength(50);
             expect(
@@ -440,7 +432,7 @@ test.describe('Seerr collection responsive device audit (#463 follow-up)', () =>
             expect(POPULAR_VIEWPORTS, 'duplicate device dimensions are executed once').toHaveLength(23);
 
             await page.setViewportSize({ width: 390, height: 664 });
-            await seedLayout(page, layout === 'modern' ? 'modern' : 'mobile-legacy');
+            await seedLayout(page, 'modern');
             await loginAs(page, 'admin', consoleErrors);
 
             const wantedStamp = LAYOUT_STAMP[layout];

@@ -27,19 +27,17 @@ const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 const LONG_ITEM_NAME =
     'The Extraordinary Adventures of the Last Bookmark Keeper Beyond the Known Galaxy';
 
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 
 const LAYOUTS: ReadonlyArray<{
     layout: Layout;
-    seed: 'modern' | 'mobile-legacy';
+    seed: 'modern';
 }> = [
     { layout: 'modern', seed: 'modern' },
-    { layout: 'legacy', seed: 'mobile-legacy' },
 ];
 
 const LAYOUT_STAMP: Record<Layout, string> = {
     modern: 'jc-modern-layout',
-    legacy: 'jc-legacy-layout',
 };
 
 interface BookmarkItem {
@@ -208,19 +206,15 @@ async function seedLayout(page: Page, seed: string): Promise<void> {
 
 async function expectExactLayout(page: Page, layout: Layout): Promise<void> {
     const wanted = LAYOUT_STAMP[layout];
-    const other = LAYOUT_STAMP[layout === 'modern' ? 'legacy' : 'modern'];
     await page.waitForFunction(
         (stamp) => document.documentElement.classList.contains(stamp),
         wanted,
         { timeout: 20_000 }
     );
     expect(await page.locator('html').evaluate(
-        (root, stamps) => ({
-            wanted: root.classList.contains(stamps.wanted),
-            other: root.classList.contains(stamps.other),
-        }),
-        { wanted, other }
-    )).toEqual({ wanted: true, other: false });
+        (root, stamp) => root.classList.contains(stamp),
+        wanted,
+    )).toBe(true);
 }
 
 async function capture(target: Locator, fileName: string): Promise<void> {

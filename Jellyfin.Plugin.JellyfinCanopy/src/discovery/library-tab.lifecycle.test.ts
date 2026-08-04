@@ -127,7 +127,7 @@ vi.mock('./customize', () => ({
     openCustomize: controls.openCustomize,
 }));
 vi.mock('../enhanced/helpers', () => ({
-    getHeaderRightContainer: () => document.querySelector<HTMLElement>('.headerRight'),
+    getHeaderRightContainer: () => document.querySelector<HTMLElement>('.jc-test-modern-actions'),
 }));
 vi.mock('../core/ui-kit', () => ({ injectCss: vi.fn() }));
 
@@ -285,7 +285,7 @@ beforeEach(() => {
     controls.openCustomize.mockImplementation(() => vi.fn());
     controls.navigationKey = 'discovery-test-start';
     frames.clear();
-    document.body.innerHTML = '<div class="headerRight"></div>';
+    document.body.innerHTML = '<div class="jc-test-modern-actions"></div>';
     localStorage.clear();
     Object.assign(JC.pluginConfig, {
         DiscoveryEnabled: true,
@@ -425,7 +425,7 @@ describe('Discovery library exact-root and generation ownership', () => {
     });
 
     it('carries an exact pre-toggle root after a missing header becomes available', () => {
-        document.querySelector('.headerRight')?.remove();
+        document.querySelector('.jc-test-modern-actions')?.remove();
         const root = page('moviesPage');
         show(root, '/web/#/movies?topParentId=A');
         initialize();
@@ -433,7 +433,7 @@ describe('Discovery library exact-root and generation ownership', () => {
 
         controls.navigationKey = '/web/#/movies?topParentId=B';
         navigate();
-        document.body.appendChild(document.createElement('div')).className = 'headerRight';
+        document.body.appendChild(document.createElement('div')).className = 'jc-test-modern-actions';
         for (const handler of [...controls.mutationHandlers]) handler();
         flushFrames();
 

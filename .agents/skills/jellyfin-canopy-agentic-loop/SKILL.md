@@ -269,8 +269,9 @@ The engine ([`workflows/canopy-loop.js`](workflows/canopy-loop.js)) runs:
   `4eh5xitv6787h645ebv/Jellyfin-Enhanced` are strictly read-only.
 - One writer per worktree; parallel agents are read-only. Never let two agents
   edit the same files.
-- Jellyfin 12 / .NET 10 boundary; modern MUI **and** legacy web layouts both
-  stay valid when UI is touched; native markup, local assets, no jank.
+- Jellyfin 12 / .NET 10 boundary; modern React/MUI is the only supported web
+  layout, while an unsupported classic selection leaves the host usable and
+  Canopy inactive; native markup, local assets, no jank.
 - Auth/authorization, per-user isolation, escaping, cancellation, disposal,
   bounded work, and live-config generation ownership fail closed.
 - Coverage and lint caps are ratchets — never lowered or widened to go green.

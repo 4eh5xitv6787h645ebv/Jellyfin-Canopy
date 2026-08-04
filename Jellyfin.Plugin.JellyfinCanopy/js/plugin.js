@@ -1521,56 +1521,50 @@
 
     // Jellyfin 12 stores the client layout choice in the unprefixed localStorage
     // key `layout` (appSettings.js — SETTING_KEY = 'layout'). On the shipped 12.0.0
-    // build the modern React/MUI layout is the value 'experimental' and the classic
-    // legacy layout is 'desktop' (LayoutMode = {auto, desktop, experimental, mobile,
-    // tv}); an unset key means the app falls back to appHost.getDefaultLayout()
+    // build the modern React/MUI layout is the value 'experimental'; the unsupported
+    // legacy browser layouts use 'desktop' or 'mobile'. An unset key means the app
+    // falls back to appHost.getDefaultLayout()
     // (Modern on browsers). jellyfin-web reads this once at module init to choose the
     // route tree, so a change only takes effect on reload. See the layout modes
     // and enforcement section in docs/developers.md.
     var LAYOUT_STORAGE_KEY = 'layout';
     var LAYOUT_EXPERIMENTAL = 'experimental';
-    var LAYOUT_LEGACY = 'desktop';
     var LAYOUT_ENFORCED_SESSION_KEY = 'jc_layout_enforced';
 
     /**
-     * Whether a stored `layout` value results in the MODERN layout being painted.
+     * Whether a stored `layout` value selects an unsupported legacy browser layout.
      *
      * Jellyfin's own browser default is modern, so an unset or 'auto' choice already
-     * paints modern. Only the known legacy modes paint the legacy app — the shipped
-     * 12.0.0 values ('desktop', 'mobile', 'tv') plus master's renamed
-     * '*-legacy' dialect. Anything ELSE (including a garbage/unknown value) counts
-     * as modern-painting: getSavedLayout() rejects unknown values and the app falls
-     * back to its modern default, so an unknown value never paints legacy.
+     * paints modern. The shipped browser legacy modes are 'desktop' and 'mobile';
+     * newer builds use '*-legacy'. TV is deliberately separate from this web-layout
+     * support boundary and is never classified as legacy here.
      *
      * Detection tolerates BOTH Jellyfin-12 layout-value dialects (see the layout
      * modes and enforcement section in docs/developers.md). The VALUES WRITTEN
      * by enforcement below target the shipped 12.0.0 build
-     * ('experimental'/'desktop'); on a build using the master dialect an unknown
-     * written value is simply rejected by getSavedLayout() and the app keeps its
-     * modern default — so ForceExperimental still lands on modern there, while
-     * ForceLegacy silently degrades to modern (no diagnostic).
+     * ('experimental'); on a build using the renamed dialect an unknown written
+     * value is rejected by getSavedLayout() and the app keeps its modern default.
      * @param {string|null|undefined} stored
      * @returns {boolean}
      */
-    function layoutRendersModern(stored) {
-        if (!stored) return true;
-        return stored !== LAYOUT_LEGACY
-            && stored !== 'mobile'
-            && stored !== 'tv'
-            && stored !== 'desktop-legacy'
-            && stored !== 'mobile-legacy';
+    function layoutIsLegacy(stored) {
+        return stored === 'desktop'
+            || stored === 'mobile'
+            || stored === 'desktop-legacy'
+            || stored === 'mobile-legacy';
     }
 
     /**
-     * Pure decision for the LayoutEnforcement admin setting.
+     * Pure decision for the remaining Force-modern admin setting.
      *
      * Returns what (if anything) the stored `layout` value should become and whether
      * a one-shot reload is needed to make it take effect this load. A reload is only
-     * ever needed when the device is CURRENTLY painting the other layout — a device
-     * that already paints the target (including a fresh device on Jellyfin's modern
-     * default) is never reloaded; at most its stored value is made explicit.
+     * ever needed when the device is CURRENTLY painting a known unsupported legacy
+     * browser mode. A device already painting modern (including a fresh device on
+     * Jellyfin's modern default) is never reloaded; at most its stored value is made
+     * explicit.
      *
-     * TV exception: a stored 'tv' layout is NEVER steered by either Force mode. A
+     * TV exception: a stored 'tv' layout is NEVER steered. A
      * device deliberately in 10-foot TV mode must not be pulled onto the mouse/touch
      * UI — jellyfin-web itself scopes the modern default to non-TV browsers.
      *
@@ -1582,42 +1576,31 @@
      * @returns {{ changed: boolean, value?: string, reload?: boolean }}
      */
     function resolveLayoutEnforcement(mode, stored) {
-        // TV mode is exempt from Force steering in both directions.
-        if (stored === 'tv' && (mode === 'ForceExperimental' || mode === 'ForceLegacy')) {
+        if (mode !== 'ForceExperimental' || stored === 'tv') {
             return { changed: false };
         }
 
-        switch (mode) {
-            case 'ForceExperimental':
-                // A device on a (non-TV) legacy mode must reload into the modern app.
-                // A device already painting modern (unset/'auto'/'experimental'/
-                // unknown) is left as-is, but we persist 'experimental' so the choice
-                // is explicit — no reload.
-                if (!layoutRendersModern(stored)) {
-                    return { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
-                }
-                return stored === LAYOUT_EXPERIMENTAL
-                    ? { changed: false }
-                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
-            case 'ForceLegacy':
-                // Only flip a device that would paint the modern layout — onto the
-                // DESKTOP legacy layout specifically (not form-factor aware). A device
-                // already on a legacy mode keeps its chosen legacy sub-layout.
-                return layoutRendersModern(stored)
-                    ? { changed: true, value: LAYOUT_LEGACY, reload: true }
-                    : { changed: false };
-            case 'DefaultExperimental':
-                // Apply ONLY when the device has never made an explicit choice — any
-                // stored value (even an unknown one) counts as an explicit choice and
-                // is left alone. An unset device already paints the modern layout by
-                // default, so this just persists that choice — no reload needed.
-                return stored
-                    ? { changed: false }
-                    : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
-            default:
-                // 'None' or any unknown value: never touch the user's layout.
-                return { changed: false };
+        if (layoutIsLegacy(stored)) {
+            return { changed: true, value: LAYOUT_EXPERIMENTAL, reload: true };
         }
+        return stored === LAYOUT_EXPERIMENTAL
+            ? { changed: false }
+            : { changed: true, value: LAYOUT_EXPERIMENTAL, reload: false };
+    }
+
+    /**
+     * Fail-open host boundary for browsers that deliberately remain on Jellyfin's
+     * unsupported legacy layout. Storage is authoritative because Jellyfin chooses
+     * its route tree from this value before Canopy loads. If storage cannot be read,
+     * a visibly rendered classic header is the conservative fallback signal.
+     * @returns {boolean}
+     */
+    function isUnsupportedLegacyLayout() {
+        const stored = JC.storage.local.read('layout-support', LAYOUT_STORAGE_KEY, 'host-layout');
+        if (stored.state === 'Valid') return layoutIsLegacy(stored.value);
+        if (stored.state === 'Missing') return false;
+        const classicHeader = document.querySelector('.headerRight');
+        return !!classicHeader && classicHeader.getClientRects().length > 0;
     }
 
     /**
@@ -1644,7 +1627,7 @@
     function applyLayoutEnforcement(config) {
         try {
             const mode = config && config.LayoutEnforcement;
-            if (!mode || mode === 'None') return false;
+            if (mode !== 'ForceExperimental') return false;
 
             const storedResult = JC.storage.local.read('layout-enforcement', LAYOUT_STORAGE_KEY, 'host-layout');
             if (storedResult.state !== 'Valid' && storedResult.state !== 'Missing') return false;
@@ -1871,6 +1854,7 @@
 
     initializationRegistry = createInitializationRegistry(identityChangedError);
     let initializedEpoch = -1;
+    let unsupportedLayoutEpoch = -1;
     let cacheUnloadInstalled = false;
 
     function identityChangedError() {
@@ -2152,6 +2136,15 @@
 
     function startInitialization(context, client) {
         if (!context || !identity.isCurrent(context)) return Promise.resolve();
+        if (isUnsupportedLegacyLayout()) {
+            if (unsupportedLayoutEpoch !== context.epoch) {
+                unsupportedLayoutEpoch = context.epoch;
+                console.warn('🪼 Jellyfin Canopy: client features are inactive because this browser is using Jellyfin\'s unsupported legacy layout. Select the modern layout to enable Canopy.');
+            }
+            JC.initialized = false;
+            JC.hideSplashScreen?.();
+            return Promise.resolve();
+        }
         if (initializedEpoch === context.epoch && JC.initialized) return Promise.resolve();
         return initializationRegistry.start(
             context.epoch,

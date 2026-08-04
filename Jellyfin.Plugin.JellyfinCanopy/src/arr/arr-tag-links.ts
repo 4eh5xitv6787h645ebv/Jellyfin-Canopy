@@ -270,7 +270,7 @@ async function initializeArrTagLinks(): Promise<void> {
     // Also check immediately on navigation — the shared deduplicated
     // pipeline covers hashchange, popstate and pushState transitions the
     // old raw hashchange listener missed — and on viewshow, which covers
-    // legacy-layout cached-page re-shows. Lifecycle-tracked for teardown.
+    // cached-page re-shows. Lifecycle-tracked for teardown.
     arrTagLifecycle.track(onNavigate(() => {
         if (arrTagTimer) clearTimeout(arrTagTimer);
         arrTagTimer = setTimeout(() => {

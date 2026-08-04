@@ -11,8 +11,8 @@ interface Target {
     canonId: string;
 }
 
-async function seedLayout(page: Page, layout: 'experimental' | 'desktop'): Promise<void> {
-    await page.addInitScript((value) => localStorage.setItem('layout', value), layout);
+async function seedModernLayout(page: Page): Promise<void> {
+    await page.addInitScript(() => localStorage.setItem('layout', 'experimental'));
 }
 
 async function findTarget(page: Page): Promise<Target | null> {
@@ -117,7 +117,7 @@ test.describe.serial('anime filler warnings', () => {
     });
 
     test('modern layout marks filler, omits canon, and clears the detail badge across navigation', async ({ page, consoleErrors }) => {
-        await seedLayout(page, 'experimental');
+        await seedModernLayout(page);
         await loginAs(page, 'admin', consoleErrors);
         const target = await findTarget(page);
         expect(target, 'seed season with two episodes').not.toBeNull();
@@ -141,25 +141,9 @@ test.describe.serial('anime filler warnings', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('legacy layout marks only the filler episode card', async ({ page, consoleErrors }) => {
-        await seedLayout(page, 'desktop');
-        await loginAs(page, 'admin', consoleErrors);
-        const target = await findTarget(page);
-        expect(target, 'seed season with two episodes').not.toBeNull();
-        const requests = { value: 0 };
-        await routeClassifications(page, target!, requests);
-
-        await showDetails(page, target!.seasonId);
-        await expect(page.locator(`${MARKER}[data-item-id="${target!.fillerId}"]`)).toHaveText(/filler/i);
-        await expect(page.locator(`${MARKER}[data-item-id="${target!.canonId}"]`)).toHaveCount(0);
-        expect(requests.value).toBeGreaterThanOrEqual(1);
-        expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('desktop');
-        assertNoRuntimeErrors(consoleErrors);
-    });
-
     test('mobile warning remains accessible and inside the viewport', async ({ page, consoleErrors }) => {
         await page.setViewportSize({ width: 390, height: 844 });
-        await seedLayout(page, 'experimental');
+        await seedModernLayout(page);
         await loginAs(page, 'admin', consoleErrors);
         const target = await findTarget(page);
         expect(target, 'seed season with two episodes').not.toBeNull();
@@ -185,7 +169,7 @@ test.describe.serial('anime filler warnings', () => {
             requests++;
             await route.fulfill({ status: 500, body: 'disabled feature called unexpectedly' });
         });
-        await seedLayout(page, 'experimental');
+        await seedModernLayout(page);
         await loginAs(page, 'admin', consoleErrors);
         const target = await findTarget(page);
         expect(target, 'seed season with two episodes').not.toBeNull();

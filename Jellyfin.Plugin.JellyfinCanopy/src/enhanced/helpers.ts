@@ -10,7 +10,7 @@
 
 import { JC } from '../globals';
 import { onNavigate } from '../core/navigation';
-import { stampResolvedLayout } from '../core/layout';
+import { stampResolvedModernLayout } from '../core/layout';
 import type { IdentityContext, NavigateCallback, ViewPageCallback, ViewPageOptions } from '../types/jc';
 
 // Tracks whether the shared header-tray stylesheet (MUI button sizing + the
@@ -19,10 +19,9 @@ import type { IdentityContext, NavigateCallback, ViewPageCallback, ViewPageOptio
 let muiHeaderButtonCSSInjected = false;
 
 // PERF(R4): per-navigation cache for getHeaderRightContainer. Resolving the
-// container reads legacy.offsetParent — a forced layout read — and callers
-// (keyed injectors, observer ticks) may probe many times per second while
-// content streams in. Cache the successful resolution and invalidate on
-// navigation so layout is read at most once per nav, not per tick.
+// container walks the MUI toolbar and callers (keyed injectors, observer ticks)
+// may probe many times per second while content streams in. Cache the successful
+// resolution and invalidate on navigation so DOM work happens once per nav.
 let cachedHeaderRightContainer: HTMLElement | null = null;
 onNavigate(() => { cachedHeaderRightContainer = null; });
 
@@ -275,14 +274,10 @@ export function isElementVisible(element: Element | null | undefined): boolean {
 /**
  * Finds the container plugin buttons should be injected into.
  *
- * Jellyfin 12's "experimental" layout (now the default) replaces the legacy
- * AngularJS header with a React/MUI AppBar+Toolbar. The legacy `.headerRight`
- * element is still present in the DOM for backwards compatibility, but it sits
- * inside a `display:none` wrapper, so injecting into it silently produces
- * invisible buttons. When that's detected, this reuses the toolbar's own
+ * Jellyfin 12's supported modern layout uses a React/MUI AppBar+Toolbar. This
+ * resolves the toolbar's own
  * SyncPlay/RemotePlay/Search button tray (a `flexGrow:1; justifyContent:flex-end`
- * Box) as the container — it's the functional equivalent of `.headerRight`, and
- * injecting into it (rather than next to it) keeps plugin buttons right-aligned
+ * Box) as the container. Injecting into it keeps plugin buttons right-aligned
  * with the native ones instead of stranding them as a separate flex item further
  * left in the toolbar.
  * @returns The container, or null if no header is ready yet (retryable).
@@ -311,14 +306,12 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
 }
 
 /**
- * Install the one-time header-tray stylesheet. Runs before any resolver early
- * return so a legacy-only session receives it too. Two concerns share the one
+ * Install the one-time modern header-tray stylesheet. Two concerns share the one
  * `jc-mui-header-button-fix` sheet and the one `muiHeaderButtonCSSInjected`
  * boot-local flag:
  *
- *  1. MUI button sizing — the legacy .headerButton/.paper-icon-button-light
- *     classes size themselves with `em` units relative to the *inherited*
- *     font-size, tuned for the old .skinHeader context. Inside the MUI toolbar
+ *  1. MUI button sizing — existing Canopy buttons still carry the stable
+ *     .headerButton/.paper-icon-button-light compatibility classes. Inside MUI
  *     the ambient font-size differs, so the icons come out oversized/misaligned
  *     next to native MUI IconButtons. Pin them to MUI's ~48px button / 24px icon
  *     convention. `!important` beats callers (e.g. active-streams) that set a
@@ -328,9 +321,8 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     are injected into a native container that inherits Jellyfin's own wrap
  *     behaviour, so many buttons wrap to 2–3 rows (worst on mobile + modern MUI).
  *     Force the *resolved tray* to a single horizontally-scrollable row with
- *     non-shrinking children, scoped per layout via the jc-modern-layout /
- *     jc-legacy-layout <html> stamps so the modern-only rules never touch the
- *     legacy header and vice-versa. On modern the tray consumes only the space
+ *     non-shrinking children, scoped through the jc-modern-layout <html> stamp.
+ *     The tray consumes only the space
  *     left of the separate profile Box (flex:1 1 0) and right-aligns its buttons
  *     against the avatar with an auto inline-start margin on the visually-leading
  *     child (the native-tabs order:-1 group when present, else the DOM first child)
@@ -339,19 +331,7 @@ function markHeaderTray<T extends HTMLElement>(el: T): T {
  *     justify-content:flex-start override (the native MUI action Box is flex-end,
  *     which would otherwise strand the leading buttons in unreachable negative
  *     overflow) so every leading button packs from the scroll origin and stays
- *     reachable. On legacy the resolved
- *     container is the native `.headerRight` (content-sized, justify-content:
- *     flex-end); it is overridden to flex-start so overflowing leading buttons
- *     pack from the scroll origin and stay reachable (in the fit case there is no
- *     free space, so flex-start is identical to native flex-end — no R1 jank).
- *     The native profile button (.headerUserButton) lives INSIDE that tray (unlike
- *     modern, where the avatar is a separate sibling Box outside it), so it is
- *     sticky-pinned to the scrollport's inline-end edge (position:sticky) — it stays
- *     visible and stationary at the right while the icon buttons scroll under it,
- *     the same pinned-avatar contract modern gets for free; a button transiently
- *     under it is reachable by scrolling it out. Neither alignment path depends on
- *     the safe/unsafe overflow-alignment keyword, so the single-row tray stays fully
- *     scrollable on every engine. The horizontal
+ *     reachable. The horizontal
  *     scrollbar is suppressed (scrollbar-width:none / ::-webkit-scrollbar) so an
  *     overflowing tray never grows a gutter — keeping the content box a stable
  *     button height (no R1 layout shift, no promoted-overflow-y clipping of the
@@ -376,8 +356,7 @@ function ensureHeaderTrayCSS(): void {
         .MuiToolbar-root .headerButton.paper-icon-button-light > .material-icons {
             font-size: 24px !important;
         }
-        .jc-modern-layout .jc-header-tray,
-        .jc-legacy-layout .jc-header-tray {
+        .jc-modern-layout .jc-header-tray {
             display: flex !important;
             flex-wrap: nowrap !important;
             align-items: center !important;
@@ -402,56 +381,13 @@ function ensureHeaderTrayCSS(): void {
             scrollbar-width: none !important;
         }
         /* WebKit/Blink counterpart of scrollbar-width:none (see above). */
-        .jc-modern-layout .jc-header-tray::-webkit-scrollbar,
-        .jc-legacy-layout .jc-header-tray::-webkit-scrollbar {
+        .jc-modern-layout .jc-header-tray::-webkit-scrollbar {
             display: none !important;
         }
-        /* Non-shrinking children on BOTH layouts keep every button at its intrinsic
-           width so the row cannot collapse or wrap — it scrolls instead. On legacy
-           this rule also covers the native profile button, which keeps its intrinsic
-           width; the sticky-pin rule below then holds it at the scrollport's right
-           edge while the icon buttons scroll under it. */
-        .jc-modern-layout .jc-header-tray > *,
-        .jc-legacy-layout .jc-header-tray > * {
+        /* Non-shrinking children keep every button at its intrinsic width so the
+           modern tray cannot collapse or wrap — it scrolls instead. */
+        .jc-modern-layout .jc-header-tray > * {
             flex: 0 0 auto !important;
-        }
-        /* Legacy only: the resolved tray IS the native .headerRight, which — unlike
-           modern, where the avatar is a separate sibling Box OUTSIDE the tray —
-           CONTAINS the native profile button (.headerUserButton) as a trailing child
-           of the single scrollport. Left as an ordinary in-flow child it starts
-           off-screen once the row overflows (flex-start packs the leading buttons at
-           the scroll origin, so scrollLeft:0 shows them and the trailing avatar is
-           reachable only after scrolling to the end) — violating the binding
-           pinned-avatar criterion. Sticky-pin it to the scrollport's inline-end edge
-           so it stays visible at rest and stationary while the icon buttons scroll,
-           the same pinned-avatar contract modern gets for free. In the FIT case
-           .headerRight is content-sized (.headerLeft owns the flex-grow), so there is
-           no overflow: sticky is inert and the avatar sits at its natural right-edge
-           position, pixel-identical to native (no reposition on sheet load, no R1
-           shift). z-index keeps the avatar above the buttons that scroll beneath it;
-           a button transiently under the avatar stays reachable by scrolling it out
-           (no button is permanently occluded). */
-        .jc-legacy-layout .jc-header-tray > .headerUserButton {
-            position: sticky !important;
-            inset-inline-end: 0 !important;
-            z-index: 1 !important;
-        }
-        /* Legacy only: the resolved tray IS the native .headerRight (content-sized,
-           justify-content:flex-end). With nowrap, native flex-end packs the buttons
-           rightward and pushes the leading ones into unreachable negative space
-           (left of the scroll origin, which scrollWidth does not count in LTR) once
-           the row overflows. Override to flex-start so the leading buttons pack from
-           the scroll origin and stay reachable. In the fit case .headerRight is
-           content-sized (no flex-grow — .headerLeft owns the grow), so there is no
-           free space to distribute and flex-start is pixel-identical to native
-           flex-end: the sheet loading after the native header paints repositions
-           nothing (no jank / no R1 layout shift). Universal — no safe/unsafe
-           overflow-alignment keyword, so leading buttons are reachable on every
-           engine. The native profile button (.headerUserButton) is the trailing
-           child; the sticky-pin rule above holds it at the scrollport's right edge so
-           it stays visible while these leading buttons scroll from the origin. */
-        .jc-legacy-layout .jc-header-tray {
-            justify-content: flex-start !important;
         }
         /* Modern only: the tray is a flex sibling of the profile Box inside the MUI
            Toolbar, which is itself flex-wrap:wrap. flex-shrink alone is NOT enough:
@@ -475,8 +411,8 @@ function ensureHeaderTrayCSS(): void {
            negative overflow (left of the scroll origin, which scrollWidth does not
            count in LTR — so the tray reports scrollWidth==clientWidth and is not
            actually scrollable). Override to flex-start so overflowing leading buttons
-           pack from the scroll origin and stay reachable — mirroring the legacy
-           override. In the fit case the leading child's auto inline-start margin
+           pack from the scroll origin and stay reachable. In the fit case the
+           leading child's auto inline-start margin
            still absorbs all free space, so the buttons stay right-packed against the
            avatar (flex-start is inert while an auto margin owns the free space): no
            gap, no reposition on sheet load, R1-safe. */
@@ -533,19 +469,8 @@ export function resetHeaderTrayCSSForTests(): void {
 /** Uncached resolution behind {@link getHeaderRightContainer}. */
 function resolveHeaderRightContainer(): HTMLElement | null {
     // Install the shared single-row/scroll-containment + MUI-sizing stylesheet
-    // before any early return so a legacy-only session receives the fix too. The
-    // tray rules are layout-scoped, so the modern MUI selectors stay inert on
-    // legacy and the legacy rules stay inert on modern.
+    // before any early return so the first resolved tray already satisfies it.
     ensureHeaderTrayCSS();
-
-    const legacy = document.querySelector<HTMLElement>('.headerRight');
-    if (legacy && legacy.offsetParent !== null) {
-        // Resolving the visible legacy .headerRight IS the legacy-layout signal;
-        // stamp it now (the html stamp can otherwise be missed on a static legacy
-        // home) so the layout-scoped tray CSS applies. No extra layout read.
-        stampResolvedLayout('legacy');
-        return markHeaderTray(legacy);
-    }
 
     const userMenuButton = document.querySelector<HTMLElement>('[aria-controls="app-user-menu"]');
     const toolbar = userMenuButton?.closest('.MuiToolbar-root') || document.querySelector('.MuiAppBar-root .MuiToolbar-root');
@@ -553,7 +478,7 @@ function resolveHeaderRightContainer(): HTMLElement | null {
 
     // Reaching the MUI toolbar IS the modern-layout signal; stamp it so the
     // modern-scoped tray rules (flex:1 1 0 + leading auto-margin) apply immediately.
-    stampResolvedLayout('modern');
+    stampResolvedModernLayout();
 
     // AppToolbar (WEB src/components/toolbar/AppToolbar.tsx) ALWAYS renders the
     // action-tray Box (`flexGrow:1; justifyContent:flex-end`, holding the native
@@ -568,12 +493,9 @@ function resolveHeaderRightContainer(): HTMLElement | null {
     // play/cast buttons, with the scroll region ending left of the pinned avatar.
     //
     // A synthetic container is deliberately NEVER created: an appended empty
-    // `.headerRight` would be a SECOND `flexGrow` sibling that splits the toolbar
-    // row and shoves the native buttons (R1 jank), and — because it stays connected
-    // once the real tray mounts — the per-navigation cache would pin Canopy's tray
-    // to that fake Box for the whole page, stranding its buttons outside the real
-    // action tray and the pinned-avatar boundary. Returning null until the real Box
-    // exists lets callers' existing wait-and-retry resolve it instead (no race).
+    // A synthetic container would become a second flexGrow sibling that splits the
+    // toolbar row and shoves the native buttons (R1 jank). Returning null until the
+    // real Box exists lets callers' existing wait-and-retry resolve it instead.
     let actionBox: HTMLElement | null;
     if (userMenuButton) {
         let userMenuBox: HTMLElement | null = userMenuButton;
@@ -590,20 +512,11 @@ function resolveHeaderRightContainer(): HTMLElement | null {
 /**
  * Finds the container plugin sidebar nav links should be injected into.
  *
- * The legacy `.mainDrawer-scrollContainer` is hidden the same way `.headerRight`
- * is under Jellyfin 12's experimental layout (both live inside the
- * `display:none`-wrapped legacy AppHeader). Unlike the header, there's no
- * always-present replacement: the new drawer (`AppDrawer`/`MainDrawerContent`,
- * a MUI `SwipeableDrawer`) is itself only ever rendered at all on narrow/mobile
- * viewports - desktop has no drawer in the new layout at all, nav lives inline
- * in the toolbar instead (see getHeaderRightContainer). So on desktop there is
- * no sidebar equivalent to fall back to; this returns null there, same as if
- * nothing existed yet, and callers' existing "wait and retry" logic covers it.
+ * The modern drawer (`AppDrawer`/`MainDrawerContent`, a MUI `SwipeableDrawer`)
+ * is only rendered on narrow/mobile viewports. Modern desktop has no drawer;
+ * navigation lives inline in the toolbar, so null is expected there.
  */
 export function getSidebarContainer(): HTMLElement | null {
-    const legacy = document.querySelector<HTMLElement>('.mainDrawer-scrollContainer');
-    if (legacy && legacy.offsetParent !== null) return legacy;
-
     // MUI's global stable class for the drawer's sliding panel. `keepMounted`
     // on the SwipeableDrawer means this exists in the DOM even while closed.
     const muiDrawerPanel = document.querySelector<HTMLElement>('.MuiDrawer-paper');

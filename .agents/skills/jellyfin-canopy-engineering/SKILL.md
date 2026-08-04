@@ -96,7 +96,9 @@ Implement behavior at its owning layer and update every affected consumer.
 Preserve these repository contracts:
 
 - Jellyfin 12 and .NET 10 are the supported server/runtime boundary.
-- Modern MUI and legacy web layouts must both remain valid when UI is touched.
+- The modern React/MUI web layout is Canopy's only supported client surface.
+  An unsupported classic-layout selection must leave Jellyfin usable without
+  initializing Canopy features; TV mode is a separate exempt host mode.
 - Authentication, authorization, per-user isolation, escaping, cancellation,
   disposal, bounded memory/work, and live-configuration generation ownership
   must fail closed.
@@ -140,8 +142,8 @@ git diff --check
 Select proportionately:
 
 - Client behavior: focused Vitest while iterating, then `typecheck:src`, legacy
-  `typecheck`, full client coverage, bundle, syntax, and relevant
-  layout/navigation E2E.
+  `typecheck`, full client coverage, bundle, syntax, and relevant modern
+  layout/navigation E2E plus the unsupported-layout boundary check.
 - Server behavior: focused xUnit while iterating, then release build and full
   server coverage.
 - Cross-surface or generated resources: run both client and server owners plus

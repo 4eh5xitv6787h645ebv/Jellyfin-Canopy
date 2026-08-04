@@ -216,15 +216,11 @@ const spec: TagSpec = {
                 flex-shrink: 0;
                 object-fit: cover;
             }
-            .layout-mobile .${flagClass} {
-                width: clamp(20px, 5vw, 26px);
-            }
-            .layout-mobile .${containerClass} { gap: 2px; }
             @media (max-width: 768px) {
                 .${flagClass} {
                     width: clamp(20px, 5vw, 26px);
-                    gap: 2px;
                 }
+                .${containerClass} { gap: 2px; }
             }
             @media (max-width: 480px) {
                 .${flagClass} {

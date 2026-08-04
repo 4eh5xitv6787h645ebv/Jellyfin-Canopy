@@ -3,7 +3,7 @@
 //   - persistent-rail labels and search badges must remain readable;
 //   - the mobile Sections toggle must never intersect the Save Settings dock.
 //
-// Every case seeds and proves one real Jellyfin layout. The public-config route
+// Every case seeds and proves the supported modern Jellyfin layout. The public-config route
 // is intercepted only to neutralize server-wide layout enforcement, keeping
 // the selected layout deterministic without mutating plugin configuration.
 import { mkdirSync } from 'node:fs';
@@ -18,7 +18,7 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
 const DASHBOARD_CHROME =
@@ -29,19 +29,11 @@ const LAYOUTS: ReadonlyArray<{
     layout: Layout;
     seed: string;
     stamp: string;
-    otherStamp: string;
 }> = [
     {
         layout: 'modern',
         seed: 'modern',
         stamp: 'jc-modern-layout',
-        otherStamp: 'jc-legacy-layout',
-    },
-    {
-        layout: 'legacy',
-        seed: 'mobile-legacy',
-        stamp: 'jc-legacy-layout',
-        otherStamp: 'jc-modern-layout',
     },
 ];
 
@@ -92,24 +84,16 @@ async function interceptLayoutEnforcement(page: Page): Promise<void> {
 async function requireExactLayout(
     page: Page,
     wanted: string,
-    unwanted: string,
 ): Promise<void> {
     await page.waitForFunction(
         (stamp) => document.documentElement.classList.contains(stamp),
         wanted,
         { timeout: 30_000 },
     );
-    const stamps = await page.locator('html').evaluate(
-        (root, values) => ({
-            wanted: root.classList.contains(values.wanted),
-            unwanted: root.classList.contains(values.unwanted),
-        }),
-        { wanted, unwanted },
-    );
-    expect(stamps, `exact layout stamp ${wanted}`).toEqual({
-        wanted: true,
-        unwanted: false,
-    });
+    expect(await page.locator('html').evaluate(
+        (root, stamp) => root.classList.contains(stamp),
+        wanted,
+    ), `layout stamp ${wanted}`).toBe(true);
 }
 
 async function settleLayout(page: Page): Promise<void> {
@@ -368,7 +352,7 @@ test.describe('admin responsive layout (#466 findings 8-9)', () => {
                 layoutCase.seed,
             );
             await loginAs(page, 'admin', consoleErrors);
-            await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+            await requireExactLayout(page, layoutCase.stamp);
             await openConfigPage(page);
 
             for (const viewport of SEARCH_VIEWPORTS) {
@@ -422,7 +406,7 @@ test.describe('admin responsive layout (#466 findings 8-9)', () => {
 
                 await setSearch(page, '');
                 await expect(page.locator('#overview')).toBeVisible();
-                await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+                await requireExactLayout(page, layoutCase.stamp);
             }
 
             assertNoConfigPageRuntimeErrors(consoleErrors);
@@ -439,7 +423,7 @@ test.describe('admin responsive layout (#466 findings 8-9)', () => {
                 layoutCase.seed,
             );
             await loginAs(page, 'admin', consoleErrors);
-            await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+            await requireExactLayout(page, layoutCase.stamp);
             await openConfigPage(page);
 
             for (const viewport of RAIL_VIEWPORTS) {
@@ -524,7 +508,7 @@ test.describe('admin responsive layout (#466 findings 8-9)', () => {
                 }
 
                 await setSearch(page, '');
-                await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+                await requireExactLayout(page, layoutCase.stamp);
             }
 
             assertNoConfigPageRuntimeErrors(consoleErrors);

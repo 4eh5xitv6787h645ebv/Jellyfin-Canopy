@@ -2,7 +2,7 @@
 //
 // On the Jellyfin 12 modern layout the html carries `layout-desktop` at every
 // viewport (docs/developers.md#layout-modes-and-enforcement), so the plugin's
-// old `.layout-mobile`-gated responsive CSS never fired on a real phone. These checks run at a phone
+// old host-class-gated responsive CSS never fired on a real phone. These checks run at a phone
 // viewport and assert the surfaces fit:
 //   - the settings/help panel and its shortcuts columns fit the panel (no clip),
 //   - the standalone pages (Hidden Content, Calendar, Requests) don't scroll
@@ -16,7 +16,7 @@ import { api, authenticate, PLUGIN_ID, type Session } from './fixtures/api';
 
 // Phone viewport. isMobile/hasTouch make the context behave like a touch device;
 // the layout still resolves to the modern (layout-desktop) layout, which is
-// exactly the case the old .layout-mobile rules missed.
+// exactly the case the old host-class rules missed.
 test.use({
     viewport: { width: 390, height: 844 },
     isMobile: true,

@@ -1094,9 +1094,6 @@ installNotificationRuntime();
 // with ZERO hardcoded colors. Where we add our own chrome we reference the same
 // `--jf-palette-*` tokens (with non-color fallbacks) rather than literal colors.
 //
-// On the LEGACY layout the MUI stylesheet is present too; pass legacy classes
-// via `className` when a button must live in both headers (dual-layout support).
-//
 // Usage:
 //   const btn = JC.core.ui.muiIconButton({ icon: 'casino', title: 'Random',
 //                                           onClick: () => run() });

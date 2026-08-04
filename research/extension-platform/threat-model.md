@@ -265,7 +265,7 @@ the page at all in v1, which is the whole reason
 [milestone 82 is superseded](milestone-82-disposition.md).
 *Residual.* **Medium — mechanism measured, breadth unverified.** S17 proves
 modern-layout slot rendering, mounting/teardown and opaque-frame isolation. It
-does not prove legacy/mobile/Web-TV layouts, accessibility, localisation or
+does not prove modern mobile/Web-TV modes, accessibility, localisation or
 production CSP behavior. EP-07 remains deferred, and the sandboxed frame is not
 part of the active tranche.
 

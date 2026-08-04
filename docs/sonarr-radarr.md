@@ -278,7 +278,7 @@ The Calendar page collects upcoming releases from all your enabled Sonarr and Ra
 2. Check **"Enable Calendar Page"**.
 3. Configure the settings below and click **Save**.
 
-**Where it appears.** Calendar is a real page with its own route, so there's no delivery method to choose — Jellyfin Canopy adds its entry points automatically on every layout. The legacy layout gets a **Calendar** link in the **Jellyfin Canopy** section of the sidebar drawer (and in the mobile drawer); the modern layout gets an icon button in the header tray and a link in the user-preferences menu. Because it's a genuine router destination, you can open it directly at `/web/index.html#/calendar`, and browser back/forward, page refresh, and deep links all work.
+**Where it appears.** Calendar is a real page with its own route, so there's no delivery method to choose. On the supported modern layout, Jellyfin Canopy adds an icon button to the header tray, a link to the mobile drawer, and a link to the user-preferences menu. Because it's a genuine router destination, you can open it directly at `/web/index.html#/calendar`, and browser back/forward, page refresh, and deep links all work.
 
 The order of the page entries in every menu follows the admin **Pages order** setting on the **Pages** tab. Reorder the five pages there — the default order is **Calendar, Requests, Bookmarks, Hidden Content, Maintainerr** — using the up/down controls in its **Page order** area. Maintainerr remains admin-only regardless of its position.
 
@@ -372,7 +372,7 @@ An already-open browser also enforces independent absolute deadlines even if pol
 2. Check **"Enable Requests Page"** (under the "Requests Page" section).
 3. Click **Save**.
 
-**Where it appears.** Like the Calendar page, Requests is a routed destination with automatic entry points — there's no delivery method to configure. Its link and header-tray button appear on every layout (in the **Jellyfin Canopy** drawer section, the modern-layout header tray, and the user-preferences menu), positioned by the admin **Pages order** setting. Open it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work.
+**Where it appears.** Like the Calendar page, Requests is a routed destination with automatic modern-layout entry points — the header tray, mobile drawer, and user-preferences menu — positioned by the admin **Pages order** setting. Open it directly at `/web/index.html#/downloads`; browser back/forward, refresh, and deep links all work.
 
 !!! note "One page, two sources"
 

@@ -1,7 +1,5 @@
-// Unit tests for src/enhanced/helpers.ts — the per-navigation cache in
-// getHeaderRightContainer (PERF(R4) fix: offsetParent is a forced layout read and
-// used to be re-read on every observer tick; it must now be read at most once
-// per navigation).
+// Unit tests for src/enhanced/helpers.ts — including the per-navigation modern
+// toolbar resolver cache required by PERF(R4).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 // Importing ui-kit populates JC.core.ui (real injectCss → appends a <style> to
@@ -17,17 +15,27 @@ import {
 import { insertHeaderTrayButton, HeaderTrayOrder } from './header-tray';
 import { resetLayoutCacheForTests } from '../core/layout';
 
-/** Builds a `.headerRight` whose offsetParent getter counts layout reads. */
-function buildLegacyHeader(reads: { count: number }): HTMLElement {
-    const header = document.createElement('div');
-    header.className = 'headerRight';
-    Object.defineProperty(header, 'offsetParent', {
-        get: () => {
-            reads.count++;
-            return document.body; // visible
-        }
-    });
-    return header;
+/** A modern MUI toolbar: [action tray][profile Box(user-menu button)]. */
+function buildModernHeader(): { toolbar: HTMLElement; tray: HTMLElement; profileBox: HTMLElement } {
+    const appbar = document.createElement('div');
+    appbar.className = 'MuiAppBar-root';
+    const toolbar = document.createElement('div');
+    toolbar.className = 'MuiToolbar-root';
+    appbar.appendChild(toolbar);
+
+    const tray = document.createElement('div');
+    tray.className = 'jc-test-action-tray';
+    toolbar.appendChild(tray);
+
+    const profileBox = document.createElement('div');
+    profileBox.className = 'jc-test-profile-box';
+    const userMenuButton = document.createElement('button');
+    userMenuButton.setAttribute('aria-controls', 'app-user-menu');
+    profileBox.appendChild(userMenuButton);
+    toolbar.appendChild(profileBox);
+
+    document.body.appendChild(appbar);
+    return { toolbar, tray, profileBox };
 }
 
 describe('getHeaderRightContainer per-navigation cache', () => {
@@ -35,53 +43,41 @@ describe('getHeaderRightContainer per-navigation cache', () => {
         document.body.innerHTML = '';
     });
 
-    it('reads offsetParent at most once per navigation, not per call', () => {
-        const reads = { count: 0 };
-        const header = buildLegacyHeader(reads);
-        document.body.appendChild(header);
+    it('keeps one connected resolution until navigation invalidates it', () => {
+        const { toolbar, tray, profileBox } = buildModernHeader();
+        expect(getHeaderRightContainer()).toBe(tray);
 
-        expect(getHeaderRightContainer()).toBe(header);
-        expect(getHeaderRightContainer()).toBe(header);
-        expect(getHeaderRightContainer()).toBe(header);
-        expect(reads.count).toBe(1);
+        const replacement = document.createElement('div');
+        toolbar.insertBefore(replacement, profileBox);
+        expect(getHeaderRightContainer()).toBe(tray);
 
-        // Navigation invalidates the cache → exactly one more layout read.
         history.pushState({}, '', '/test-header-cache-nav');
-        expect(getHeaderRightContainer()).toBe(header);
-        expect(getHeaderRightContainer()).toBe(header);
-        expect(reads.count).toBe(2);
+        expect(getHeaderRightContainer()).toBe(replacement);
+        expect(getHeaderRightContainer()).toBe(replacement);
     });
 
-    it('re-resolves when the cached container is detached (header remount)', () => {
-        const readsA = { count: 0 };
-        const headerA = buildLegacyHeader(readsA);
-        document.body.appendChild(headerA);
-        expect(getHeaderRightContainer()).toBe(headerA);
+    it('re-resolves when the cached modern tray is detached', () => {
+        const first = buildModernHeader();
+        expect(getHeaderRightContainer()).toBe(first.tray);
 
-        // Host rebuilds the header without a navigation.
-        headerA.remove();
-        const readsB = { count: 0 };
-        const headerB = buildLegacyHeader(readsB);
-        document.body.appendChild(headerB);
+        first.toolbar.closest('.MuiAppBar-root')?.remove();
+        const second = buildModernHeader();
 
-        expect(getHeaderRightContainer()).toBe(headerB);
+        expect(getHeaderRightContainer()).toBe(second.tray);
     });
 
     it('does not cache a failed resolution (early-boot retries still work)', () => {
         expect(getHeaderRightContainer()).toBeNull();
 
-        const reads = { count: 0 };
-        const header = buildLegacyHeader(reads);
-        document.body.appendChild(header);
+        const { tray } = buildModernHeader();
 
-        // Found on the next probe without requiring a navigation in between.
-        expect(getHeaderRightContainer()).toBe(header);
+        expect(getHeaderRightContainer()).toBe(tray);
     });
 });
 
 // #459: the header button tray must stay a single horizontally-scrollable row
-// (never wrap to 2–3 rows) on both layouts, with the modern profile avatar
-// pinned. The fix lives at the shared resolver: an idempotent, layout-scoped
+// (never wrap to 2–3 rows) on the supported modern layout, with the profile
+// avatar outside the tray. The fix lives at the shared resolver: an idempotent
 // stylesheet plus a `jc-header-tray` marker on every resolved container.
 describe('header-tray single-row scroll containment (#459)', () => {
     const STYLE_ID = 'jc-mui-header-button-fix';
@@ -89,7 +85,7 @@ describe('header-tray single-row scroll containment (#459)', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
-        document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout');
+        document.documentElement.classList.remove('jc-modern-layout');
         // Layout is cached once per page in production; reset it so each test's
         // resolver stamps from a clean slate (and never leaks into the R4 block).
         resetLayoutCacheForTests();
@@ -107,85 +103,35 @@ describe('header-tray single-row scroll containment (#459)', () => {
 
     afterEach(() => {
         resetLayoutCacheForTests();
-        document.documentElement.classList.remove('jc-modern-layout', 'jc-legacy-layout');
+        document.documentElement.classList.remove('jc-modern-layout');
     });
 
-    /** A visible legacy `.headerRight` (offsetParent !== null). */
-    function buildLegacy(): HTMLElement {
-        const header = document.createElement('div');
-        header.className = 'headerRight';
-        Object.defineProperty(header, 'offsetParent', { configurable: true, get: () => document.body });
-        document.body.appendChild(header);
-        return header;
-    }
-
-    /** A modern MUI toolbar: [action tray][profile Box(user-menu button)]. */
-    function buildModern(): { toolbar: HTMLElement; tray: HTMLElement; profileBox: HTMLElement } {
-        const appbar = document.createElement('div');
-        appbar.className = 'MuiAppBar-root';
-        const toolbar = document.createElement('div');
-        toolbar.className = 'MuiToolbar-root';
-        appbar.appendChild(toolbar);
-
-        const tray = document.createElement('div');
-        tray.className = 'jc-test-action-tray';
-        toolbar.appendChild(tray);
-
-        const profileBox = document.createElement('div');
-        profileBox.className = 'jc-test-profile-box';
-        const userMenuButton = document.createElement('button');
-        userMenuButton.setAttribute('aria-controls', 'app-user-menu');
-        profileBox.appendChild(userMenuButton);
-        toolbar.appendChild(profileBox);
-
-        document.body.appendChild(appbar);
-        return { toolbar, tray, profileBox };
-    }
-
-    it('installs the tray stylesheet on the legacy-first path and marks the legacy tray', () => {
-        const header = buildLegacy();
-
-        // Guard reset in beforeEach removed any lingering sheet, so this proves
-        // the legacy path itself installs it (would catch the sheet install being
-        // moved after the legacy early return).
+    it('installs the tray stylesheet and marks the modern action tray', () => {
+        const { tray } = buildModernHeader();
         expect(document.querySelectorAll(`#${STYLE_ID}`).length).toBe(0);
-        expect(getHeaderRightContainer()).toBe(header);
-        // Installed despite the legacy early return (legacy-only sessions must
-        // still get the fix).
+        expect(getHeaderRightContainer()).toBe(tray);
         expect(document.querySelectorAll(`#${STYLE_ID}`).length).toBe(1);
-        expect(header.classList.contains('jc-header-tray')).toBe(true);
-        // Resolving the visible legacy header stamps jc-legacy-layout on <html>
-        // so the layout-scoped tray CSS actually applies (no reliance on a later
-        // navigation to stamp it).
-        expect(document.documentElement.classList.contains('jc-legacy-layout')).toBe(true);
-        expect(document.documentElement.classList.contains('jc-modern-layout')).toBe(false);
+        expect(tray.classList.contains('jc-header-tray')).toBe(true);
+        expect(document.documentElement.classList.contains('jc-modern-layout')).toBe(true);
 
-        // Repeated cached calls leave exactly one style element and re-marking
-        // is idempotent (single class token).
         getHeaderRightContainer();
         getHeaderRightContainer();
         expect(document.querySelectorAll(`#${STYLE_ID}`).length).toBe(1);
-        expect(header.className.split(/\s+/).filter((c) => c === 'jc-header-tray').length).toBe(1);
+        expect(tray.className.split(/\s+/).filter((c) => c === 'jc-header-tray').length).toBe(1);
     });
 
-    it('scopes every tray rule to a layout stamp with nowrap + horizontal scroll + containment', () => {
-        buildLegacy();
+    it('scopes every tray rule to the modern stamp with nowrap + scroll containment', () => {
+        buildModernHeader();
         getHeaderRightContainer();
         const css = trayCss();
 
         expect(css).toContain('.jc-modern-layout .jc-header-tray');
-        expect(css).toContain('.jc-legacy-layout .jc-header-tray');
+        expect(css).not.toContain('jc-legacy-layout');
         expect(css).toContain('flex-wrap: nowrap');
         expect(css).toContain('overflow-x: auto');
         expect(css).toContain('min-width: 0');
         // Direct children never shrink → they cannot collapse or wrap.
         expect(css).toContain('flex: 0 0 auto');
-        // Legacy: the native .headerRight is content-sized with justify-content:
-        // flex-end; override to flex-start so overflowing leading buttons pack from
-        // the scroll origin and stay reachable. In the fit case .headerRight has no
-        // free space (no flex-grow), so flex-start is pixel-identical to native
-        // flex-end — no reposition on sheet load, no R1 jank.
-        expect(css).toMatch(/\.jc-legacy-layout \.jc-header-tray\s*\{[^}]*justify-content:\s*flex-start/);
         // No dependency on the safe/unsafe overflow-alignment keyword (r7f2/r7f7):
         // an engine that does not parse `safe flex-end` would keep native flex-end
         // and strand the leading buttons in unreachable negative overflow, so it
@@ -198,13 +144,13 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // pushes the sibling profile avatar onto a 2nd row (#459, worst at 390px).
         // `flex: 1 1 0` (basis 0 + min-width:0) lets the tray collapse during line
         // collection so the avatar stays on the row, then grow to fill the space
-        // left of it. Legacy .headerRight shrinks by default and needs no override.
+        // left of it.
         expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray\s*\{[^}]*flex:\s*1\s+1\s+0/);
         // Modern-only: the resolved box is the native MUI action Box (justify-content:
         // flex-end via its sx). With nowrap, flex-end strands the leading buttons in
         // unreachable negative overflow once the row overflows (scrollWidth==clientWidth
         // — not actually scrollable). Override to flex-start so overflowing leading
-        // buttons pack from the scroll origin and stay reachable, exactly like legacy;
+        // buttons pack from the scroll origin and stay reachable;
         // in the fit case the leading child's auto margin still owns the free space so
         // the buttons stay right-packed (flex-start inert, R1-safe).
         expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray\s*\{[^}]*justify-content:\s*flex-start/);
@@ -237,31 +183,13 @@ describe('header-tray single-row scroll containment (#459)', () => {
             /\.jc-modern-layout \.jc-header-tray > \*:first-child\s*\{/,
         );
 
-        // The horizontal scrollbar is suppressed on BOTH engines so an
+        // The horizontal scrollbar is suppressed so an
         // overflowing tray never grows a gutter that would (a) render a
         // non-native OS scrollbar, (b) shrink the content box below the button
         // height and let the promoted overflow-y clip the .jc-as-sup badge, or
         // (c) shift the header as it crosses the fit->overflow threshold (R1).
         expect(css).toContain('scrollbar-width: none');
-        expect(css).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray::-webkit-scrollbar/);
-        // Legacy only: the native profile button (.headerUserButton) lives INSIDE
-        // the resolved .headerRight scrollport (unlike modern, where the avatar is a
-        // separate sibling Box outside the tray), so it is sticky-pinned to the
-        // scrollport's inline-end edge — visible at rest and stationary while the
-        // icon buttons scroll under it (the binding pinned-avatar criterion,
-        // r9f2/r9f7/r9f11). In the fit case .headerRight is content-sized (no
-        // overflow), so sticky is inert and the avatar sits at its native right-edge
-        // position — no R1 shift. The rule is legacy-scoped and z-indexed above the
-        // scrolling buttons.
-        expect(css).toMatch(
-            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*position:\s*sticky/,
-        );
-        expect(css).toMatch(
-            /\.jc-legacy-layout \.jc-header-tray > \.headerUserButton\s*\{[^}]*inset-inline-end:\s*0/,
-        );
-        // The pin is legacy-only — no .headerUserButton rule leaks onto modern (where
-        // the avatar is already outside the tray and needs no pin).
-        expect(css).not.toMatch(/\.jc-modern-layout \.jc-header-tray[^{]*\.headerUserButton/);
+        expect(css).toMatch(/\.jc-modern-layout \.jc-header-tray::-webkit-scrollbar/);
 
         // No broad MUI Box selector (would hit unrelated toolbar boxes / profile).
         expect(css).not.toMatch(/\.MuiBox-root/);
@@ -273,7 +201,7 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // that would leak the rules onto an unresolved/unstamped session.
         for (const line of css.split('\n')) {
             if (line.includes('.jc-header-tray') && !line.trim().startsWith('.jc-header-tray >')) {
-                expect(line).toMatch(/\.jc-(modern|legacy)-layout \.jc-header-tray/);
+                expect(line).toMatch(/\.jc-modern-layout \.jc-header-tray/);
             }
         }
     });
@@ -315,14 +243,12 @@ describe('header-tray single-row scroll containment (#459)', () => {
     });
 
     it('marks only the action tray on modern — the profile Box stays an unmarked sibling', () => {
-        const { tray, profileBox } = buildModern();
+        const { tray, profileBox } = buildModernHeader();
 
         expect(getHeaderRightContainer()).toBe(tray);
         expect(tray.classList.contains('jc-header-tray')).toBe(true);
         expect(profileBox.classList.contains('jc-header-tray')).toBe(false);
-        // Reaching the MUI toolbar stamps jc-modern-layout (never jc-legacy).
         expect(document.documentElement.classList.contains('jc-modern-layout')).toBe(true);
-        expect(document.documentElement.classList.contains('jc-legacy-layout')).toBe(false);
     });
 
     it('returns null when no header is present yet (retryable, nothing marked)', () => {
@@ -335,9 +261,8 @@ describe('header-tray single-row scroll containment (#459)', () => {
         // (flexGrow:1) but not yet the user-menu Box (the user has not loaded). The
         // resolver must target that real Box — the toolbar's last child — so Canopy's
         // buttons land in the same tray as the native play/cast buttons, and must
-        // NOT append a synthetic `.headerRight` (a second flexGrow sibling would split
-        // the row / R1 jank, and the cache would pin the fake Box for the whole page
-        // once the real user-menu mounts — r9f3/r9f4/r9f5/r9f6).
+        // not append a synthetic flex container (which would split the row and make
+        // the per-navigation cache own the wrong node).
         const appbar = document.createElement('div');
         appbar.className = 'MuiAppBar-root';
         const toolbar = document.createElement('div');
@@ -352,7 +277,6 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(container).toBe(actionBox);
         expect(container!.classList.contains('jc-header-tray')).toBe(true);
         // No synthetic container was appended to the toolbar.
-        expect(toolbar.querySelectorAll(':scope > .headerRight').length).toBe(0);
         expect(toolbar.children.length).toBe(1);
     });
 
@@ -368,16 +292,15 @@ describe('header-tray single-row scroll containment (#459)', () => {
 
         expect(getHeaderRightContainer()).toBeNull();
         expect(document.querySelectorAll('.jc-header-tray').length).toBe(0);
-        expect(toolbar.querySelectorAll(':scope > .headerRight').length).toBe(0);
     });
 
     it('re-resolves and re-marks a remounted tray without leaving a duplicate connected container', () => {
-        const first = buildModern();
+        const first = buildModernHeader();
         expect(getHeaderRightContainer()).toBe(first.tray);
 
         // Host rebuilds the header without a navigation.
         first.toolbar.closest('.MuiAppBar-root')!.remove();
-        const second = buildModern();
+        const second = buildModernHeader();
 
         expect(getHeaderRightContainer()).toBe(second.tray);
         expect(second.tray.classList.contains('jc-header-tray')).toBe(true);
@@ -385,26 +308,6 @@ describe('header-tray single-row scroll containment (#459)', () => {
         expect(document.querySelectorAll('.jc-header-tray').length).toBe(1);
     });
 
-    it('reads legacy offsetParent at most once per navigation (PERF R4 not regressed)', () => {
-        const reads = { count: 0 };
-        const header = document.createElement('div');
-        header.className = 'headerRight';
-        Object.defineProperty(header, 'offsetParent', {
-            configurable: true,
-            get: () => { reads.count++; return document.body; },
-        });
-        document.body.appendChild(header);
-
-        getHeaderRightContainer();
-        getHeaderRightContainer();
-        getHeaderRightContainer();
-        expect(reads.count).toBe(1);
-
-        history.pushState({}, '', '/tray-459-perf-nav');
-        getHeaderRightContainer();
-        getHeaderRightContainer();
-        expect(reads.count).toBe(2);
-    });
 });
 
 describe('privacy reset item-cache invalidation (BI-SEC-035)', () => {

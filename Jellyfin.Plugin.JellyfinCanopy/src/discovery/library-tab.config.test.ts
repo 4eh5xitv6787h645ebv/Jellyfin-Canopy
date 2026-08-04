@@ -17,7 +17,7 @@ vi.mock('./customize', () => ({
     openCustomize: vi.fn(),
 }));
 vi.mock('../enhanced/helpers', () => ({
-    getHeaderRightContainer: () => document.querySelector<HTMLElement>('.headerRight'),
+    getHeaderRightContainer: () => document.querySelector<HTMLElement>('.jc-test-modern-actions'),
 }));
 vi.mock('../core/navigation', () => ({
     navDedupKey: () => 'discovery-config-test-navigation',
@@ -104,7 +104,7 @@ afterAll(() => {
 
 describe('Discovery active-pane config hot reload', () => {
     it('keeps an explicit-empty feed mounted until its hot-reloaded replacement is ready', async () => {
-        document.body.innerHTML = '<div class="headerRight"></div><div id="moviesPage"></div>';
+        document.body.innerHTML = '<div class="jc-test-modern-actions"></div><div id="moviesPage"></div>';
         const page = document.getElementById('moviesPage')!;
         Object.defineProperty(page, 'offsetParent', { value: document.body, configurable: true });
         localStorage.clear();

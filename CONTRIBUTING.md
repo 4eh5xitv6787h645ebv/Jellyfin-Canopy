@@ -1138,7 +1138,8 @@ Before submitting a PR, ensure you've tested:
 
 - [ ] Feature works as expected
 - [ ] No console errors
-- [ ] Compatible with Jellyfin 12.x — **both** the modern (MUI) layout and the legacy layout (`localStorage.layout`)
+- [ ] Compatible with Jellyfin 12.x's supported modern React/MUI layout
+- [ ] Unsupported classic-layout selections leave Jellyfin usable without starting Canopy client features
 - [ ] Works on different browsers (Chrome, Firefox, Edge)
 - [ ] Doesn't break existing functionality
 - [ ] Mobile compatibility (if applicable)
@@ -1176,7 +1177,7 @@ If you have questions or need help:
 For UI changes:
 
 - Use the ui-kit (`JC.core.ui`) so injected UI matches native markup and follows the active theme
-- Test with different Jellyfin themes and both layouts
+- Test with different Jellyfin themes and modern desktop/mobile viewports
 - Provide before/after screenshots
 
 ---

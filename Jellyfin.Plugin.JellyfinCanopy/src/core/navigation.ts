@@ -147,7 +147,7 @@ export function routeHref(
 }
 
 // Dedup guard: a hash navigation fires BOTH popstate and hashchange for
-// the same URL change; on the modern layout HISTORY_UPDATE can fire twice for
+// the same URL change; HISTORY_UPDATE can fire twice for
 // one logical nav (REPLACE normalization). Only dispatch when the canonical
 // nav key actually moved. Holds the last dispatched navKey (see navDedupKey).
 let lastDispatchedKey: string | null = null;
@@ -161,10 +161,9 @@ let lastDispatchedKey: string | null = null;
  *    `/movies?topParentId=A→B`) produce a DIFFERENT key. That is what lets the
  *    HISTORY_UPDATE source (v12-platform.md §2) notify onNavigate for the
  *    transitions `viewshow` silently skips.
- *  - It includes `hash`, so legacy-layout hash routing (`#/home` → `#/movies`,
- *    where pathname+search stay constant) still de-duplicates correctly. On the
- *    modern layout the hash is empty, so for HISTORY_UPDATE this reduces to
- *    `pathname + search` exactly as §6.7 prescribes.
+ *  - It includes `hash`, so host hash transitions (`#/home` → `#/movies`,
+ *    where pathname+search stay constant) still de-duplicate correctly. When
+ *    the hash is empty this reduces to `pathname + search`.
  * @param loc - A location-like with pathname/search/hash (defaults to window.location).
  */
 export function navDedupKey(
@@ -552,9 +551,8 @@ let lastViewShowClearTimer: ReturnType<typeof setTimeout> | null = null;
  */
 async function getItemFromHash(hash: string | undefined): Promise<unknown> {
     try {
-        // Legacy layout: the id lives in the hash query (`#/details?id=X`).
-        // Modern layout: the hash is empty and the id lives in location.search
-        // (`/details?id=X`). Check the hash first, then fall back to search.
+        // Host navigation can expose the id through either a hash query
+        // (`#/details?id=X`) or location.search (`/details?id=X`).
         const hashQuery = String(hash || '').split('?')[1] || '';
         let itemId = new URLSearchParams(hashQuery).get('id');
         if (!itemId && typeof window !== 'undefined' && window.location?.search) {

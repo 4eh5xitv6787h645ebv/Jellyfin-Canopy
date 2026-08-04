@@ -319,18 +319,11 @@ const spec: TagSpec = {
             .rating-tomato-icon.rotten { background-image: url(${ROTTEN_TOMATO_DATA_URI}); }
             .rating-text { line-height: 1; }
 
-            .layout-mobile .${tagClass} {
-                padding: 2px 6px;
-                font-size: 11px;
-                border-radius: 3px;
-            }
-            .layout-mobile .${containerClass} { gap: 3px; }
-            .layout-mobile .rating-star-icon { font-size: 12px !important; }
-            .layout-mobile .rating-tomato-icon { width: 12px; height: 12px; }
-
             @media (max-width: 768px) {
                 .${tagClass} { padding: 3px 6px; font-size: 12px; }
                 .${containerClass} { gap: 3px; }
+                .rating-star-icon { font-size: 12px !important; }
+                .rating-tomato-icon { width: 12px; height: 12px; }
             }
 
             @media (max-width: 480px) {

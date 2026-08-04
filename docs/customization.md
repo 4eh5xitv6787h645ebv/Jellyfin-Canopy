@@ -269,26 +269,23 @@ This applies wherever the Canopy web client is actually loaded: desktop/mobile b
 
 *Display tab → UI Preferences*
 
-Jellyfin 12 ships two layouts — the **modern** React/MUI layout and the classic **legacy** layout — and the choice is stored *per device* in each browser (in Jellyfin's own **Display** settings). A device that once picked the legacy layout stays on it, even after modern becomes the default, until someone changes it on that device. Because the choice lives in the browser, an admin has no native way to move everyone (say, every phone) onto the modern layout. Client Layout Enforcement is that lever — one server-side setting that steers every device.
+Jellyfin Canopy supports the Jellyfin 12 **modern React/MUI layout only**. Jellyfin stores its layout choice per browser, so an older browser can remain on the unsupported classic layout until that choice is changed. Client Layout Enforcement lets an administrator steer those non-TV browser clients onto the supported layout.
 
 | Option | Behavior |
 |---|---|
-| **None** (default) | No change. Each user's device choice (or Jellyfin's own default) stands. |
-| **Default to modern layout** | Applies the modern layout only on devices that have **never** made an explicit choice. Never overrides a user's stored pick, and needs no reload. |
-| **Force modern layout** | Steers devices stored on a desktop or mobile legacy layout onto the modern one, costing a single automatic reload per device on the first switch. Devices already painting the modern layout (including brand-new devices, which default to modern) are never reloaded. Devices in **TV mode are exempt** (see below). |
-| **Force legacy layout** | Steers devices painting the modern layout onto the **desktop** legacy layout (one reload). Not form-factor aware: phones also land on the desktop legacy layout, not a mobile-specific one. Devices already on a legacy layout keep their chosen legacy sub-layout; TV mode is exempt. |
+| **None** (default) | Preserves each browser's Jellyfin choice. The Jellyfin base UI remains usable, but Canopy client features stay inactive while that browser uses the unsupported classic layout. |
+| **Force modern layout** | Steers browser clients with a stored classic choice onto the supported modern layout, costing one guarded reload on the first switch. Already-modern devices are not reloaded, and TV mode is exempt. |
 
 !!! warning "TV mode is never steered"
-    A device whose stored layout is **TV** is excluded from both Force modes. A 10-foot interface chosen deliberately for a television must not be pulled onto the mouse/touch UI — Jellyfin itself scopes the modern default to non-TV browsers.
-
-!!! note "Shipped-build (12.0.0) values"
-    Enforcement writes the layout values used by the shipped Jellyfin 12.0.0 web client (`experimental` / `desktop`). On future builds that rename the layout values, a written value the client does not recognize is silently discarded and the client falls back to its modern default — so **Force modern** still lands on modern, but **Force legacy** degrades to the modern layout with no diagnostic.
+    A device whose stored layout is **TV** is excluded from Force modern. TV is a separate 10-foot interface, not a supported or unsupported browser-layout variant.
 
 !!! info "How Force interacts with a manual switch"
-    Force is applied at boot, so **Force wins**: a user can still flip the layout in Jellyfin's own Display settings, but on the next load the plugin steers it back (one reload). The override never loops — it reloads only when the device is actually painting the other layout, and a write that fails to stick (broken or ephemeral browser storage) is caught by a read-back check and never reloads at all.
+    Force modern is applied at boot, so it wins on the next load after a manual switch. The override never loops: it reloads only for a stored unsupported browser choice, and a write that fails to persist is caught by a read-back check and never reloads.
+
+Retired or unknown saved enforcement values are normalized to **None** when configuration is loaded. This keeps upgrades readable without retaining a switch or feature path for the classic layout.
 
 !!! note "Why this is admin-only (no per-user default)"
-    The layout is a property of the *device/browser*, not of the Jellyfin user account, so a per-user override would have no device to attach to (the same account on a phone and a TV can want different layouts). It is therefore a single server-wide admin setting.
+    The layout is a property of the *device/browser*, not of the Jellyfin user account, so a per-user override would have no device to attach to. It is therefore a single server-wide admin setting.
 
 ### Cache management
 
