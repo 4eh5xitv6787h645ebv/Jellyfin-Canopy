@@ -15,6 +15,10 @@
   <ItemGroup>
     <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
+    <EmbeddedResource Include="Schemas/hello-request.schema.json"
+                      LogicalName="JellyfinCanopy.ProviderSchemas.9cb99774427c0836710a42bf94cb647980f76fe6150300f9b8e824f667402330.json" />
+    <EmbeddedResource Include="Schemas/hello-response.schema.json"
+                      LogicalName="JellyfinCanopy.ProviderSchemas.dd8c7f2456f95f2404c9274e1b2dfa7e71958d7013e53cd35dbfcb8fe1bbffd2.json" />
   </ItemGroup>
   <Target Name="StageConformancePackage" AfterTargets="Build">
     <PropertyGroup>

@@ -15,6 +15,14 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Jellyfin.Plugin.CanopyConformance.Alpha/AlphaPlugin.cs" Link="AlphaPlugin.cs" />
+    <Compile Include="../Jellyfin.Plugin.CanopyConformance.Alpha/AlphaPluginServiceRegistrator.cs" Link="AlphaPluginServiceRegistrator.cs" />
+    <Compile Include="../Jellyfin.Plugin.CanopyConformance.Alpha/ExtensionProviderEntrypoint.cs" Link="ExtensionProviderEntrypoint.cs" />
+    <EmbeddedResource Include="../Jellyfin.Plugin.CanopyConformance.Alpha/Schemas/hello-request.schema.json"
+                      Link="Schemas/hello-request.schema.json"
+                      LogicalName="JellyfinCanopy.ProviderSchemas.9cb99774427c0836710a42bf94cb647980f76fe6150300f9b8e824f667402330.json" />
+    <EmbeddedResource Include="../Jellyfin.Plugin.CanopyConformance.Alpha/Schemas/hello-response.schema.json"
+                      Link="Schemas/hello-response.schema.json"
+                      LogicalName="JellyfinCanopy.ProviderSchemas.dd8c7f2456f95f2404c9274e1b2dfa7e71958d7013e53cd35dbfcb8fe1bbffd2.json" />
     <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
   </ItemGroup>

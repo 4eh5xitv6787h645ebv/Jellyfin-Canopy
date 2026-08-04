@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "correlationId": "01J00000000000000000000000",
+  "protocol": 1,
+  "result": {
+    "message": "Hello, Canopy!"
+  }
+}

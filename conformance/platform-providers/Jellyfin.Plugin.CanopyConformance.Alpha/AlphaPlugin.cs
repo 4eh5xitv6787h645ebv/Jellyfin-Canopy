@@ -5,7 +5,7 @@ using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.CanopyConformance.Alpha;
 
-/// <summary>A no-op independently packaged Jellyfin 12 provider conformance fixture.</summary>
+/// <summary>An independently packaged Jellyfin 12 Hello provider conformance fixture.</summary>
 public sealed class AlphaPlugin : BasePlugin<BasePluginConfiguration>
 {
     /// <summary>Initializes the fixture through Jellyfin's ordinary plugin constructor.</summary>
@@ -21,5 +21,5 @@ public sealed class AlphaPlugin : BasePlugin<BasePluginConfiguration>
     public override Guid Id => new("0a110000-1111-4222-8333-444455556666");
 
     /// <inheritdoc />
-    public override string Description => "Independent no-op Canopy provider fixture Alpha.";
+    public override string Description => "Independent deterministic Hello provider fixture Alpha.";
 }

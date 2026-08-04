@@ -262,4 +262,8 @@ semantic content fingerprint; #647 added descriptor-safe host binding; #650 adde
 the authoritative persisted lifecycle registry; and #652 composes those owners
 behind one lazy post-start, epoch-fenced, single-flight worker with independent
 test-only provider packages. Every public/admin route and provider invocation
-remains a later slice.
+remains a later slice. Issue #654 is the first EP-04 child: it freezes the
+load-context-safe provider ABI, operation declarations and bounded envelopes,
+content-addressed embedded payload schemas, and turns Alpha into the independent
+Hello contract fixture without adding a
+production reflection binder or invocation path.

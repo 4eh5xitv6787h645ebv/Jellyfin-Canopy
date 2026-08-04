@@ -1,7 +1,7 @@
 {
   "category": "General",
   "changelog": "Deterministic conformance upgrade.",
-  "description": "Independent no-op Canopy provider fixture Alpha upgrade.",
+  "description": "Independent deterministic Hello provider fixture Alpha upgrade.",
   "guid": "0a110000-1111-4222-8333-444455556666",
   "name": "AAA Canopy Conformance Alpha",
   "overview": "Test-only installed-provider conformance fixture.",

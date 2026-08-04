@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -101,6 +102,7 @@ public sealed class PlatformExtensionManifestArchitectureTests
                 "Kind",
                 "PlatformRange",
                 "PluginId",
+                "ProviderOperations",
                 "RequestedCapabilities",
                 "SchemaVersion",
                 "Version",
@@ -118,6 +120,9 @@ public sealed class PlatformExtensionManifestArchitectureTests
         Assert.Equal(typeof(PlatformExtensionProtocolRange), Property("PlatformRange").PropertyType);
         Assert.Equal(typeof(PlatformExtensionHostRange), Property("HostRange").PropertyType);
         Assert.Equal(typeof(PlatformRequestedCapabilitySet), Property("RequestedCapabilities").PropertyType);
+        Assert.Equal(
+            typeof(ImmutableArray<PlatformProviderOperationDeclaration>),
+            Property("ProviderOperations").PropertyType);
         Assert.Equal(typeof(PlatformManifestFingerprint), Property("Fingerprint").PropertyType);
 
         var forbiddenShape = new[]
@@ -137,7 +142,6 @@ public sealed class PlatformExtensionManifestArchitectureTests
             "type",
             "method",
             "script",
-            "operation",
             "contribution",
             "asset",
             "raw",
@@ -154,6 +158,32 @@ public sealed class PlatformExtensionManifestArchitectureTests
                 || field.FieldType == typeof(Memory<byte>));
 
         PropertyInfo Property(string name) => properties.Single(property => property.Name == name);
+    }
+
+    [Fact]
+    public void ProviderOperationDeclarationIsASealedImmutableDataOnlyContract()
+    {
+        var type = typeof(PlatformProviderOperationDeclaration);
+        Assert.True(type.IsSealed);
+        Assert.Empty(type.GetConstructors(BindingFlags.Public | BindingFlags.Instance));
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .OrderBy(property => property.Name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                "Id",
+                "ProtocolRange",
+                "RequestSchemaId",
+                "RequestSchemaSha256",
+                "RequiredCapabilities",
+                "ResponseSchemaId",
+                "ResponseSchemaSha256",
+            },
+            properties.Select(property => property.Name));
+        Assert.All(properties, property => Assert.False(property.CanWrite));
+        Assert.DoesNotContain(properties, property => property.PropertyType == typeof(byte[]));
     }
 
     [Fact]
@@ -201,9 +231,14 @@ public sealed class PlatformExtensionManifestArchitectureTests
                 "InvalidHostRange",
                 "InvalidRequestedCapabilities",
                 "IncompatibleRequestedCapability",
+                "InvalidProviderOperations",
+                "DuplicateProviderOperation",
+                "IncompatibleProviderOperation",
+                "InvalidProviderOperationCapabilities",
+                "InvalidProviderSchemaReference",
             },
             Enum.GetNames<PlatformExtensionManifestRejectionReason>());
-        Assert.Equal(Enumerable.Range(0, 20), reasons.Select(reason => (int)reason));
+        Assert.Equal(Enumerable.Range(0, 25), reasons.Select(reason => (int)reason));
     }
 
     [Fact]
@@ -239,6 +274,11 @@ public sealed class PlatformExtensionManifestArchitectureTests
             MemberOwners(nameof(PlatformExtensionManifest), "EstablishValidatedManifest"));
         Assert.Equal(
             new[] { ManifestDomainFileName },
+            MemberOwners(
+                nameof(PlatformProviderOperationDeclaration),
+                "EstablishValidatedDeclaration"));
+        Assert.Equal(
+            new[] { ManifestDomainFileName },
             ConstructorOwners(nameof(PlatformExtensionManifest)));
         Assert.Equal(
             new[] { ManifestDomainFileName },
@@ -246,6 +286,9 @@ public sealed class PlatformExtensionManifestArchitectureTests
         Assert.Equal(
             new[] { ManifestDomainFileName },
             ConstructorOwners(nameof(PlatformExtensionHostRange)));
+        Assert.Equal(
+            new[] { ManifestDomainFileName },
+            ConstructorOwners(nameof(PlatformProviderOperationDeclaration)));
 
         Assert.True(HasMemberUse(
             "var ok = global::Jellyfin.Plugin.JellyfinCanopy.Platform.PlatformExtensionManifestParser.TryParse(bytes, out var manifest, out var reason);",
@@ -280,6 +323,7 @@ public sealed class PlatformExtensionManifestArchitectureTests
             nameof(PlatformManifestFingerprint),
             nameof(PlatformExtensionProtocolRange),
             nameof(PlatformExtensionHostRange),
+            nameof(PlatformProviderOperationDeclaration),
         };
         var aliases = ProductionFiles()
             .Where(file => Regex.IsMatch(

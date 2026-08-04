@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
@@ -20,6 +21,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal const int MaximumDescriptionBytes = 512;
         internal const int MaximumCompatibilityMajor = 65535;
         internal const int MaximumRequestedCapabilities = PlatformCapabilityVocabulary.MaximumCapabilityCount;
+        internal const int MaximumProviderOperations = 16;
+        internal const int MaximumProviderOperationIdBytes = 128;
+        internal const int MaximumProviderRequiredCapabilities = 5;
+        internal const int MaximumProviderSchemaIdBytes = 308;
+        internal const int MaximumProviderSchemaMajor = 65535;
     }
 
     /// <summary>Closed rejection reasons for the bounded Platform extension manifest parser.</summary>
@@ -45,6 +51,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         InvalidHostRange = 17,
         InvalidRequestedCapabilities = 18,
         IncompatibleRequestedCapability = 19,
+        InvalidProviderOperations = 20,
+        DuplicateProviderOperation = 21,
+        IncompatibleProviderOperation = 22,
+        InvalidProviderOperationCapabilities = 23,
+        InvalidProviderSchemaReference = 24,
     }
 
     /// <summary>An immutable inclusive Platform protocol-major compatibility range.</summary>
@@ -76,6 +87,62 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
     }
 
     /// <summary>
+    /// One immutable, non-authoritative provider operation declaration. Schema
+    /// references are symbolic identifiers owned by this exact manifest and operation;
+    /// they are never paths, URLs, CLR selectors, or executable locations.
+    /// </summary>
+    internal sealed class PlatformProviderOperationDeclaration
+    {
+        private PlatformProviderOperationDeclaration(
+            string id,
+            PlatformExtensionProtocolRange protocolRange,
+            PlatformRequestedCapabilitySet requiredCapabilities,
+            string requestSchemaId,
+            string requestSchemaSha256,
+            string responseSchemaId,
+            string responseSchemaSha256)
+        {
+            Id = id;
+            ProtocolRange = protocolRange;
+            RequiredCapabilities = requiredCapabilities;
+            RequestSchemaId = requestSchemaId;
+            RequestSchemaSha256 = requestSchemaSha256;
+            ResponseSchemaId = responseSchemaId;
+            ResponseSchemaSha256 = responseSchemaSha256;
+        }
+
+        internal string Id { get; }
+
+        internal PlatformExtensionProtocolRange ProtocolRange { get; }
+
+        internal PlatformRequestedCapabilitySet RequiredCapabilities { get; }
+
+        internal string RequestSchemaId { get; }
+
+        internal string RequestSchemaSha256 { get; }
+
+        internal string ResponseSchemaId { get; }
+
+        internal string ResponseSchemaSha256 { get; }
+
+        internal static PlatformProviderOperationDeclaration EstablishValidatedDeclaration(
+            string id,
+            PlatformExtensionProtocolRange protocolRange,
+            PlatformRequestedCapabilitySet requiredCapabilities,
+            string requestSchemaId,
+            string requestSchemaSha256,
+            string responseSchemaId,
+            string responseSchemaSha256) => new(
+                id,
+                protocolRange,
+                requiredCapabilities,
+                requestSchemaId,
+                requestSchemaSha256,
+                responseSchemaId,
+                responseSchemaSha256);
+    }
+
+    /// <summary>
     /// One validated immutable installed-provider manifest. This value requests
     /// capabilities only; it is not installation evidence, approval or authority.
     /// </summary>
@@ -92,6 +159,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformExtensionProtocolRange platformRange,
             PlatformExtensionHostRange hostRange,
             PlatformRequestedCapabilitySet requestedCapabilities,
+            ImmutableArray<PlatformProviderOperationDeclaration> providerOperations,
             PlatformManifestFingerprint fingerprint)
         {
             SchemaVersion = schemaVersion;
@@ -104,6 +172,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformRange = platformRange;
             HostRange = hostRange;
             RequestedCapabilities = requestedCapabilities;
+            ProviderOperations = providerOperations;
             Fingerprint = fingerprint;
         }
 
@@ -127,6 +196,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         internal PlatformRequestedCapabilitySet RequestedCapabilities { get; }
 
+        /// <summary>
+        /// Gets the immutable declared operation set. An empty set is an identity-only,
+        /// non-callable manifest; declarations themselves do not make a provider callable.
+        /// </summary>
+        internal ImmutableArray<PlatformProviderOperationDeclaration> ProviderOperations { get; }
+
         internal PlatformManifestFingerprint Fingerprint { get; }
 
         internal static PlatformExtensionManifest EstablishValidatedManifest(
@@ -140,6 +215,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             PlatformExtensionProtocolRange platformRange,
             PlatformExtensionHostRange hostRange,
             PlatformRequestedCapabilitySet requestedCapabilities,
+            ImmutableArray<PlatformProviderOperationDeclaration> providerOperations,
             PlatformManifestFingerprint fingerprint) => new(
                 schemaVersion,
                 id,
@@ -151,6 +227,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 platformRange,
                 hostRange,
                 requestedCapabilities,
+                providerOperations,
                 fingerprint);
     }
 
@@ -177,6 +254,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             "platform",
             "host",
             "requestedCapabilities",
+            "providerOperations",
         };
 
         private static readonly string[] RequiredRootProperties =
@@ -394,6 +472,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     return false;
                 }
 
+                if (!TryReadProviderOperations(
+                        root,
+                        id,
+                        platformRange,
+                        requestedCapabilities,
+                        out var providerOperations,
+                        out reason))
+                {
+                    return false;
+                }
+
                 var fingerprint = PlatformManifestFingerprint.EstablishValidatedManifestFingerprint(
                     ComputeFingerprint(
                         schemaVersion,
@@ -404,7 +493,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         description,
                         platformRange,
                         hostRange,
-                        requestedCapabilities));
+                        requestedCapabilities,
+                        providerOperations));
                 manifest = PlatformExtensionManifest.EstablishValidatedManifest(
                     schemaVersion,
                     id,
@@ -416,6 +506,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     platformRange,
                     hostRange,
                     requestedCapabilities,
+                    providerOperations,
                     fingerprint);
                 return true;
             }
@@ -460,6 +551,169 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
 
             range = new PlatformExtensionHostRange(min, max);
+            return true;
+        }
+
+        private static bool TryReadProviderOperations(
+            JsonElement root,
+            string extensionId,
+            PlatformExtensionProtocolRange manifestRange,
+            PlatformRequestedCapabilitySet requestedCapabilities,
+            out ImmutableArray<PlatformProviderOperationDeclaration> operations,
+            out PlatformExtensionManifestRejectionReason reason)
+        {
+            operations = ImmutableArray<PlatformProviderOperationDeclaration>.Empty;
+            reason = PlatformExtensionManifestRejectionReason.None;
+            if (!root.TryGetProperty("providerOperations", out var operationsElement))
+            {
+                return true;
+            }
+
+            if (operationsElement.ValueKind != JsonValueKind.Array
+                || operationsElement.GetArrayLength() > PlatformExtensionManifestBounds.MaximumProviderOperations)
+            {
+                reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperations;
+                return false;
+            }
+
+            var operationProperties = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "id",
+                "protocol",
+                "requiredCapabilities",
+                "requestSchemaId",
+                "requestSchemaSha256",
+                "responseSchemaId",
+                "responseSchemaSha256",
+            };
+            var operationRequired = new[]
+            {
+                "id",
+                "protocol",
+                "requiredCapabilities",
+                "requestSchemaId",
+                "requestSchemaSha256",
+                "responseSchemaId",
+                "responseSchemaSha256",
+            };
+            var seenIds = new HashSet<string>(StringComparer.Ordinal);
+            var declarations = ImmutableArray.CreateBuilder<PlatformProviderOperationDeclaration>(
+                operationsElement.GetArrayLength());
+            foreach (var operationElement in operationsElement.EnumerateArray())
+            {
+                if (operationElement.ValueKind != JsonValueKind.Object)
+                {
+                    reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperations;
+                    return false;
+                }
+
+                if (!HasExactProperties(
+                        operationElement,
+                        operationProperties,
+                        operationRequired,
+                        out reason))
+                {
+                    return false;
+                }
+
+                if (!TryReadString(operationElement, "id", out var operationId)
+                    || !IsValidProviderOperationIdentifier(operationId))
+                {
+                    reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperations;
+                    return false;
+                }
+
+                if (!seenIds.Add(operationId))
+                {
+                    reason = PlatformExtensionManifestRejectionReason.DuplicateProviderOperation;
+                    return false;
+                }
+
+                if (!TryReadProtocolRange(
+                        operationElement.GetProperty("protocol"),
+                        out var protocolRange,
+                        out reason))
+                {
+                    if (reason is PlatformExtensionManifestRejectionReason.None
+                        or PlatformExtensionManifestRejectionReason.MissingProperty
+                        or PlatformExtensionManifestRejectionReason.InvalidPropertyType)
+                    {
+                        reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperations;
+                    }
+
+                    return false;
+                }
+
+                if (protocolRange.Min < manifestRange.Min || protocolRange.Max > manifestRange.Max)
+                {
+                    reason = PlatformExtensionManifestRejectionReason.IncompatibleProviderOperation;
+                    return false;
+                }
+
+                var requiredElement = operationElement.GetProperty("requiredCapabilities");
+                if (requiredElement.ValueKind != JsonValueKind.Array
+                    || requiredElement.GetArrayLength()
+                        > PlatformExtensionManifestBounds.MaximumProviderRequiredCapabilities)
+                {
+                    reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperationCapabilities;
+                    return false;
+                }
+
+                var requiredValues = new List<string>(requiredElement.GetArrayLength());
+                foreach (var value in requiredElement.EnumerateArray())
+                {
+                    if (value.ValueKind != JsonValueKind.String || value.GetString() is not { } token)
+                    {
+                        reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperationCapabilities;
+                        return false;
+                    }
+
+                    requiredValues.Add(token);
+                }
+
+                if (!PlatformRequestedCapabilitySet.TryCreate(requiredValues, out var requiredCapabilities)
+                    || requiredCapabilities.Capabilities.Any(definition =>
+                        !definition.AllowedActorKinds.Contains(PlatformActorKind.InstalledProvider)
+                        || !requestedCapabilities.Capabilities.Contains(definition)))
+                {
+                    reason = PlatformExtensionManifestRejectionReason.InvalidProviderOperationCapabilities;
+                    return false;
+                }
+
+                if (!TryReadString(operationElement, "requestSchemaId", out var requestSchemaId)
+                    || !IsOwnedProviderSchemaId(
+                        requestSchemaId,
+                        extensionId,
+                        operationId,
+                        "request")
+                    || !TryReadString(operationElement, "requestSchemaSha256", out var requestSchemaSha256)
+                    || !IsCanonicalSha256(requestSchemaSha256)
+                    || !TryReadString(operationElement, "responseSchemaId", out var responseSchemaId)
+                    || !IsOwnedProviderSchemaId(
+                        responseSchemaId,
+                        extensionId,
+                        operationId,
+                        "response")
+                    || !TryReadString(operationElement, "responseSchemaSha256", out var responseSchemaSha256)
+                    || !IsCanonicalSha256(responseSchemaSha256))
+                {
+                    reason = PlatformExtensionManifestRejectionReason.InvalidProviderSchemaReference;
+                    return false;
+                }
+
+                declarations.Add(PlatformProviderOperationDeclaration.EstablishValidatedDeclaration(
+                    operationId,
+                    protocolRange,
+                    requiredCapabilities,
+                    requestSchemaId,
+                    requestSchemaSha256,
+                    responseSchemaId,
+                    responseSchemaSha256));
+            }
+
+            operations = declarations
+                .OrderBy(operation => operation.Id, StringComparer.Ordinal)
+                .ToImmutableArray();
             return true;
         }
 
@@ -578,6 +832,85 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             return components is >= 2 and <= 4;
         }
 
+        private static bool IsValidProviderOperationIdentifier(string value)
+        {
+            if (value.Length is < 5 or > PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes)
+            {
+                return false;
+            }
+
+            var segments = value.Split('.');
+            if (segments.Length < 3)
+            {
+                return false;
+            }
+
+            foreach (var segment in segments)
+            {
+                if (segment.Length < 1 || segment[0] is < 'a' or > 'z')
+                {
+                    return false;
+                }
+
+                for (var index = 1; index < segment.Length; index++)
+                {
+                    var character = segment[index];
+                    if (IsLowerAsciiLetterOrDigit(character))
+                    {
+                        continue;
+                    }
+
+                    if (character != '-'
+                        || segment[index - 1] == '-'
+                        || index == segment.Length - 1)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsOwnedProviderSchemaId(
+            string value,
+            string extensionId,
+            string operationId,
+            string direction)
+        {
+            if (Encoding.UTF8.GetByteCount(value) > PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes)
+            {
+                return false;
+            }
+
+            var prefix = string.Concat(
+                "urn:jellyfin-canopy:provider-schema:",
+                extensionId,
+                ":",
+                operationId,
+                ":",
+                direction,
+                ":");
+            if (!value.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var majorText = value[prefix.Length..];
+            return majorText.Length > 0
+                && majorText[0] != '0'
+                && majorText.All(character => character is >= '0' and <= '9')
+                && int.TryParse(majorText, NumberStyles.None, CultureInfo.InvariantCulture, out var major)
+                && major <= PlatformExtensionManifestBounds.MaximumProviderSchemaMajor;
+        }
+
+        private static bool IsLowerAsciiLetterOrDigit(char value) =>
+            value is >= 'a' and <= 'z' or >= '0' and <= '9';
+
+        private static bool IsCanonicalSha256(string value) =>
+            value.Length == PlatformProviderAbiContract.ProviderSchemaSha256Characters
+            && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
         private static bool IsBoundedDisplayText(string value, int minimumBytes, int maximumBytes)
         {
             var bytes = Encoding.UTF8.GetByteCount(value);
@@ -609,7 +942,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             string? description,
             PlatformExtensionProtocolRange platformRange,
             PlatformExtensionHostRange hostRange,
-            PlatformRequestedCapabilitySet requestedCapabilities)
+            PlatformRequestedCapabilitySet requestedCapabilities,
+            ImmutableArray<PlatformProviderOperationDeclaration> providerOperations)
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             Append(hash, FingerprintDomain);
@@ -633,6 +967,30 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             foreach (var capability in requestedCapabilities.Capabilities)
             {
                 Append(hash, capability.Id.Value);
+            }
+
+            // Preserve every existing identity-only v1 fingerprint. A non-empty
+            // declaration adds a new domain-delimited canonical suffix instead.
+            if (!providerOperations.IsEmpty)
+            {
+                Append(hash, "provider-operations-v1");
+                Append(hash, providerOperations.Length.ToString(CultureInfo.InvariantCulture));
+                foreach (var operation in providerOperations)
+                {
+                    Append(hash, operation.Id);
+                    Append(hash, operation.ProtocolRange.Min.ToString(CultureInfo.InvariantCulture));
+                    Append(hash, operation.ProtocolRange.Max.ToString(CultureInfo.InvariantCulture));
+                    Append(hash, operation.RequiredCapabilities.Capabilities.Length.ToString(CultureInfo.InvariantCulture));
+                    foreach (var capability in operation.RequiredCapabilities.Capabilities)
+                    {
+                        Append(hash, capability.Id.Value);
+                    }
+
+                    Append(hash, operation.RequestSchemaId);
+                    Append(hash, operation.RequestSchemaSha256);
+                    Append(hash, operation.ResponseSchemaId);
+                    Append(hash, operation.ResponseSchemaSha256);
+                }
             }
 
             return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();

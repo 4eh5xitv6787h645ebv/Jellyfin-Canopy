@@ -1,6 +1,6 @@
 # ADR-0003 — The load-context-safe JSON ABI
 
-Status: **accepted design** (ADR-0013; EP-04 implementation pending) · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
+Status: **accepted; provider contract frozen by EP-04.1, binding pending** · Owner: platform kernel · Evidence: [S1](../spike-evidence.md#s1--one-collectible-assemblyloadcontext-per-plugin), [S2](../spike-evidence.md#s2--no-shared-type-identity-and-the-failure-is-silent), [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type)
 
 ## Context
 
@@ -52,6 +52,11 @@ Concretely:
    `Task<string> InvokeAsync(string operationId, string requestJson, CancellationToken cancellationToken)`.
 4. A **dependency guard** fails the build of any sample or fixture that
    references a platform runtime assembly.
+5. Operation payload schemas are provider-assembly embedded resources addressed
+   by canonical lower-case SHA-256. The manifest carries the symbolic schema id
+   and digest; the kernel-owned resource name is always
+   `JellyfinCanopy.ProviderSchemas.{sha256}.json`. No manifest path, URL, CLR
+   type, or resource name is executable or selectable.
 
 ## Rationale
 

@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jellyfin-canopy:platform:v1:provider-request-envelope",
+  "title": "Jellyfin Canopy installed-provider request envelope v1",
+  "description": "The minimal host-authored JSON value passed to a provider entrypoint. The operation input is validated separately against its manifest-declared, code-owned schema identifier. This allow-list prevents accidental authority transfer through the envelope; it is not an in-process plugin sandbox.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-canopy-maximum-document-bytes": 65536,
+  "x-canopy-maximum-json-depth": 12,
+  "x-canopy-maximum-collection-items": 64,
+  "x-canopy-maximum-object-properties": 64,
+  "x-canopy-maximum-property-name-utf8-bytes": 256,
+  "x-canopy-maximum-identifier-utf8-bytes": 128,
+  "x-canopy-maximum-string-utf8-bytes": 4096,
+  "x-canopy-unknown-properties": "reject",
+  "x-canopy-forbidden-property-name-comparison": "ordinal-ignore-case",
+  "x-canopy-forbidden-property-names": [
+    "token",
+    "rawToken",
+    "bearerToken",
+    "accessToken",
+    "apiKey",
+    "password",
+    "secret",
+    "cookie",
+    "authorization",
+    "claimsPrincipal",
+    "httpContext",
+    "serviceProvider",
+    "iServiceProvider",
+    "requestServices",
+    "unrestrictedService",
+    "database",
+    "dbContext",
+    "dbHandle",
+    "databaseHandle",
+    "hostHandle",
+    "hostService",
+    "services",
+    "path",
+    "filePath",
+    "directoryPath",
+    "absolutePath",
+    "pluginPath",
+    "credential",
+    "credentials",
+    "exception",
+    "rawException",
+    "stackTrace",
+    "connectionString",
+    "environment",
+    "authority"
+  ],
+  "required": [
+    "schemaVersion",
+    "correlationId",
+    "protocol",
+    "grantedScopes",
+    "attribution",
+    "context",
+    "hints",
+    "remainingDeadlineMilliseconds",
+    "input"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "x-canopy-maximum-utf8-bytes": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "Opaque request correlation only; it carries no caller credential or authority."
+    },
+    "protocol": {
+      "type": "integer",
+      "const": 1,
+      "description": "The protocol version negotiated by the host for this invocation."
+    },
+    "grantedScopes": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "jellyfin.canopy.items.lookup",
+          "jellyfin.canopy.user-data.read",
+          "jellyfin.canopy.storage.read",
+          "jellyfin.canopy.ui.contribute",
+          "jellyfin.canopy.integrations.invoke"
+        ]
+      },
+      "x-canopy-subset-of": "selected-operation.requiredCapabilities ∩ current-effective-grant",
+      "description": "The exact provider-eligible scope identifiers intersected with both the selected operation requirements and the current effective grant. These strings describe the brokered grant and are not credentials."
+    },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 2,
+      "required": [
+        "user",
+        "device"
+      ],
+      "properties": {
+        "user": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "x-canopy-maximum-utf8-bytes": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "description": "Opaque, non-secret user attribution derived by the host."
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "x-canopy-maximum-utf8-bytes": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "description": "Opaque, non-secret device attribution derived by the host."
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 2,
+      "properties": {
+        "itemId": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36,
+          "x-canopy-maximum-utf8-bytes": 36,
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "description": "Canonical lower-case non-empty Jellyfin item identifier already validated and authorized by the host."
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "x-canopy-maximum-utf8-bytes": 64,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "description": "Code-owned logical surface identifier, never a route or path."
+        }
+      }
+    },
+    "hints": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 2,
+      "required": [
+        "locale",
+        "accessibility"
+      ],
+      "properties": {
+        "locale": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "x-canopy-maximum-utf8-bytes": 64,
+          "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+        },
+        "accessibility": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "x-canopy-maximum-utf8-bytes": 64,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          }
+        }
+      }
+    },
+    "remainingDeadlineMilliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000,
+      "description": "Host-computed remaining wall-clock budget. A provider cannot extend it."
+    },
+    "input": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": true,
+      "description": "Operation-owned input. The outer envelope applies global byte, depth, collection, property, string, and forbidden-name bounds before the declared operation schema is evaluated."
+    }
+  }
+}

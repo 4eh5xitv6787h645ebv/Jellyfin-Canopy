@@ -1,6 +1,6 @@
 # ADR-0004 — Provider invocation, binding and failure isolation
 
-Status: **accepted design** (ADR-0013; EP-04 implementation pending) · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted; ABI/envelope contract frozen by EP-04.1, invocation pending** · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 
@@ -25,6 +25,10 @@ ask Jellyfin's shared container for that `Type`, and invoke reflectively.
 4. Binding is re-evaluated every call, so an upgrade rebinds automatically —
    verified across `1.0.0.0 → 2.5.0.0`
    ([S13](../spike-evidence.md#s13--lifecycle-matrix)).
+5. Payload schemas are resolved only from the foreign provider assembly under
+   the fixed content-addressed resource convention frozen by ADR-0003, and their
+   bytes must hash to the manifest digest before use. Binding never follows a
+   manifest-selected path or CLR selector.
 
 ### Provider context
 

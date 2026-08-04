@@ -59,9 +59,25 @@ public sealed class PlatformExtensionManifestContractTests
         Assert.Equal(
             ProviderCapabilities,
             manifest.RequestedCapabilities.Capabilities.Select(value => value.Id.Value));
+        Assert.Empty(manifest.ProviderOperations);
         Assert.Equal(
             Frozen.RootElement.GetProperty("extensionManifest").GetProperty("goldenFingerprint").GetString(),
             manifest.Fingerprint.Value);
+
+        var callableFixture = File.ReadAllBytes(RepositoryPath(
+            "conformance",
+            "platform-providers",
+            "Jellyfin.Plugin.CanopyConformance.Alpha",
+            "jellyfin-canopy-extension.json"));
+        Assert.True(PlatformExtensionManifestParser.TryParse(
+            callableFixture,
+            out var callable,
+            out var callableReason), callableReason.ToString());
+        Assert.Equal(PlatformExtensionManifestRejectionReason.None, callableReason);
+        Assert.Single(Assert.IsType<PlatformExtensionManifest>(callable).ProviderOperations);
+        Assert.Equal(
+            Frozen.RootElement.GetProperty("extensionManifest").GetProperty("goldenCallableFingerprint").GetString(),
+            callable.Fingerprint.Value);
     }
 
     [Fact]
@@ -138,6 +154,30 @@ public sealed class PlatformExtensionManifestContractTests
             schema["properties"]!["requestedCapabilities"]!["minItems"] = 1);
         AssertSchemaDrift("requestedCapabilities changed", schema =>
             schema["properties"]!["requestedCapabilities"]!["items"]!["type"] = "number");
+        AssertSchemaDrift("providerOperations changed", schema =>
+            schema["properties"]!["providerOperations"]!["maxItems"] = 17);
+        AssertSchemaDrift("provider operation protocol changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!["protocol"]!
+                ["x-canopy-contained-by"] = "changed");
+        AssertSchemaDrift("provider operation protocol changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!["protocol"]!
+                ["required"]!.AsArray().RemoveAt(0));
+        AssertSchemaDrift("provider operation capabilities changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!
+                ["requiredCapabilities"]!["x-canopy-subset-of"] = "changed");
+        AssertSchemaDrift("provider operation schema references changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!
+                ["requestSchemaId"]!["x-canopy-owned-reference-template"] = "changed");
+        AssertSchemaDrift("provider operation schema references changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!
+                ["responseSchemaId"]!["pattern"] = ".*");
+        AssertSchemaDrift("provider operation schema digests changed", schema =>
+            schema["properties"]!["providerOperations"]!["items"]!["properties"]!
+                ["requestSchemaSha256"]!["pattern"] = ".*");
+        AssertSchemaDrift("provider schema resource convention changed", schema =>
+            schema["x-canopy-provider-schema-resource-template"] = "Caller.Selected.{sha256}");
+        AssertSchemaDrift("provider entrypoint convention changed", schema =>
+            schema["x-canopy-provider-entrypoint-type"] = "Caller.Selected.Type");
     }
 
     private static IReadOnlyList<string> ManifestContractDrift(JsonElement schema, JsonElement frozenRoot)
@@ -147,7 +187,10 @@ public sealed class PlatformExtensionManifestContractTests
         var properties = schema.GetProperty("properties");
         AddIf(!schema.TryGetProperty("type", out var rootType)
             || rootType.GetString() != "object", "root type changed");
-        var expectedProperties = RequiredProperties.Append("description").Order(StringComparer.Ordinal).ToArray();
+        var expectedProperties = RequiredProperties
+            .Concat(new[] { "description", "providerOperations" })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
         var schemaProperties = properties.EnumerateObject()
             .Select(property => property.Name)
             .Order(StringComparer.Ordinal)
@@ -164,7 +207,8 @@ public sealed class PlatformExtensionManifestContractTests
             || !frozenRequired.SequenceEqual(RequiredProperties, StringComparer.Ordinal), "requiredProperties changed");
         AddIf(!frozen.GetProperty("optionalProperties").EnumerateArray()
             .Select(value => value.GetString())
-            .SequenceEqual(new[] { "description" }, StringComparer.Ordinal), "optionalProperties changed");
+            .SequenceEqual(new[] { "description", "providerOperations" }, StringComparer.Ordinal),
+            "optionalProperties changed");
 
         CompareText("fileName", PlatformExtensionManifestParser.ManifestFileName);
         CompareText("schemaId", PlatformExtensionManifestParser.SchemaId);
@@ -182,6 +226,32 @@ public sealed class PlatformExtensionManifestContractTests
         CompareNumber("maximumDescriptionBytes", PlatformExtensionManifestBounds.MaximumDescriptionBytes);
         CompareNumber("maximumCompatibilityMajor", PlatformExtensionManifestBounds.MaximumCompatibilityMajor);
         CompareNumber("maximumRequestedCapabilities", PlatformExtensionManifestBounds.MaximumRequestedCapabilities);
+        CompareText("providerEntrypointTypeName", PlatformProviderAbiContract.EntrypointTypeName);
+        CompareText("providerInvocationMethodName", PlatformProviderAbiContract.InvocationMethodName);
+        CompareText("providerInvocationSignature", PlatformProviderAbiContract.InvocationSignature);
+        CompareNumber("maximumProviderOperations", PlatformExtensionManifestBounds.MaximumProviderOperations);
+        CompareNumber(
+            "maximumProviderOperationIdBytes",
+            PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes);
+        CompareNumber(
+            "maximumProviderRequiredCapabilities",
+            PlatformExtensionManifestBounds.MaximumProviderRequiredCapabilities);
+        CompareNumber(
+            "maximumProviderSchemaIdBytes",
+            PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes);
+        CompareNumber(
+            "maximumProviderSchemaMajor",
+            PlatformExtensionManifestBounds.MaximumProviderSchemaMajor);
+        CompareNumber(
+            "providerSchemaSha256Characters",
+            PlatformProviderAbiContract.ProviderSchemaSha256Characters);
+        CompareText(
+            "providerSchemaResourceTemplate",
+            PlatformProviderAbiContract.ProviderSchemaResourcePrefix
+                + "{sha256}"
+                + PlatformProviderAbiContract.ProviderSchemaResourceSuffix);
+        AddIf(frozen.GetProperty("identityOnlyIsCallable").GetBoolean(),
+            "identity-only callability changed");
 
         AddIf(schema.GetProperty("$id").GetString() != PlatformExtensionManifestParser.SchemaId, "schemaId changed");
         AddIf(schema.GetProperty("additionalProperties").GetBoolean(), "unknownProperties changed");
@@ -194,6 +264,19 @@ public sealed class PlatformExtensionManifestContractTests
             != PlatformExtensionManifestParser.FingerprintAlgorithm, "fingerprintAlgorithm changed");
         AddIf(schema.GetProperty("x-canopy-fingerprint-domain").GetString()
             != PlatformExtensionManifestParser.FingerprintDomain, "fingerprintDomain changed");
+        AddIf(schema.GetProperty("x-canopy-provider-entrypoint-type").GetString()
+            != PlatformProviderAbiContract.EntrypointTypeName, "provider entrypoint convention changed");
+        AddIf(schema.GetProperty("x-canopy-provider-invocation-method").GetString()
+            != PlatformProviderAbiContract.InvocationMethodName, "provider entrypoint convention changed");
+        AddIf(schema.GetProperty("x-canopy-provider-invocation-signature").GetString()
+            != PlatformProviderAbiContract.InvocationSignature, "provider entrypoint convention changed");
+        AddIf(schema.GetProperty("x-canopy-provider-schema-resource-template").GetString()
+            != PlatformProviderAbiContract.ProviderSchemaResourcePrefix
+                + "{sha256}"
+                + PlatformProviderAbiContract.ProviderSchemaResourceSuffix,
+            "provider schema resource convention changed");
+        AddIf(!schema.GetProperty("x-canopy-identity-only-non-callable").GetBoolean(),
+            "identity-only callability changed");
 
         if (!properties.TryGetProperty("schemaVersion", out var schemaVersion))
         {
@@ -304,6 +387,119 @@ public sealed class PlatformExtensionManifestContractTests
                 "requestedCapabilities uniqueness changed");
         }
 
+        if (!properties.TryGetProperty("providerOperations", out var providerOperations))
+        {
+            AddIf(true, "providerOperations changed");
+        }
+        else
+        {
+            AddIf(providerOperations.GetProperty("type").GetString() != "array"
+                || providerOperations.GetProperty("minItems").GetInt32() != 0
+                || providerOperations.GetProperty("maxItems").GetInt32()
+                    != PlatformExtensionManifestBounds.MaximumProviderOperations
+                || providerOperations.GetProperty("x-canopy-unique-by").GetString() != "id"
+                || providerOperations.GetProperty("x-canopy-semantic-order").GetString() != "id-ordinal",
+                "providerOperations changed");
+
+            var operation = providerOperations.GetProperty("items");
+            var operationProperties = operation.GetProperty("properties");
+            var expectedOperationProperties = new[]
+            {
+                "id", "protocol", "requiredCapabilities", "requestSchemaId", "requestSchemaSha256",
+                "responseSchemaId", "responseSchemaSha256",
+            };
+            AddIf(operation.GetProperty("type").GetString() != "object"
+                || operation.GetProperty("additionalProperties").GetBoolean()
+                || !operation.GetProperty("required").EnumerateArray()
+                    .Select(value => value.GetString())
+                    .SequenceEqual(expectedOperationProperties, StringComparer.Ordinal)
+                || !operationProperties.EnumerateObject().Select(property => property.Name)
+                    .SequenceEqual(expectedOperationProperties, StringComparer.Ordinal),
+                "providerOperations changed");
+
+            var operationId = operationProperties.GetProperty("id");
+            AddIf(operationId.GetProperty("type").GetString() != "string"
+                || operationId.GetProperty("minLength").GetInt32() != 5
+                || operationId.GetProperty("maxLength").GetInt32()
+                    != PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes
+                || operationId.GetProperty("x-canopy-maximum-utf8-bytes").GetInt32()
+                    != PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes
+                || operationId.GetProperty("pattern").GetString()
+                    != frozen.GetProperty("providerOperationIdentifierPattern").GetString(),
+                "provider operation id changed");
+
+            var protocol = operationProperties.GetProperty("protocol");
+            var protocolMembers = protocol.GetProperty("properties");
+            AddIf(protocol.GetProperty("type").GetString() != "object"
+                || protocol.GetProperty("additionalProperties").GetBoolean()
+                || !protocol.GetProperty("required").EnumerateArray()
+                    .Select(value => value.GetString())
+                    .SequenceEqual(new[] { "min", "max" }, StringComparer.Ordinal)
+                || !protocolMembers.EnumerateObject().Select(member => member.Name)
+                    .SequenceEqual(new[] { "min", "max" }, StringComparer.Ordinal)
+                || protocol.GetProperty("x-canopy-range-order").GetString() != "min<=max"
+                || protocol.GetProperty("x-canopy-contained-by").GetString() != "$.platform"
+                || protocolMembers.EnumerateObject().Any(member =>
+                    member.Value.GetProperty("type").GetString() != "integer"
+                    || member.Value.GetProperty("minimum").GetInt32() != 1
+                    || member.Value.GetProperty("maximum").GetInt32()
+                        != PlatformExtensionManifestBounds.MaximumCompatibilityMajor),
+                "provider operation protocol changed");
+
+            var requiredCapabilities = operationProperties.GetProperty("requiredCapabilities");
+            AddIf(requiredCapabilities.GetProperty("type").GetString() != "array"
+                || requiredCapabilities.GetProperty("minItems").GetInt32() != 0
+                || requiredCapabilities.GetProperty("maxItems").GetInt32()
+                    != PlatformExtensionManifestBounds.MaximumProviderRequiredCapabilities
+                || !requiredCapabilities.GetProperty("uniqueItems").GetBoolean()
+                || requiredCapabilities.GetProperty("x-canopy-subset-of").GetString()
+                    != "$.requestedCapabilities"
+                || requiredCapabilities.GetProperty("items").GetProperty("type").GetString() != "string"
+                || !requiredCapabilities.GetProperty("items").GetProperty("enum").EnumerateArray()
+                    .Select(value => value.GetString())
+                    .SequenceEqual(ProviderCapabilities, StringComparer.Ordinal),
+                "provider operation capabilities changed");
+
+            CompareProviderSchemaReference("requestSchemaId", "request");
+            CompareProviderSchemaReference("responseSchemaId", "response");
+            CompareProviderSchemaDigest("requestSchemaSha256");
+            CompareProviderSchemaDigest("responseSchemaSha256");
+
+            void CompareProviderSchemaReference(string name, string direction)
+            {
+                var reference = operationProperties.GetProperty(name);
+                AddIf(reference.GetProperty("type").GetString() != "string"
+                    || reference.GetProperty("minLength").GetInt32() != 1
+                    || reference.GetProperty("maxLength").GetInt32()
+                        != PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes
+                    || reference.GetProperty("x-canopy-maximum-utf8-bytes").GetInt32()
+                        != PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes
+                    || reference.GetProperty("x-canopy-maximum-schema-major").GetInt32()
+                        != PlatformExtensionManifestBounds.MaximumProviderSchemaMajor
+                    || reference.GetProperty("x-canopy-owned-reference-template").GetString()
+                        != frozen.GetProperty("providerSchemaReferenceTemplate").GetString()!
+                            .Replace("{direction}", direction, StringComparison.Ordinal)
+                    || reference.GetProperty("pattern").GetString()
+                        != frozen.GetProperty("providerSchemaReferencePatternTemplate").GetString()!
+                            .Replace("{direction}", direction, StringComparison.Ordinal),
+                    "provider operation schema references changed");
+            }
+
+            void CompareProviderSchemaDigest(string name)
+            {
+                var digest = operationProperties.GetProperty(name);
+                AddIf(digest.GetProperty("type").GetString() != "string"
+                    || digest.GetProperty("minLength").GetInt32()
+                        != PlatformProviderAbiContract.ProviderSchemaSha256Characters
+                    || digest.GetProperty("maxLength").GetInt32()
+                        != PlatformProviderAbiContract.ProviderSchemaSha256Characters
+                    || digest.GetProperty("pattern").GetString() != "^[0-9a-f]{64}$"
+                    || digest.GetProperty("x-canopy-embedded-resource-template").GetString()
+                        != frozen.GetProperty("providerSchemaResourceTemplate").GetString(),
+                    "provider operation schema digests changed");
+            }
+        }
+
         return drift.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
         void CompareText(string name, string expected) =>
@@ -382,4 +578,10 @@ public sealed class PlatformExtensionManifestContractTests
             "platform",
             "v1",
             name));
+
+    private static string RepositoryPath(
+        string first,
+        params string[] rest) => Path.Combine(
+            Path.GetFullPath(Path.Combine(ContractPath(string.Empty), "..", "..", "..")),
+            Path.Combine(new[] { first }.Concat(rest).ToArray()));
 }

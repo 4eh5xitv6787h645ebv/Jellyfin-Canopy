@@ -20,6 +20,8 @@ public sealed class PlatformExtensionManifestTests
     private const string Storage = "jellyfin.canopy.storage.read";
     private const string Ui = "jellyfin.canopy.ui.contribute";
     private const string Integrations = "jellyfin.canopy.integrations.invoke";
+    private const string RequestSchemaSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string ResponseSchemaSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     private static readonly string[] ProviderCapabilities =
     [
@@ -75,6 +77,11 @@ public sealed class PlatformExtensionManifestTests
         Assert.Equal(
             PlatformCapabilityVocabulary.MaximumCapabilityCount,
             PlatformExtensionManifestBounds.MaximumRequestedCapabilities);
+        Assert.Equal(16, PlatformExtensionManifestBounds.MaximumProviderOperations);
+        Assert.Equal(128, PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes);
+        Assert.Equal(5, PlatformExtensionManifestBounds.MaximumProviderRequiredCapabilities);
+        Assert.Equal(308, PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes);
+        Assert.Equal(65535, PlatformExtensionManifestBounds.MaximumProviderSchemaMajor);
     }
 
     [Fact]
@@ -154,6 +161,196 @@ public sealed class PlatformExtensionManifestTests
             ProviderCapabilities,
             Parse(ManifestBytes(capabilities: ProviderCapabilities)).RequestedCapabilities.Capabilities
                 .Select(value => value.Id.Value));
+    }
+
+    [Fact]
+    public void IdentityOnlyManifestsRemainValidNonCallableAndFingerprintCompatible()
+    {
+        var absent = Parse(ManifestBytes());
+        var empty = Parse(ManifestBytes(providerOperationsJson: "[]"));
+
+        Assert.Empty(absent.ProviderOperations);
+        Assert.Empty(empty.ProviderOperations);
+        Assert.Equal(IndependentFingerprint(absent), absent.Fingerprint.Value);
+        Assert.Equal(absent.Fingerprint.Value, empty.Fingerprint.Value);
+    }
+
+    [Fact]
+    public void ProviderOperationsParseIntoCanonicalImmutableDeclarations()
+    {
+        var first = "org.example.provider.alpha";
+        var second = "org.example.provider.zeta";
+        var manifest = Parse(ManifestBytes(
+            platformMax: 2,
+            capabilities: new[] { Storage, Items },
+            providerOperationsJson: "["
+                + OperationJson(second, 2, 2, new[] { Storage }) + ","
+                + OperationJson(first, 1, 2, new[] { Items, Storage }) + "]"));
+
+        Assert.Equal(new[] { first, second }, manifest.ProviderOperations.Select(operation => operation.Id));
+        var alpha = manifest.ProviderOperations[0];
+        Assert.Equal((1, 2), (alpha.ProtocolRange.Min, alpha.ProtocolRange.Max));
+        Assert.Equal(
+            new[] { Items, Storage },
+            alpha.RequiredCapabilities.Capabilities.Select(capability => capability.Id.Value));
+        Assert.Equal(OwnedSchemaId("org.example.media-tools", first, "request", 1), alpha.RequestSchemaId);
+        Assert.Equal(RequestSchemaSha256, alpha.RequestSchemaSha256);
+        Assert.Equal(OwnedSchemaId("org.example.media-tools", first, "response", 1), alpha.ResponseSchemaId);
+        Assert.Equal(ResponseSchemaSha256, alpha.ResponseSchemaSha256);
+        Assert.Equal(IndependentFingerprint(manifest), manifest.Fingerprint.Value);
+    }
+
+    [Fact]
+    public void ProviderOperationCountIdentifierCapabilityAndSchemaBoundsFailClosedAtNextValue()
+    {
+        var exactOperations = Enumerable.Range(0, PlatformExtensionManifestBounds.MaximumProviderOperations)
+            .Select(index => OperationJson("org.example.operation" + index, 1, 1, Array.Empty<string>()))
+            .ToArray();
+        Assert.Equal(
+            PlatformExtensionManifestBounds.MaximumProviderOperations,
+            Parse(ManifestBytes(providerOperationsJson: "[" + string.Join(',', exactOperations) + "]"))
+                .ProviderOperations.Length);
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderOperations,
+            Reject(ManifestBytes(providerOperationsJson: "["
+                + string.Join(',', exactOperations.Append(OperationJson(
+                    "org.example.operation-over",
+                    1,
+                    1,
+                    Array.Empty<string>()))) + "]")));
+
+        var exactExtensionId = new string('a', 31) + "." + new string('b', 32) + "." + new string('c', 63);
+        var exactOperationId = "a.b." + new string('c', 124);
+        var exact = Parse(ManifestBytes(
+            id: exactExtensionId,
+            capabilities: ProviderCapabilities,
+            providerOperationsJson: "[" + OperationJson(
+                exactOperationId,
+                1,
+                1,
+                ProviderCapabilities,
+                schemaMajor: PlatformExtensionManifestBounds.MaximumProviderSchemaMajor,
+                extensionId: exactExtensionId) + "]"));
+        Assert.Equal(PlatformExtensionManifestBounds.MaximumProviderOperationIdBytes,
+            Encoding.ASCII.GetByteCount(exact.ProviderOperations[0].Id));
+        Assert.Equal(PlatformExtensionManifestBounds.MaximumProviderSchemaIdBytes,
+            Encoding.ASCII.GetByteCount(exact.ProviderOperations[0].ResponseSchemaId));
+
+        Reject(ManifestBytes(providerOperationsJson: "[" + OperationJson(
+            exactOperationId + "d",
+            1,
+            1,
+            Array.Empty<string>()) + "]"));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderOperationCapabilities,
+            Reject(ManifestBytes(
+                capabilities: ProviderCapabilities,
+                providerOperationsJson: "[" + OperationJson(
+                    "org.example.too-many-capabilities",
+                    1,
+                    1,
+                    ProviderCapabilities.Append(Items).ToArray()) + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderSchemaReference,
+            Reject(ManifestBytes(
+                id: exactExtensionId,
+                providerOperationsJson: "[" + OperationJson(
+                    exactOperationId,
+                    1,
+                    1,
+                    Array.Empty<string>(),
+                    PlatformExtensionManifestBounds.MaximumProviderSchemaMajor + 1,
+                    exactExtensionId) + "]")));
+    }
+
+    [Fact]
+    public void ProviderDeclarationsRejectDuplicatesUnknownsIncompatibleRangesAndOverCapability()
+    {
+        const string operationId = "org.example.provider.hello";
+        var declaration = OperationJson(operationId, 1, 1, new[] { Items });
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.DuplicateProviderOperation,
+            Reject(ManifestBytes(
+                capabilities: new[] { Items },
+                providerOperationsJson: "[" + declaration + "," + declaration + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.IncompatibleProviderOperation,
+            Reject(ManifestBytes(providerOperationsJson: "["
+                + OperationJson(operationId, 2, 2, Array.Empty<string>()) + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderOperationCapabilities,
+            Reject(ManifestBytes(
+                capabilities: Array.Empty<string>(),
+                providerOperationsJson: "[" + declaration + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderSchemaReference,
+            Reject(ManifestBytes(providerOperationsJson: "[" + OperationJson(
+                operationId,
+                1,
+                1,
+                Array.Empty<string>(),
+                requestSchemaId: "https://example.invalid/request.json") + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderSchemaReference,
+            Reject(ManifestBytes(providerOperationsJson: "[" + OperationJson(
+                operationId,
+                1,
+                1,
+                Array.Empty<string>(),
+                requestSchemaSha256: RequestSchemaSha256.ToUpperInvariant()) + "]")));
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.InvalidProviderSchemaReference,
+            Reject(ManifestBytes(providerOperationsJson: "[" + OperationJson(
+                operationId,
+                1,
+                1,
+                Array.Empty<string>(),
+                responseSchemaSha256: ResponseSchemaSha256[..^1]) + "]")));
+
+        var unknown = JsonNode.Parse(declaration)!.AsObject();
+        unknown["type"] = "Foreign.Entrypoint";
+        Assert.Equal(
+            PlatformExtensionManifestRejectionReason.UnknownProperty,
+            Reject(ManifestBytes(providerOperationsJson: "[" + unknown.ToJsonString() + "]")));
+    }
+
+    [Fact]
+    public void ProviderFingerprintIsOrderIndependentAndChangesForEverySemanticDeclarationField()
+    {
+        const string alpha = "org.example.provider.alpha";
+        const string zeta = "org.example.provider.zeta";
+        var baseline = Parse(ManifestBytes(
+            platformMax: 2,
+            capabilities: new[] { Items, Storage },
+            providerOperationsJson: "["
+                + OperationJson(zeta, 1, 2, new[] { Storage }) + ","
+                + OperationJson(alpha, 1, 1, new[] { Storage, Items }) + "]"));
+        var reordered = Parse(ManifestBytes(
+            platformMax: 2,
+            capabilities: new[] { Storage, Items },
+            providerOperationsJson: "["
+                + OperationJson(alpha, 1, 1, new[] { Items, Storage }) + ","
+                + OperationJson(zeta, 1, 2, new[] { Storage }) + "]"));
+        Assert.Equal(baseline.Fingerprint.Value, reordered.Fingerprint.Value);
+
+        var mutations = new[]
+        {
+            OperationJson("org.example.provider.changed", 1, 1, new[] { Items, Storage }),
+            OperationJson(alpha, 1, 2, new[] { Items, Storage }),
+            OperationJson(alpha, 1, 1, new[] { Items }),
+            OperationJson(alpha, 1, 1, new[] { Items, Storage }, schemaMajor: 2),
+            OperationJson(alpha, 1, 1, new[] { Items, Storage }, responseSchemaMajor: 2),
+            OperationJson(alpha, 1, 1, new[] { Items, Storage }, requestSchemaSha256: new string('c', 64)),
+            OperationJson(alpha, 1, 1, new[] { Items, Storage }, responseSchemaSha256: new string('d', 64)),
+        };
+        Assert.All(mutations, operation => Assert.NotEqual(
+            baseline.Fingerprint.Value,
+            Parse(ManifestBytes(
+                platformMax: 2,
+                capabilities: new[] { Items, Storage },
+                providerOperationsJson: "[" + operation + ","
+                    + OperationJson(zeta, 1, 2, new[] { Storage }) + "]"))
+                .Fingerprint.Value));
     }
 
     [Theory]
@@ -484,7 +681,8 @@ public sealed class PlatformExtensionManifestTests
         int platformMax = 1,
         int hostMin = 12,
         int hostMax = 12,
-        IReadOnlyList<string>? capabilities = null)
+        IReadOnlyList<string>? capabilities = null,
+        string? providerOperationsJson = null)
     {
         capabilities ??= Array.Empty<string>();
         var descriptionProperty = description is null
@@ -504,9 +702,43 @@ public sealed class PlatformExtensionManifestTests
             + ",\"maxMajor\":" + hostMax.ToString(CultureInfo.InvariantCulture) + "}"
             + ",\"requestedCapabilities\":["
             + string.Join(',', capabilities.Select(value => JsonSerializer.Serialize(value)))
-            + "]}";
+            + "]"
+            + (providerOperationsJson is null ? string.Empty : ",\"providerOperations\":" + providerOperationsJson)
+            + "}";
         return Encoding.UTF8.GetBytes(json);
     }
+
+    private static string OperationJson(
+        string operationId,
+        int protocolMin,
+        int protocolMax,
+        IReadOnlyList<string> requiredCapabilities,
+        int schemaMajor = 1,
+        string extensionId = "org.example.media-tools",
+        int? responseSchemaMajor = null,
+        string? requestSchemaId = null,
+        string? responseSchemaId = null,
+        string requestSchemaSha256 = RequestSchemaSha256,
+        string responseSchemaSha256 = ResponseSchemaSha256) => JsonSerializer.Serialize(new
+        {
+            id = operationId,
+            protocol = new { min = protocolMin, max = protocolMax },
+            requiredCapabilities,
+            requestSchemaId = requestSchemaId
+                ?? OwnedSchemaId(extensionId, operationId, "request", schemaMajor),
+            requestSchemaSha256,
+            responseSchemaId = responseSchemaId
+                ?? OwnedSchemaId(extensionId, operationId, "response", responseSchemaMajor ?? schemaMajor),
+            responseSchemaSha256,
+        });
+
+    private static string OwnedSchemaId(
+        string extensionId,
+        string operationId,
+        string direction,
+        int schemaMajor) => string.Create(
+            CultureInfo.InvariantCulture,
+            $"urn:jellyfin-canopy:provider-schema:{extensionId}:{operationId}:{direction}:{schemaMajor}");
 
     private static byte[] AddRootProperty(byte[] source, string property, string value)
     {
@@ -557,6 +789,28 @@ public sealed class PlatformExtensionManifestTests
         foreach (var capability in manifest.RequestedCapabilities.Capabilities)
         {
             Append(capability.Id.Value);
+        }
+
+        if (!manifest.ProviderOperations.IsEmpty)
+        {
+            Append("provider-operations-v1");
+            Append(manifest.ProviderOperations.Length.ToString(CultureInfo.InvariantCulture));
+            foreach (var operation in manifest.ProviderOperations)
+            {
+                Append(operation.Id);
+                Append(operation.ProtocolRange.Min.ToString(CultureInfo.InvariantCulture));
+                Append(operation.ProtocolRange.Max.ToString(CultureInfo.InvariantCulture));
+                Append(operation.RequiredCapabilities.Capabilities.Length.ToString(CultureInfo.InvariantCulture));
+                foreach (var capability in operation.RequiredCapabilities.Capabilities)
+                {
+                    Append(capability.Id.Value);
+                }
+
+                Append(operation.RequestSchemaId);
+                Append(operation.RequestSchemaSha256);
+                Append(operation.ResponseSchemaId);
+                Append(operation.ResponseSchemaSha256);
+            }
         }
 
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();

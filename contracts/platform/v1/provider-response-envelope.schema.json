@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jellyfin-canopy:platform:v1:provider-response-envelope",
+  "title": "Jellyfin Canopy installed-provider response envelope v1",
+  "description": "The successful JSON value returned by a provider entrypoint and validated before it leaves the provider boundary. Transport, ABI, deadline, cancellation and provider-fault outcomes remain kernel-owned errors and never carry raw exceptions.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-canopy-maximum-document-bytes": 65536,
+  "x-canopy-maximum-json-depth": 12,
+  "x-canopy-maximum-collection-items": 64,
+  "x-canopy-maximum-object-properties": 64,
+  "x-canopy-maximum-property-name-utf8-bytes": 256,
+  "x-canopy-maximum-identifier-utf8-bytes": 128,
+  "x-canopy-maximum-string-utf8-bytes": 4096,
+  "x-canopy-unknown-properties": "reject",
+  "x-canopy-forbidden-property-name-comparison": "ordinal-ignore-case",
+  "x-canopy-forbidden-property-names": [
+    "token",
+    "rawToken",
+    "bearerToken",
+    "accessToken",
+    "apiKey",
+    "password",
+    "secret",
+    "cookie",
+    "authorization",
+    "claimsPrincipal",
+    "httpContext",
+    "serviceProvider",
+    "iServiceProvider",
+    "requestServices",
+    "unrestrictedService",
+    "database",
+    "dbContext",
+    "dbHandle",
+    "databaseHandle",
+    "hostHandle",
+    "hostService",
+    "services",
+    "path",
+    "filePath",
+    "directoryPath",
+    "absolutePath",
+    "pluginPath",
+    "credential",
+    "credentials",
+    "exception",
+    "rawException",
+    "stackTrace",
+    "connectionString",
+    "environment",
+    "authority"
+  ],
+  "required": [
+    "schemaVersion",
+    "correlationId",
+    "protocol",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "x-canopy-maximum-utf8-bytes": 128,
+      "x-canopy-equals-request-path": "$.correlationId",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "The exact opaque correlation identifier supplied by the request envelope."
+    },
+    "protocol": {
+      "type": "integer",
+      "const": 1,
+      "x-canopy-equals-request-path": "$.protocol",
+      "description": "The negotiated request protocol; a provider cannot select another version."
+    },
+    "result": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": true,
+      "description": "Operation-owned result. The outer envelope applies global byte, depth, collection, property, string, and forbidden-name bounds before the declared operation result schema is evaluated."
+    }
+  }
+}
