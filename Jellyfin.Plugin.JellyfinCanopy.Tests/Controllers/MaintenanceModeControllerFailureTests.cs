@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -75,6 +76,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             string bodyJson = JsonSerializer.Serialize(result.Value);
             Assert.DoesNotContain("secret-path-detail", bodyJson, StringComparison.Ordinal);
             using var body = JsonDocument.Parse(bodyJson);
+            Assert.False(body.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(MaintenancePhases.Inactive, body.RootElement.GetProperty("Phase").GetString());
+            Assert.False(File.Exists(_stateFilePath));
+        }
+
+        [Fact]
+        public async Task UnknownAction_ReturnsStructuredBadRequestWithoutPersistingState()
+        {
+            var users = new StubUserManager();
+            using var service = CreateService(users, AtomicFile.WriteAllText);
+            var controller = CreateController(users, service);
+
+            var result = Assert.IsType<ObjectResult>(await controller.EnableMaintenanceMode(new MaintenanceModeRequest
+            {
+                Message = "maintenance",
+                Action = "unexpected"
+            }));
+
+            Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+            using var body = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
             Assert.False(body.RootElement.GetProperty("success").GetBoolean());
             Assert.Equal(MaintenancePhases.Inactive, body.RootElement.GetProperty("Phase").GetString());
             Assert.False(File.Exists(_stateFilePath));

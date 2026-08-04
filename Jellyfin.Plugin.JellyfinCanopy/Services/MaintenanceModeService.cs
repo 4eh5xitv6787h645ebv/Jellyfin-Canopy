@@ -24,14 +24,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public const string Faulted = "Faulted";
     }
 
+    /// <summary>Canonical durable actions accepted by maintenance configuration and state.</summary>
+    public static class MaintenanceActions
+    {
+        public const string None = "none";
+        public const string DisableAccounts = "disable_accounts";
+        public const string DisableRemote = "disable_remote";
+        public const string Both = "both";
+
+        /// <summary>Returns whether <paramref name="action"/> names an explicit supported action.</summary>
+        public static bool IsSupported(string? action)
+            => action is None or DisableAccounts or DisableRemote or Both;
+    }
+
     public class MaintenanceState
     {
         public int SchemaVersion { get; set; } = 2;
         public string Phase { get; set; } = string.Empty;
         public bool IsActive { get; set; }
         public string Message { get; set; } = string.Empty;
-        /// <summary>"disable_accounts" | "disable_remote" | "both"</summary>
-        public string Action { get; set; } = "disable_accounts";
+        /// <summary>"none" | "disable_accounts" | "disable_remote" | "both"</summary>
+        public string Action { get; set; } = MaintenanceActions.DisableAccounts;
         public DateTime StartedAt { get; set; }
         public DateTime? EndsAt { get; set; }
         /// <summary>Users whose accounts were disabled by maintenance mode (so we know what to restore).</summary>
@@ -144,10 +157,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
         }
 
-        /// <param name="action">"disable_accounts" | "disable_remote" | "both"</param>
+        /// <param name="action">"none" | "disable_accounts" | "disable_remote" | "both"</param>
         /// <param name="affectedUserIds">Specific user IDs to affect; null or empty = all non-admin users.</param>
         public async Task EnableAsync(string message, int durationMinutes, string action, List<string>? affectedUserIds)
         {
+            action ??= MaintenanceActions.DisableAccounts;
+            if (!MaintenanceActions.IsSupported(action))
+            {
+                throw new ArgumentException("Maintenance action must be none, disable_accounts, disable_remote, or both.", nameof(action));
+            }
+
             await _stateGate.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -163,6 +182,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 if (string.Equals(currentState.Phase, MaintenancePhases.Active, StringComparison.Ordinal))
                 {
+                    if (!string.Equals(currentState.Action, action, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"Maintenance mode is already active with action '{currentState.Action}'. " +
+                            "Disable it before changing the maintenance action.");
+                    }
+
                     currentState.Message = message ?? string.Empty;
                     currentState.EndsAt = durationMinutes > 0 ? UtcNow().AddMinutes(durationMinutes) : null;
                     currentState.FailureReason = null;
@@ -175,41 +201,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
-                bool doAccounts = action == "disable_accounts" || action == "both";
-                bool doRemote = action == "disable_remote" || action == "both";
-
-                var allNonAdmin = _userManager.GetUsers()
-                    .Where(u => !u.HasPermission(PermissionKind.IsAdministrator))
-                    .ToList();
-
-                IEnumerable<Jellyfin.Database.Implementations.Entities.User> targetUsers;
-                if (affectedUserIds == null || affectedUserIds.Count == 0)
-                {
-                    targetUsers = allNonAdmin;
-                }
-                else
-                {
-                    var idSet = affectedUserIds
-                        .Select(s => Guid.TryParse(s, out var parsed) ? parsed : Guid.Empty)
-                        .Where(id => id != Guid.Empty)
-                        .ToHashSet();
-                    targetUsers = allNonAdmin.Where(u => idSet.Contains(u.Id));
-                }
-
                 var plan = new List<(Guid Id, string Username, MediaBrowser.Model.Users.UserPolicy Policy, bool DisableAccount, bool DisableRemote)>();
-                foreach (var user in targetUsers)
+                if (action != MaintenanceActions.None)
                 {
-                    var dto = _userManager.GetUserDto(user, string.Empty);
-                    if (dto.Policy == null)
+                    bool doAccounts = action is MaintenanceActions.DisableAccounts or MaintenanceActions.Both;
+                    bool doRemote = action is MaintenanceActions.DisableRemote or MaintenanceActions.Both;
+
+                    var allNonAdmin = _userManager.GetUsers()
+                        .Where(u => !u.HasPermission(PermissionKind.IsAdministrator))
+                        .ToList();
+
+                    IEnumerable<Jellyfin.Database.Implementations.Entities.User> targetUsers;
+                    if (affectedUserIds == null || affectedUserIds.Count == 0)
                     {
-                        throw new InvalidOperationException($"Cannot read the policy for maintenance target '{user.Username}'.");
+                        targetUsers = allNonAdmin;
+                    }
+                    else
+                    {
+                        var idSet = affectedUserIds
+                            .Select(s => Guid.TryParse(s, out var parsed) ? parsed : Guid.Empty)
+                            .Where(id => id != Guid.Empty)
+                            .ToHashSet();
+                        targetUsers = allNonAdmin.Where(u => idSet.Contains(u.Id));
                     }
 
-                    bool disableAccount = doAccounts && !dto.Policy.IsDisabled;
-                    bool disableRemote = doRemote && dto.Policy.EnableRemoteAccess;
-                    if (disableAccount || disableRemote)
+                    foreach (var user in targetUsers)
                     {
-                        plan.Add((user.Id, user.Username, dto.Policy, disableAccount, disableRemote));
+                        var dto = _userManager.GetUserDto(user, string.Empty);
+                        if (dto.Policy == null)
+                        {
+                            throw new InvalidOperationException($"Cannot read the policy for maintenance target '{user.Username}'.");
+                        }
+
+                        bool disableAccount = doAccounts && !dto.Policy.IsDisabled;
+                        bool disableRemote = doRemote && dto.Policy.EnableRemoteAccess;
+                        if (disableAccount || disableRemote)
+                        {
+                            plan.Add((user.Id, user.Username, dto.Policy, disableAccount, disableRemote));
+                        }
                     }
                 }
 
@@ -220,7 +249,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     Phase = MaintenancePhases.Active,
                     IsActive = true,
                     Message = message ?? string.Empty,
-                    Action = action ?? "disable_accounts",
+                    Action = action,
                     StartedAt = now,
                     EndsAt = durationMinutes > 0 ? now.AddMinutes(durationMinutes) : null,
                     AccountDisabledUserIds = plan.Where(p => p.DisableAccount).Select(p => p.Id.ToString()).ToList(),
@@ -662,7 +691,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             state.AccountDisabledUserIds ??= new List<string>();
             state.RemoteDisabledUserIds ??= new List<string>();
             state.Message ??= string.Empty;
-            state.Action ??= "disable_accounts";
+            state.Action ??= MaintenanceActions.DisableAccounts;
+            if (!MaintenanceActions.IsSupported(state.Action))
+            {
+                throw new InvalidDataException($"Unknown maintenance action '{state.Action}'.");
+            }
+
+            if (state.Action == MaintenanceActions.None &&
+                (state.AccountDisabledUserIds.Count != 0 || state.RemoteDisabledUserIds.Count != 0))
+            {
+                throw new InvalidDataException("Warning-only maintenance state cannot contain policy recovery records.");
+            }
             if (string.IsNullOrWhiteSpace(state.Phase))
             {
                 state.Phase = state.IsActive ? MaintenancePhases.Active : MaintenancePhases.Inactive;
@@ -761,7 +800,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 nameof(MaintenanceState.IsActive),
                 nameof(MaintenanceState.Message),
-                nameof(MaintenanceState.Action),
                 nameof(MaintenanceState.StartedAt),
                 nameof(MaintenanceState.EndsAt),
                 nameof(MaintenanceState.AccountDisabledUserIds),
@@ -784,6 +822,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             bool versioned = HasProperty(element, nameof(MaintenanceState.SchemaVersion));
             string[] versionedRequired =
             {
+                nameof(MaintenanceState.Action),
                 nameof(MaintenanceState.Phase),
                 nameof(MaintenanceState.FailureReason),
                 nameof(MaintenanceState.RecoveryAvailable),
