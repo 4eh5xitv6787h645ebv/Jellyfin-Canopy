@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 41758,
-        "totalLines": 51374
+        "coveredLines": 42793,
+        "totalLines": 52590
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 41751,
-        "maximumCoveredLines": 41758
+        "minimumCoveredLines": 42783,
+        "maximumCoveredLines": 42793
       },
       "tolerance": {
-        "missingCoveredLines": 7,
-        "rationale": "The #656 EP-04.2 slice adds exact epoch-fenced registry operation claims, lazy current-LocalPlugin foreign concrete-DI binding, exact reflective ABI admission, repeated host and registry revalidation, and bounded content-addressed embedded-schema acquisition without invoking a provider method or adding routes, workers, caches, deployment, or Android/client behavior. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 51,374-line production source and 4,025-test scope measured 41,753, 41,751 and 41,752 covered lines; the first clean GitHub Actions run on the same commit and scope measured 41,758 after all 4,025 tests passed. The reviewed observed high-water is therefore 41,758/51,374 (81.282%) and the exact observed floor is 41,751/51,374 (81.269%); the seven-line schedule-dependent instrumentation spread is bounded to 0.014 percentage points. Relative to the #654 baseline of 40,990/50,558 (81.075%), the change adds 816 instrumented lines and at least 761 covered lines while increasing overall coverage. Focused authority-race, lifecycle-race, concrete-DI, collectible-load-context, ABI-near-miss, schema-byte/structure/inventory and architecture tests cover the new binding-critical paths. Provider method invocation, payload evaluation, generation cancellation, resilience and protected result-release leases remain explicitly deferred to the next EP-04 child; #648 remains the nonreturning-filesystem isolation residual. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 10,
+        "rationale": "The #659 EP-04.3 slice adds registry-owned generation invocation and protected result-release leases, zero-queue per-provider bulkheads, caller/generation/deadline arbitration with fixed cooperative grace, owned runaway observation, strict bounded Alpha request/response validation, and the first real collectible Alpha Hello invocation without routes, startup workers, deployment, or Android/client production behavior. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 52,590-line production source and 4,094-test scope measured 42,783, 42,786 and 42,785 covered lines; the first clean GitHub Actions run on the same source and scope measured 42,793 after all 4,094 tests passed. The reviewed observed high-water is therefore 42,793/52,590 (81.371%) and the exact observed floor is 42,783/52,590 (81.352%); the ten-line schedule-dependent instrumentation spread is bounded to 0.019 percentage points. Relative to the #656 baseline of 41,758/51,374 (81.282%), the change adds 1,216 instrumented lines and at least 1,025 covered lines while increasing overall coverage. Focused payload-boundary, schema, authority-race, lifecycle-race, cancellation, bulkhead, peer-isolation, collectible-load-context, real-fixture and architecture tests cover the new invocation-critical paths. Circuit breakers, health probes, public gateways, SDKs, state/events and #648 killable filesystem isolation remain explicitly deferred. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

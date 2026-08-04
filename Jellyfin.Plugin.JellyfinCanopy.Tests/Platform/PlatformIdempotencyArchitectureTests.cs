@@ -27,6 +27,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             ["PlatformPrepareHandleOwner.cs:_byHandle"] = "The reviewed fixed-cap opaque prepare-handle owner.",
             ["PlatformPrepareHandleOwner.cs:_bySemantic"] = "The reviewed stable semantic prepare-handle reuse index.",
             ["PlatformPreparedActionContextOwner.cs:_entries"] = "The reviewed fixed-cap prepared action context owner.",
+            ["PlatformProviderRegistry.cs:_activeProviderInvocations"] = "The reviewed registry-owned zero-queue per-provider bulkhead index.",
         };
 
         [Fact]

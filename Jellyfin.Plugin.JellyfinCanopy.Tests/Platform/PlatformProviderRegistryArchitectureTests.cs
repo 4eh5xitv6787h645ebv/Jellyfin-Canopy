@@ -132,7 +132,7 @@ public sealed class PlatformProviderRegistryArchitectureTests
     }
 
     [Fact]
-    public void RegistryConsumesObservationsWithoutFilesystemHostManagerRoutesOrRuntimeInvocation()
+    public void RegistryOwnsLeasesWithoutFilesystemHostManagerRoutesOrForeignInvocation()
     {
         var registry = Code(SourceFile(RegistryFile));
         Assert.Contains(nameof(PlatformInstalledManifestObservation), registry, StringComparison.Ordinal);
@@ -142,7 +142,8 @@ public sealed class PlatformProviderRegistryArchitectureTests
             "System.IO", "File.", "Directory.", "Path.", "IPluginManager", "LocalPlugin",
             "MediaBrowser", "Controller", "Route(", "HttpContext", "IHostedService",
             "BackgroundService", "AddHostedService", "System.Reflection", "Assembly.Load",
-            "Activator", "ProviderInvocation", "CreateProvider(", "Android",
+            "Activator", "MethodInfo.Invoke", "InvocationMethod.Invoke", "CreateProvider(",
+            "PlatformProviderForeignEntrypoint", "Android",
         })
         {
             Assert.DoesNotContain(forbidden, registry, StringComparison.OrdinalIgnoreCase);
@@ -192,6 +193,7 @@ public sealed class PlatformProviderRegistryArchitectureTests
             new[]
             {
                 "PlatformProviderBindingService.cs",
+                "PlatformProviderInvocationService.cs",
                 RegistryFile,
                 "PlatformProviderRegistryAdminBoundary.cs",
                 DomainFile,

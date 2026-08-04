@@ -1,6 +1,6 @@
 # ADR-0004 — Provider invocation, binding and failure isolation
 
-Status: **accepted; ABI/envelopes frozen by EP-04.1 and lazy binding/schema admission implemented by EP-04.2; invocation and resilience pending** · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted; ABI/envelopes frozen by EP-04.1, lazy binding/schema admission implemented by EP-04.2, and bounded Alpha invocation implemented by EP-04.3; circuits and health pending** · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 
@@ -41,6 +41,15 @@ constructor code, so this is lazy construction, not containment or a claim that
 zero provider code can execute. The result is not reusable invocation authority,
 does not establish provider health, and must not be invoked until the later owner
 acquires its own generation/cancellation and protected result-release leases.
+
+EP-04.3 supplies that invocation owner. The registry admits at most two active
+calls per provider with no queue. An opaque exact-generation lease carries only
+the registry-owned cancellation token; a short one-use result-release lease is
+the publication linearization point. Reconciliation, lifecycle decisions and
+shutdown fence new calls and releases, cancel the retired generation outside the
+registry lock, and wait only for already-started bounded releases. A runaway
+provider keeps its slot until its real task completes, remains observed, and can
+never publish a late result.
 
 `AssemblyIdentity` is the descriptor-verified installed DLL-set observation from
 ADR-0005. It fences generations when a completed reconciliation observes drift;
@@ -111,6 +120,9 @@ Every outcome maps to a stable code. Verified:
 Plus: per-extension concurrency caps, bulkheads so one provider cannot starve
 another, and circuit breakers that open on repeated faults.
 
+EP-04.3 implements the cap and bulkhead with two zero-queue slots per provider.
+Circuit breakers and provider-health policy remain EP-04.4 work.
+
 ### The honest limit
 
 A deadline **protects the caller, not the server**. In the spike the kernel
@@ -144,15 +156,21 @@ document in this program may claim otherwise.
 
 ## Consequences
 
-- EP-04.2 deliberately caches no assembly, type, method, service instance or
-  schema state; every explicit bind re-observes the live provider. A later
-  invocation owner may introduce a bounded per-assembly-version method cache
-  only with exact generation invalidation and equivalent revalidation.
+- EP-04.2 and EP-04.3 cache no assembly, type, method, service instance or schema
+  state; every explicit bind re-observes the live provider and invocation uses
+  only that exact captured method and instance.
 - The kernel must distinguish `disabled` from `absent`, which it can: a disabled
   plugin is still in `IPluginManager.Plugins` with `Manifest.Status = Disabled`,
   an uninstalled one is gone entirely.
-- Response size capping is new work — it did not exist in the spike and is an
-  EP-04 acceptance criterion, not an existing property.
+- Requests and responses are capped at 64 KiB before provider entry or result
+  publication, with depth, collection, property, property-name and string caps.
+- The first invocation tranche evaluates a deliberately closed schema profile:
+  root `$schema`/`$id`, annotations, object/string `type`, `properties`,
+  `required`, Boolean `additionalProperties`, `minLength`, `maxLength`, and the
+  UTF-8 byte extension. Every other assertion/applicator fails closed. This
+  preserves the single-DLL package and avoids pretending a partial evaluator is
+  full Draft 2020-12 support; broader schema vocabulary is an explicit future
+  compatibility change.
 
 ## Rejected alternatives
 
