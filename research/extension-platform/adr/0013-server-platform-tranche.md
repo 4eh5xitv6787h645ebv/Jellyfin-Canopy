@@ -267,3 +267,9 @@ load-context-safe provider ABI, operation declarations and bounded envelopes,
 content-addressed embedded payload schemas, and turns Alpha into the independent
 Hello contract fixture without adding a
 production reflection binder or invocation path.
+Issue #656 adds the next bounded EP-04 layer: exact registry operation claims,
+lazy live-plugin foreign concrete-DI binding, frozen ABI verification and bounded
+content-addressed schema admission. It adds no provider method invocation,
+health claim, route, worker, cache or client behavior; generation cancellation,
+payload evaluation and protected result-release leases remain the next EP-04
+invocation slice.

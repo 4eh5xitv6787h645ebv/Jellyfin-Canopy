@@ -60,6 +60,10 @@ declared scopes — are each a distinct vulnerability.
    Windows roots fail closed.
    Successful output is an immutable observation only; it still carries no
    approval, grant, lifecycle, persistence or invocation authority.
+   Its assembly-set identity fingerprints descriptor-verified DLL inventory and
+   fences drift observed by a completed reconciliation. It is deliberately not a
+   digest or load-time attestation of already-loaded code; ADR-0004 records the
+   narrower live-instance/assembly provenance used by EP-04.2.
 6. **A manifest is never a grant.** It states what an extension *requests*. An
    administrator approves. Requested and granted scopes are stored separately.
 7. **Fingerprint changes revoke approval.** Any change to the manifest
@@ -134,9 +138,12 @@ declared scopes — are each a distinct vulnerability.
    cooperative cancellation and joins the retained worker. Absolute termination
    for a kernel or storage operation that never returns remains #648.
    The fence governs subsequent registry release attempts; an immutable release
-   object already returned to a future consumer is not remotely revocable. EP-04
-   must therefore acquire or revalidate exact current authority at its final
-   admission boundary before provider work begins.
+   object already returned to a future consumer is not remotely revocable. EP-04.2
+   therefore added registry-owned, epoch-fenced operation claims and revalidates
+   them after foreign binding and again after schema admission. Those ephemeral
+   results remain non-authoritative: the later invocation owner must acquire its
+   own exact generation/cancellation and protected result-release leases before
+   provider method invocation or protected publication.
 
 ## Rationale
 

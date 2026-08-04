@@ -6,6 +6,8 @@ using Jellyfin.Plugin.JellyfinCanopy.EventHandlers;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
+using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
@@ -308,6 +310,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton(serviceProvider => new Lazy<PlatformProviderRegistry>(
                 () => serviceProvider.GetRequiredService<PlatformProviderRegistry>(),
                 LazyThreadSafetyMode.ExecutionAndPublication));
+            serviceCollection.AddSingleton<IPlatformProviderBindingHost, JellyfinPlatformProviderBindingHost>();
+            serviceCollection.AddSingleton(serviceProvider => new PlatformProviderBindingService(
+                serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),
+                serviceProvider.GetRequiredService<IPlatformProviderBindingHost>()));
             serviceCollection.AddSingleton(serviceProvider => new PlatformProviderRegistryOrchestrator(
                 serviceProvider.GetRequiredService<IPlatformInstalledManifestSweepSource>(),
                 serviceProvider.GetRequiredService<Lazy<PlatformProviderRegistry>>(),

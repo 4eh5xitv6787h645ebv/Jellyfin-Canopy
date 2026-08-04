@@ -60,6 +60,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             ["JellyfinPlatformHost.cs"] =
                 "The adapter itself. It exists to be the single translation point between "
                 + "Jellyfin's managers and the kernel's own host types.",
+            ["JellyfinPlatformProviderBindingHost.cs"] =
+                "The narrowly scoped lazy provider-binding adapter. It is the sole owner of "
+                + "live LocalPlugin instances and foreign concrete-type DI resolution; the "
+                + "kernel sees only BCL reflection primitives through a host-neutral seam.",
         };
 
         [Fact]

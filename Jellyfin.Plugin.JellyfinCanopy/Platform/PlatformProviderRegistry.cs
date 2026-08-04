@@ -32,6 +32,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private PlatformProviderRegistrySnapshot _snapshot;
         private IPlatformProviderRegistryReconciliationEpoch? _currentReconciliationEpoch;
         private bool _authorityReleaseFenced = true;
+        private object _operationBindingClaimEpoch = new();
 
         /// <summary>
         /// Opaque one-use registry-owned reconciliation authority. Reference identity is
@@ -93,7 +94,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         {
             lock (_gate)
             {
-                _authorityReleaseFenced = true;
+                FenceAuthorityRelease();
                 _currentReconciliationEpoch = new ReconciliationEpoch();
                 return _currentReconciliationEpoch;
             }
@@ -115,7 +116,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
 
                 _currentReconciliationEpoch = null;
-                _authorityReleaseFenced = true;
+                FenceAuthorityRelease();
             }
         }
 
@@ -145,7 +146,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     || observations.Any(value => value is null || value.PluginId == Guid.Empty)
                     || observations.GroupBy(value => value.PluginId).Any(group => group.Count() != 1))
                 {
-                    _authorityReleaseFenced = true;
+                    FenceAuthorityRelease();
                     return Result(PlatformProviderRegistryMutationStatus.InvalidSweep);
                 }
 
@@ -195,7 +196,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         PlatformProviderRegistryStoreHealth.Healthy);
                     if (!TrySave(nextDurable))
                     {
-                        _authorityReleaseFenced = true;
+                        FenceAuthorityRelease();
                         return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
                     }
 
@@ -207,7 +208,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
                 catch (InvalidOperationException)
                 {
-                    _authorityReleaseFenced = true;
+                    FenceAuthorityRelease();
                     return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
                 }
             }
@@ -381,6 +382,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
 
                 _durable = nextDurable;
+                RotateOperationBindingClaims();
                 Volatile.Write(ref _snapshot, nextSnapshot);
                 return Result(PlatformProviderRegistryMutationStatus.Applied);
             }
@@ -423,7 +425,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 _durable = PlatformProviderRegistryDurableState.Empty;
                 _current = ImmutableDictionary<Guid, PlatformInstalledManifestObservation>.Empty;
                 _currentReconciliationEpoch = null;
-                _authorityReleaseFenced = true;
+                FenceAuthorityRelease();
                 Volatile.Write(
                     ref _snapshot,
                     new PlatformProviderRegistrySnapshot(
@@ -488,6 +490,123 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                         generation),
                     record.GrantedCapabilityIds,
                     generation);
+            }
+        }
+
+        /// <summary>
+        /// Selects one operation from exact current enabled registry authority. The returned
+        /// claim is inert and must be revalidated after foreign binding.
+        /// </summary>
+        internal PlatformProviderOperationBindingClaimResult ClaimOperationBinding(
+            Guid pluginId,
+            string operationId,
+            int negotiatedProtocol)
+        {
+            if (pluginId == Guid.Empty)
+            {
+                return ClaimRefused(PlatformProviderOperationBindingClaimStatus.AuthorityUnavailable);
+            }
+
+            if (string.IsNullOrEmpty(operationId))
+            {
+                return ClaimRefused(PlatformProviderOperationBindingClaimStatus.OperationUnavailable);
+            }
+
+            if (negotiatedProtocol <= 0)
+            {
+                return ClaimRefused(PlatformProviderOperationBindingClaimStatus.ProtocolUnsupported);
+            }
+
+            lock (_gate)
+            {
+                if (!TryGetCurrentApprovedProvider(
+                        pluginId,
+                        out var entry,
+                        out _,
+                        out var manifest,
+                        out var currentGrant))
+                {
+                    return ClaimRefused(PlatformProviderOperationBindingClaimStatus.AuthorityUnavailable);
+                }
+
+                var operation = manifest.Manifest.ProviderOperations.FirstOrDefault(value =>
+                    string.Equals(value.Id, operationId, StringComparison.Ordinal));
+                if (operation is null)
+                {
+                    return ClaimRefused(PlatformProviderOperationBindingClaimStatus.OperationUnavailable);
+                }
+
+                if (negotiatedProtocol < operation.ProtocolRange.Min
+                    || negotiatedProtocol > operation.ProtocolRange.Max)
+                {
+                    return ClaimRefused(PlatformProviderOperationBindingClaimStatus.ProtocolUnsupported);
+                }
+
+                var grantedIds = currentGrant.ToHashSet(StringComparer.Ordinal);
+                if (operation.RequiredCapabilities.Capabilities.Any(required =>
+                        !grantedIds.Contains(required.Id.Value)))
+                {
+                    return ClaimRefused(PlatformProviderOperationBindingClaimStatus.GrantInsufficient);
+                }
+
+                var claim = PlatformProviderOperationBindingClaim.EstablishCurrentRegistryClaim(
+                    _gate,
+                    _operationBindingClaimEpoch,
+                    pluginId,
+                    entry.Fingerprint!,
+                    entry.Generation,
+                    manifest.HostVersion,
+                    manifest.AssemblyIdentity,
+                    negotiatedProtocol,
+                    operation,
+                    currentGrant);
+                return PlatformProviderOperationBindingClaimResult.Claimed(claim);
+            }
+        }
+
+        /// <summary>
+        /// Revalidates every authority-bearing fact after foreign binding. Cross-registry,
+        /// pre-fence and otherwise stale claims fail closed even when facts later return to
+        /// the same visible values.
+        /// </summary>
+        internal bool RevalidateOperationBindingClaim(
+            PlatformProviderOperationBindingClaim claim)
+        {
+            ArgumentNullException.ThrowIfNull(claim);
+            lock (_gate)
+            {
+                if (!claim.IsOwnedBy(_gate, _operationBindingClaimEpoch)
+                    || !TryGetCurrentApprovedProvider(
+                        claim.PluginId,
+                        out var entry,
+                        out _,
+                        out var manifest,
+                        out var currentGrant)
+                    || entry.Generation != claim.Generation
+                    || !string.Equals(entry.Fingerprint, claim.Fingerprint, StringComparison.Ordinal)
+                    || !Equals(manifest.HostVersion, claim.HostVersion)
+                    || !string.Equals(
+                        manifest.AssemblyIdentity,
+                        claim.AssemblyIdentity,
+                        StringComparison.Ordinal)
+                    || !currentGrant.SequenceEqual(claim.GrantedCapabilityIds, StringComparer.Ordinal))
+                {
+                    return false;
+                }
+
+                var operation = manifest.Manifest.ProviderOperations.FirstOrDefault(value =>
+                    string.Equals(value.Id, claim.Operation.Id, StringComparison.Ordinal));
+                if (operation is null
+                    || claim.NegotiatedProtocol < operation.ProtocolRange.Min
+                    || claim.NegotiatedProtocol > operation.ProtocolRange.Max
+                    || !SameOperation(operation, claim.Operation))
+                {
+                    return false;
+                }
+
+                var grantedIds = currentGrant.ToHashSet(StringComparer.Ordinal);
+                return operation.RequiredCapabilities.Capabilities.All(required =>
+                    grantedIds.Contains(required.Id.Value));
             }
         }
 
@@ -666,6 +785,77 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             return true;
         }
 
+        private bool TryGetCurrentApprovedProvider(
+            Guid pluginId,
+            out PlatformProviderRegistryEntry entry,
+            out PlatformProviderRegistryDurableRecord record,
+            out HostBoundInstalledManifest manifest,
+            out ImmutableArray<string> currentGrant)
+        {
+            entry = null!;
+            record = null!;
+            manifest = null!;
+            currentGrant = ImmutableArray<string>.Empty;
+            if (_snapshot.StoreHealth != PlatformProviderRegistryStoreHealth.Healthy
+                || _authorityReleaseFenced)
+            {
+                return false;
+            }
+
+            entry = _snapshot.Entries.FirstOrDefault(value => value.PluginId == pluginId)!;
+            if (entry is null
+                || entry.State != PlatformProviderLifecycleState.Enabled
+                || string.IsNullOrEmpty(entry.Fingerprint))
+            {
+                return false;
+            }
+
+            record = _durable.Records.FirstOrDefault(value => value.PluginId == pluginId)!;
+            if (record is null
+                || record.Generation != entry.Generation
+                || record.Disposition != PlatformProviderDurableDisposition.Approved
+                || !string.Equals(record.ApprovedFingerprint, entry.Fingerprint, StringComparison.Ordinal)
+                || !_current.TryGetValue(pluginId, out var observation)
+                || observation.Outcome != PlatformInstalledManifestOutcome.Acquired
+                || observation.Compatibility != PlatformInstalledManifestCompatibility.Compatible
+                || observation.HostStatus != PlatformInstalledPluginHostStatus.Active
+                || observation.BoundManifest is not { } boundManifest
+                || !string.Equals(
+                    boundManifest.Fingerprint.Value,
+                    entry.Fingerprint,
+                    StringComparison.Ordinal)
+                || !TryValidateGrant(boundManifest, record.GrantedCapabilityIds, out currentGrant)
+                || !currentGrant.SequenceEqual(record.GrantedCapabilityIds, StringComparer.Ordinal))
+            {
+                return false;
+            }
+
+            manifest = boundManifest;
+            return true;
+        }
+
+        private static bool SameOperation(
+            PlatformProviderOperationDeclaration current,
+            PlatformProviderOperationDeclaration claimed) =>
+            string.Equals(current.Id, claimed.Id, StringComparison.Ordinal)
+            && current.ProtocolRange.Min == claimed.ProtocolRange.Min
+            && current.ProtocolRange.Max == claimed.ProtocolRange.Max
+            && current.RequiredCapabilities.Capabilities
+                .Select(value => value.Id.Value)
+                .SequenceEqual(
+                    claimed.RequiredCapabilities.Capabilities.Select(value => value.Id.Value),
+                    StringComparer.Ordinal)
+            && string.Equals(current.RequestSchemaId, claimed.RequestSchemaId, StringComparison.Ordinal)
+            && string.Equals(
+                current.RequestSchemaSha256,
+                claimed.RequestSchemaSha256,
+                StringComparison.Ordinal)
+            && string.Equals(current.ResponseSchemaId, claimed.ResponseSchemaId, StringComparison.Ordinal)
+            && string.Equals(
+                current.ResponseSchemaSha256,
+                claimed.ResponseSchemaSha256,
+                StringComparison.Ordinal);
+
         private bool TrySave(PlatformProviderRegistryDurableState state)
         {
             try
@@ -687,13 +877,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             }
             catch (Exception)
             {
-                _authorityReleaseFenced = true;
+                FenceAuthorityRelease();
                 return Result(PlatformProviderRegistryMutationStatus.PersistenceFailed);
             }
 
             _durable = PlatformProviderRegistryDurableState.Empty;
             _current = ImmutableDictionary<Guid, PlatformInstalledManifestObservation>.Empty;
-            _authorityReleaseFenced = true;
+            FenceAuthorityRelease();
             Volatile.Write(
                 ref _snapshot,
                 new PlatformProviderRegistrySnapshot(
@@ -816,6 +1006,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
             return true;
         }
+
+        private void FenceAuthorityRelease()
+        {
+            _authorityReleaseFenced = true;
+            RotateOperationBindingClaims();
+        }
+
+        private void RotateOperationBindingClaims() => _operationBindingClaimEpoch = new object();
+
+        private static PlatformProviderOperationBindingClaimResult ClaimRefused(
+            PlatformProviderOperationBindingClaimStatus status) =>
+            PlatformProviderOperationBindingClaimResult.Refused(status);
 
         private static long CheckedIncrement(long value) => value == long.MaxValue
             ? throw new InvalidOperationException("Registry revision or generation is exhausted.")

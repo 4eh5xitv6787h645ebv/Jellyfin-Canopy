@@ -362,6 +362,145 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal long Generation { get; }
     }
 
+    /// <summary>Closed outcomes for exact provider-operation binding admission.</summary>
+    internal enum PlatformProviderOperationBindingClaimStatus
+    {
+        Claimed = 1,
+        AuthorityUnavailable = 2,
+        OperationUnavailable = 3,
+        ProtocolUnsupported = 4,
+        GrantInsufficient = 5,
+    }
+
+    /// <summary>
+    /// One immutable, inert description of an exact current provider operation. A claim
+    /// carries no provider object or reusable authority: the registry must revalidate it
+    /// after foreign binding before anything may be published.
+    /// </summary>
+    internal sealed class PlatformProviderOperationBindingClaim
+    {
+        private readonly object _registryOwner;
+        private readonly object _claimEpoch;
+
+        private PlatformProviderOperationBindingClaim(
+            object registryOwner,
+            object claimEpoch,
+            Guid pluginId,
+            string fingerprint,
+            long generation,
+            Version hostVersion,
+            string assemblyIdentity,
+            int negotiatedProtocol,
+            PlatformProviderOperationDeclaration operation,
+            ImmutableArray<string> grantedCapabilityIds)
+        {
+            _registryOwner = registryOwner;
+            _claimEpoch = claimEpoch;
+            PluginId = pluginId;
+            Fingerprint = fingerprint;
+            Generation = generation;
+            HostVersion = hostVersion;
+            AssemblyIdentity = assemblyIdentity;
+            NegotiatedProtocol = negotiatedProtocol;
+            Operation = operation;
+            GrantedCapabilityIds = ImmutableArray.CreateRange(grantedCapabilityIds);
+        }
+
+        internal Guid PluginId { get; }
+
+        internal string Fingerprint { get; }
+
+        internal long Generation { get; }
+
+        internal Version HostVersion { get; }
+
+        internal string AssemblyIdentity { get; }
+
+        internal int NegotiatedProtocol { get; }
+
+        internal PlatformProviderOperationDeclaration Operation { get; }
+
+        internal ImmutableArray<string> GrantedCapabilityIds { get; }
+
+        internal bool IsOwnedBy(object registryOwner, object claimEpoch) =>
+            ReferenceEquals(_registryOwner, registryOwner)
+            && ReferenceEquals(_claimEpoch, claimEpoch);
+
+        internal static PlatformProviderOperationBindingClaim EstablishCurrentRegistryClaim(
+            object registryOwner,
+            object claimEpoch,
+            Guid pluginId,
+            string fingerprint,
+            long generation,
+            Version hostVersion,
+            string assemblyIdentity,
+            int negotiatedProtocol,
+            PlatformProviderOperationDeclaration operation,
+            ImmutableArray<string> grantedCapabilityIds)
+        {
+            ArgumentNullException.ThrowIfNull(registryOwner);
+            ArgumentNullException.ThrowIfNull(claimEpoch);
+            ArgumentNullException.ThrowIfNull(hostVersion);
+            ArgumentNullException.ThrowIfNull(operation);
+            if (pluginId == Guid.Empty
+                || generation <= 0
+                || string.IsNullOrEmpty(fingerprint)
+                || string.IsNullOrWhiteSpace(assemblyIdentity)
+                || negotiatedProtocol <= 0
+                || grantedCapabilityIds.IsDefault)
+            {
+                throw new ArgumentException("A binding claim requires exact bounded current facts.");
+            }
+
+            return new PlatformProviderOperationBindingClaim(
+                registryOwner,
+                claimEpoch,
+                pluginId,
+                fingerprint,
+                generation,
+                hostVersion,
+                assemblyIdentity,
+                negotiatedProtocol,
+                operation,
+                grantedCapabilityIds);
+        }
+    }
+
+    /// <summary>One closed result from a registry-owned operation-binding claim attempt.</summary>
+    internal readonly record struct PlatformProviderOperationBindingClaimResult
+    {
+        private PlatformProviderOperationBindingClaimResult(
+            PlatformProviderOperationBindingClaimStatus status,
+            PlatformProviderOperationBindingClaim? claim)
+        {
+            if (!Enum.IsDefined(status)
+                || (status == PlatformProviderOperationBindingClaimStatus.Claimed) != (claim is not null))
+            {
+                throw new ArgumentOutOfRangeException(nameof(status));
+            }
+
+            Status = status;
+            Claim = claim;
+        }
+
+        internal PlatformProviderOperationBindingClaimStatus Status { get; }
+
+        internal PlatformProviderOperationBindingClaim? Claim { get; }
+
+        internal static PlatformProviderOperationBindingClaimResult Claimed(
+            PlatformProviderOperationBindingClaim claim)
+        {
+            ArgumentNullException.ThrowIfNull(claim);
+            return new PlatformProviderOperationBindingClaimResult(
+                PlatformProviderOperationBindingClaimStatus.Claimed,
+                claim);
+        }
+
+        internal static PlatformProviderOperationBindingClaimResult Refused(
+            PlatformProviderOperationBindingClaimStatus status) =>
+            new(status, null);
+    }
+
     /// <summary>One immutable persisted provider record with no reusable authority proof.</summary>
     internal sealed class PlatformProviderRegistryDurableRecord
     {
