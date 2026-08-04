@@ -17,9 +17,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly AutoSeasonRequestMonitor _autoSeasonRequestMonitor;
         private readonly AutoMovieRequestMonitor _autoMovieRequestMonitor;
         private readonly WatchlistMonitor _watchlistMonitor;
-        private readonly TagCacheService _tagCacheService;
-        private readonly TagCacheProjectionRevisionService _tagCacheProjectionRevisionService;
-        private readonly TagCacheMonitor _tagCacheMonitor;
+        private readonly TagCacheLifecycleService _tagCacheLifecycle;
         private readonly SeerrScanTriggerService _seerrScanTriggerService;
         private readonly IPluginConfigProvider _configProvider;
 
@@ -34,9 +32,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             AutoSeasonRequestMonitor autoSeasonRequestMonitor,
             AutoMovieRequestMonitor autoMovieRequestMonitor,
             WatchlistMonitor watchlistMonitor,
-            TagCacheService tagCacheService,
-            TagCacheProjectionRevisionService tagCacheProjectionRevisionService,
-            TagCacheMonitor tagCacheMonitor,
+            TagCacheLifecycleService tagCacheLifecycle,
             SeerrScanTriggerService seerrScanTriggerService,
             IPluginConfigProvider configProvider)
         {
@@ -45,16 +41,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _autoSeasonRequestMonitor = autoSeasonRequestMonitor;
             _autoMovieRequestMonitor = autoMovieRequestMonitor;
             _watchlistMonitor = watchlistMonitor;
-            _tagCacheService = tagCacheService;
-            _tagCacheProjectionRevisionService = tagCacheProjectionRevisionService;
-            _tagCacheMonitor = tagCacheMonitor;
+            _tagCacheLifecycle = tagCacheLifecycle;
             _seerrScanTriggerService = seerrScanTriggerService;
             _configProvider = configProvider;
         }
 
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 _logger.LogInformation("Jellyfin Canopy Startup Task run successfully.");
                 EnsureScriptInjected();
@@ -71,35 +65,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // Initialize on-demand Seerr recently-added scan trigger
                 _seerrScanTriggerService.Initialize();
 
-                // Watched-state is a live per-user projection over the shared tag
-                // cache. Subscribe before loading/building the cache so no user-data
-                // transition after plugin startup can fall outside its journal.
-                _tagCacheProjectionRevisionService.Initialize();
-
-                // Load tag cache from disk. New/changed items are picked up by the
-                // monitor via Jellyfin's library scan events (ItemAdded/ItemUpdated).
-                // A full rebuild runs daily at 3 AM or can be triggered manually.
-                // Wrapped in try/catch so a cache failure never prevents the rest of
-                // the plugin from working (tags just fall back to batch mode).
+                // The lifecycle owner checks server mode before any cache disk read,
+                // subscription, timer, allocation, or library query. Cache failure
+                // never prevents the rest of the plugin from starting; clients retain
+                // their live batch fallback until a complete generation is ready.
                 try
                 {
-                    _tagCacheService.LoadFromDisk();
-                    _tagCacheMonitor.Initialize();
-
-                    // First install: if no cache exists, build it now so tags work immediately
-                    if (_tagCacheService.Count == 0)
-                    {
-                        _logger.LogInformation("[TagCache] No cache on disk, building initial cache...");
-                        _tagCacheService.BuildFullCache(null, cancellationToken);
-                    }
+                    await _tagCacheLifecycle.InitializeAsync(null, cancellationToken).ConfigureAwait(false);
                 }
-                catch (System.Exception ex)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    _logger.LogError($"[TagCache] Failed to initialize tag cache (tags will use batch fallback): {ex.Message}");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[TagCache] Failed to initialize tag cache; clients will use batch fallback.");
                 }
 
                 _logger.LogInformation("Jellyfin Canopy Startup Task completed successfully.");
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
         }
 
         // Request-time script injection (Jellyfin 10.11 & 12).

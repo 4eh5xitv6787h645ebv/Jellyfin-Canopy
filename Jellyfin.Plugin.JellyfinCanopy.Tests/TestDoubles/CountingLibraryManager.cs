@@ -78,6 +78,9 @@ public sealed class CountingLibraryManager : ILibraryManager
     /// <summary>When set, backs the single-arg <see cref="GetItemList(InternalItemsQuery)"/>.</summary>
     public Func<InternalItemsQuery, IReadOnlyList<BaseItem>>? GetItemListHook { get; set; }
 
+    /// <summary>When set, backs paged queries that include an authoritative total count.</summary>
+    public Func<InternalItemsQuery, QueryResult<BaseItem>>? GetItemsResultHook { get; set; }
+
     /// <summary>When set, backs the generic <see cref="GetItemById{T}(Guid)"/>.</summary>
     public Func<Guid, BaseItem?>? GetItemByIdHook { get; set; }
 
@@ -100,6 +103,9 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     /// <summary>Single-arg <see cref="GetItemList(InternalItemsQuery)"/> invocation count.</summary>
     public int GetItemListCallCount { get; private set; }
+
+    /// <summary><see cref="GetItemsResult(InternalItemsQuery)"/> invocation count.</summary>
+    public int GetItemsResultCallCount { get; private set; }
 
     /// <summary><see cref="GetItemIds(InternalItemsQuery)"/> invocation count.</summary>
     public int GetItemIdsCallCount { get; private set; }
@@ -289,7 +295,23 @@ public sealed class CountingLibraryManager : ILibraryManager
 
     public IReadOnlyDictionary<string, MediaBrowser.Controller.Persistence.NextUpEpisodeBatchResult> GetNextUpEpisodesBatch(InternalItemsQuery query, IReadOnlyList<string> seriesKeys, bool includeSpecials, bool includeWatchedForRewatching) => throw new NotImplementedException();
 
-    public QueryResult<BaseItem> GetItemsResult(InternalItemsQuery query) => throw new NotImplementedException();
+    public QueryResult<BaseItem> GetItemsResult(InternalItemsQuery query)
+    {
+        GetItemsResultCallCount++;
+        if (GetItemsResultHook != null)
+        {
+            return GetItemsResultHook(query);
+        }
+
+        var included = query.IncludeItemTypes.ToHashSet();
+        var items = GetItemList(query)
+            .Where(item => included.Contains(item.GetBaseItemKind()))
+            .ToArray();
+        return new QueryResult<BaseItem>(
+            query.StartIndex,
+            (query.StartIndex ?? 0) + items.Length,
+            items);
+    }
 
     public bool IgnoreFile(FileSystemMetadata file, BaseItem parent) => throw new NotImplementedException();
 

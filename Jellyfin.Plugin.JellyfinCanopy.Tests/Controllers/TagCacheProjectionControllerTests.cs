@@ -22,6 +22,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
     public sealed class TagCacheProjectionControllerTests
     {
         [Fact]
+        public void EnabledButNotReadyLifecycle_ReturnsFallbackNotFound()
+        {
+            using var harness = new Harness(withLifecycle: true);
+
+            Assert.IsType<NotFoundResult>(harness.Controller.GetTagCache(harness.User.Id));
+        }
+
+        [Fact]
         public void FullSnapshot_ContentCursorIsCapturedBeforeCacheSelection()
         {
             using var harness = new Harness();
@@ -244,7 +252,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             private readonly string _tempDir;
             private readonly TagCacheProjectionRevisionService _projection;
 
-            public Harness()
+            private readonly TagCacheLifecycleService? _lifecycle;
+            private readonly TagCacheMonitor? _monitor;
+
+            public Harness(bool withLifecycle = false)
             {
                 _tempDir = Path.Combine(
                     Path.GetTempPath(),
@@ -286,7 +297,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 _projection = new TagCacheProjectionRevisionService(
                     UserData,
                     NullLogger<TagCacheProjectionRevisionService>.Instance);
+                if (!withLifecycle)
+                {
+                    _projection.Initialize();
+                }
                 Projection = _projection;
+                if (withLifecycle)
+                {
+                    _monitor = new TagCacheMonitor(
+                        Library,
+                        Cache,
+                        NullLogger<TagCacheMonitor>.Instance);
+                    _lifecycle = new TagCacheLifecycleService(
+                        configProvider,
+                        Cache,
+                        _monitor,
+                        _projection,
+                        NullLogger<TagCacheLifecycleService>.Instance);
+                }
                 Controller = new TagCacheController(
                     new RecordingHttpClientFactory(new HttpClientHandler()),
                     NullLogger<TagCacheController>.Instance,
@@ -298,7 +326,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     UserData,
                     resolver,
                     userConfig,
-                    _projection);
+                    _projection,
+                    (ITagCacheLifecycle?)_lifecycle ?? new StubTagCacheLifecycle());
                 Controller.ControllerContext = new ControllerContext
                 {
                     HttpContext = new DefaultHttpContext
@@ -326,7 +355,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
             public void Dispose()
             {
+                _lifecycle?.Dispose();
                 _projection.Dispose();
+                _monitor?.Dispose();
                 Cache.Dispose();
                 try
                 {

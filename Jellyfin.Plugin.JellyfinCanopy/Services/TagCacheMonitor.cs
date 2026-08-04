@@ -14,6 +14,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILibraryManager _libraryManager;
         private readonly TagCacheService _tagCacheService;
         private readonly ILogger<TagCacheMonitor> _logger;
+        private readonly object _subscriptionGate = new();
+        private bool _subscribed;
 
         public TagCacheMonitor(ILibraryManager libraryManager, TagCacheService tagCacheService, ILogger<TagCacheMonitor> logger)
         {
@@ -38,14 +40,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         public void EnsureSubscribed()
         {
-            _libraryManager.ItemAdded -= OnItemChanged;
-            _libraryManager.ItemUpdated -= OnItemChanged;
-            _libraryManager.ItemRemoved -= OnItemRemoved;
+            lock (_subscriptionGate)
+            {
+                if (_subscribed)
+                {
+                    return;
+                }
 
-            _libraryManager.ItemAdded += OnItemChanged;
-            _libraryManager.ItemUpdated += OnItemChanged;
-            _libraryManager.ItemRemoved += OnItemRemoved;
+                _libraryManager.ItemAdded += OnItemChanged;
+                _libraryManager.ItemUpdated += OnItemChanged;
+                _libraryManager.ItemRemoved += OnItemRemoved;
+                _subscribed = true;
+            }
+
             _logger.LogInformation("[TagCacheMonitor] Event subscriptions active");
+        }
+
+        /// <summary>
+        /// Stop accepting library events while server-side tag caching is disabled.
+        /// Idempotent so repeated configuration saves cannot disturb another owner.
+        /// </summary>
+        public void Stop()
+        {
+            lock (_subscriptionGate)
+            {
+                if (!_subscribed)
+                {
+                    return;
+                }
+
+                _libraryManager.ItemAdded -= OnItemChanged;
+                _libraryManager.ItemUpdated -= OnItemChanged;
+                _libraryManager.ItemRemoved -= OnItemRemoved;
+                _subscribed = false;
+            }
+
+            _logger.LogInformation("[TagCacheMonitor] Event subscriptions stopped");
         }
 
         private void OnItemChanged(object? sender, ItemChangeEventArgs e)
@@ -74,9 +104,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         public void Dispose()
         {
-            _libraryManager.ItemAdded -= OnItemChanged;
-            _libraryManager.ItemUpdated -= OnItemChanged;
-            _libraryManager.ItemRemoved -= OnItemRemoved;
+            Stop();
         }
     }
 }

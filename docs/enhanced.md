@@ -332,7 +332,7 @@ Poster tags are computed once on the server and served in a single request, so t
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
-| **Server-Side Tag Cache** (`TagCacheServerMode`) | Admin only | **on** | Pre-computes tag data on the server and serves it in one request. Disable it to fall back to the legacy per-page batch mode (client-side, not recommended). In the **Media Tags** section of the config page. |
+| **Server-Side Tag Cache** (`TagCacheServerMode`) | Admin only | **on** | Pre-computes tag data on the server and serves it in one request. Disable it to stop server cache loading, building, scheduled work, and library/user-data monitoring, then fall back to the legacy per-page batch mode (client-side, not recommended). In the **Media Tags** section of the config page. |
 | **Tags Cache Duration (days)** (`TagsCacheTtlDays`) | Admin only | `30` | How long the client keeps cached tag data before re-fetching. Applies to **every** tag family, including People tags. |
 | **Persist Tag Fallback Cache in Browser Storage** (`EnableTagsLocalStorageFallback`) | Admin only | **off** | Available **only** when the Server-Side Tag Cache is disabled. Stores fallback tag-cache entries in the browser's `localStorage` for faster repeat loads. |
 
@@ -346,9 +346,16 @@ Poster tags are computed once on the server and served in a single request, so t
     - **Daily rebuild** — a full rebuild runs every day at **03:00**.
     - **Kept current** — between rebuilds the cache updates incrementally as
       Jellyfin adds or changes items during library scans.
+    - **Bounded construction** — rebuilds read the library in fixed 500-item
+      pages and publish only after every page succeeds. A cancelled or failed
+      rebuild leaves the last complete memory and disk snapshot unchanged.
 
     If poster tags ever look missing or stale, run it manually from **Dashboard** →
     **Scheduled Tasks** → **Jellyfin Canopy** → **Build Tag Cache**.
+
+    While **Server-Side Tag Cache** is off, that task is intentionally a no-op.
+    Turning the setting back on starts one fresh background rebuild; clients use
+    per-page fallback until the complete replacement is ready.
 
 ### Detail-page enhancements
 

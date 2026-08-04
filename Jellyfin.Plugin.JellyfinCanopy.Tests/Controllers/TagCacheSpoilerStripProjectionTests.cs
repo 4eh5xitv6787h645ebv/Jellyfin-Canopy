@@ -940,6 +940,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 _projection = new TagCacheProjectionRevisionService(
                     UserData,
                     NullLogger<TagCacheProjectionRevisionService>.Instance);
+                _projection.Initialize();
                 Projection = _projection;
                 Controller = new TagCacheController(
                     new RecordingHttpClientFactory(new HttpClientHandler()),
@@ -952,7 +953,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     UserData,
                     resolver,
                     _userConfig,
-                    _projection);
+                    _projection,
+                    new StubTagCacheLifecycle());
                 Controller.ControllerContext = new ControllerContext
                 {
                     HttpContext = new DefaultHttpContext

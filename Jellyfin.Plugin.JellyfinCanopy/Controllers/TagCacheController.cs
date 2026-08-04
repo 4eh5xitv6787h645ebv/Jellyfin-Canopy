@@ -59,6 +59,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private readonly Services.SpoilerUserResolver _spoilerResolver;
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly Services.TagCacheProjectionRevisionService _projectionRevisionService;
+        private readonly Services.ITagCacheLifecycle _tagCacheLifecycle;
 
         public TagCacheController(
             IHttpClientFactory httpClientFactory,
@@ -71,7 +72,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             IUserDataManager userDataManager,
             Services.SpoilerUserResolver spoilerResolver,
             UserConfigurationManager userConfigurationManager,
-            Services.TagCacheProjectionRevisionService projectionRevisionService)
+            Services.TagCacheProjectionRevisionService projectionRevisionService,
+            Services.ITagCacheLifecycle tagCacheLifecycle)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _tagCacheService = tagCacheService;
@@ -80,6 +82,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             _spoilerResolver = spoilerResolver;
             _userConfigurationManager = userConfigurationManager;
             _projectionRevisionService = projectionRevisionService;
+            _tagCacheLifecycle = tagCacheLifecycle ?? throw new ArgumentNullException(nameof(tagCacheLifecycle));
         }
 
         [HttpGet("tag-cache/{userId}")]
@@ -95,7 +98,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             [FromQuery] bool projectionOnly = false,
             CancellationToken cancellationToken = default)
         {
-            if (_configProvider.ConfigurationOrNull?.TagCacheServerMode != true)
+            if (_configProvider.ConfigurationOrNull?.TagCacheServerMode != true
+                || !_tagCacheLifecycle.IsReady)
             {
                 return NotFound();
             }

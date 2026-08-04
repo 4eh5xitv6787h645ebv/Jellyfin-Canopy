@@ -5,6 +5,8 @@ using System.Text;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 {
+    internal delegate IDisposable? AtomicFileCommitLeaseFactory();
+
     /// <summary>
     /// Crash-safe file writes: serialize to a unique temp sibling, fsync its contents to
     /// disk, then atomically rename over the destination via File.Move(overwrite:true), and
@@ -35,6 +37,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
 
         public static void WriteAllBytes(string path, byte[] contents)
             => WriteBytesDurable(path, contents);
+
+        public static void DeleteIfExists(string path)
+            => TryDelete(path);
+
+        /// <summary>
+        /// Stream a potentially large payload into a durable temp sibling without
+        /// first materializing the complete byte array in managed memory.
+        /// </summary>
+        public static bool WriteVia(
+            string path,
+            Action<Stream> writeBody,
+            AtomicFileCommitLeaseFactory? acquireCommitLease = null)
+        {
+            LastDurableWriteFlushedContents = false;
+            var temp = path + ".tmp." + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    writeBody(stream);
+                    stream.Flush(flushToDisk: true);
+                    LastDurableWriteFlushedContents = true;
+                }
+
+                IDisposable? commitLease = null;
+                try
+                {
+                    if (acquireCommitLease != null)
+                    {
+                        commitLease = acquireCommitLease();
+                        if (commitLease == null)
+                        {
+                            TryDelete(temp);
+                            return false;
+                        }
+                    }
+
+                    File.Move(temp, path, overwrite: true);
+                    TryFsyncDirectory(Path.GetDirectoryName(path));
+                    return true;
+                }
+                finally
+                {
+                    commitLease?.Dispose();
+                }
+            }
+            catch
+            {
+                TryDelete(temp);
+                throw;
+            }
+        }
 
         // For streamed uploads: write the body into a temp sibling, then commit on full success.
         public static async System.Threading.Tasks.Task WriteViaAsync(

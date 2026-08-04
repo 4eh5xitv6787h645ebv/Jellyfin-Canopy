@@ -387,7 +387,7 @@
 
                             <div class="checkboxContainer"><label><input id="tagCacheServerMode" data-config-key="TagCacheServerMode" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Server-Side Tag Cache</span></label></div>
                             <div class="jc-setting-description" data-desc-for="tagCacheServerMode">
-                                <div class="fieldDescription jc-field-desc-sm-font-lg">Pre-computes tag data on the server and serves it in a single request. Tags load instantly without per-page API calls. Disable to use the legacy per-page batch mode (not recommended).</div>
+                                <div class="fieldDescription jc-field-desc-sm-font-lg">Pre-computes tag data on the server and serves it in a single request. Disable to stop cache loading, builds, scheduled work, and monitoring and use the legacy per-page batch mode (not recommended). Re-enabling builds a fresh cache in the background.</div>
                             </div>
 
                             <div id="tagsLocalStorageFallbackContainer" class="checkboxContainer">

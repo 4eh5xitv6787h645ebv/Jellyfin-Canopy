@@ -390,7 +390,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                     new StubUserDataManager(),
                     resolver,
                     manager,
-                    projectionRevisionService: null!);
+                    projectionRevisionService: null!,
+                    tagCacheLifecycle: new StubTagCacheLifecycle());
                 var principal = new ClaimsPrincipal(new ClaimsIdentity(
                     new[] { new Claim("Jellyfin-UserId", user.Id.ToString()) },
                     "TestAuth"));

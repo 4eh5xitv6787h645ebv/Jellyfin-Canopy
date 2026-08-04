@@ -215,6 +215,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<TagCacheService>();
             serviceCollection.AddSingleton<TagCacheProjectionRevisionService>();
             serviceCollection.AddSingleton<TagCacheMonitor>();
+            serviceCollection.AddSingleton<TagCacheLifecycleService>();
+            serviceCollection.AddSingleton<ITagCacheLifecycle>(services =>
+                services.GetRequiredService<TagCacheLifecycleService>());
             serviceCollection.AddTransient<ArrTagsSyncTask>();
             serviceCollection.AddTransient<BuildTagCacheTask>();
             serviceCollection.AddTransient<SeerrWatchlistSyncTask>();
