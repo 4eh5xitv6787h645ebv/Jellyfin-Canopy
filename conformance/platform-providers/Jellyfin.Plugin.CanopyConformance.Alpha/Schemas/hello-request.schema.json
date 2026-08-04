@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jellyfin-canopy:provider-schema:org.jellyfin.canopy-alpha:org.jellyfin.canopy.conformance.hello:request:1",
+  "title": "Canopy conformance Hello request payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "x-canopy-maximum-utf8-bytes": 64
+    }
+  }
+}

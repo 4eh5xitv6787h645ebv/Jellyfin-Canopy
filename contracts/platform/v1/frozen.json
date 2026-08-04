@@ -39,6 +39,20 @@
     "maximumDescriptionBytes": 512,
     "maximumCompatibilityMajor": 65535,
     "maximumRequestedCapabilities": 9,
+    "providerEntrypointTypeName": "JellyfinCanopy.ExtensionProviderEntrypoint",
+    "providerInvocationMethodName": "InvokeAsync",
+    "providerInvocationSignature": "Task<string> InvokeAsync(string operationId, string requestJson, CancellationToken cancellationToken)",
+    "maximumProviderOperations": 16,
+    "maximumProviderOperationIdBytes": 128,
+    "maximumProviderRequiredCapabilities": 5,
+    "maximumProviderSchemaIdBytes": 308,
+    "maximumProviderSchemaMajor": 65535,
+    "providerSchemaSha256Characters": 64,
+    "providerOperationIdentifierPattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$",
+    "providerSchemaReferenceTemplate": "urn:jellyfin-canopy:provider-schema:{manifest.id}:{operation.id}:{direction}:{schemaMajor}",
+    "providerSchemaResourceTemplate": "JellyfinCanopy.ProviderSchemas.{sha256}.json",
+    "providerSchemaReferencePatternTemplate": "^urn:jellyfin-canopy:provider-schema:[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+:[a-z][a-z0-9]*(?:-[a-z0-9]+)*\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+:{direction}:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+    "identityOnlyIsCallable": false,
     "identifierPattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$",
     "pluginIdPattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     "versionPattern": "^(?:0|[1-9][0-9]{0,8}|1[0-9]{9}|20[0-9]{8}|21[0-3][0-9]{7}|214[0-6][0-9]{6}|2147[0-3][0-9]{5}|21474[0-7][0-9]{4}|214748[0-2][0-9]{3}|2147483[0-5][0-9]{2}|21474836[0-3][0-9]|214748364[0-7])(?:\\.(?:0|[1-9][0-9]{0,8}|1[0-9]{9}|20[0-9]{8}|21[0-3][0-9]{7}|214[0-6][0-9]{6}|2147[0-3][0-9]{5}|21474[0-7][0-9]{4}|214748[0-2][0-9]{3}|2147483[0-5][0-9]{2}|21474836[0-3][0-9]|214748364[0-7])){1,3}$",
@@ -55,7 +69,8 @@
       "requestedCapabilities"
     ],
     "optionalProperties": [
-      "description"
+      "description",
+      "providerOperations"
     ],
     "providerEligibleCapabilities": [
       "jellyfin.canopy.items.lookup",
@@ -64,7 +79,22 @@
       "jellyfin.canopy.ui.contribute",
       "jellyfin.canopy.integrations.invoke"
     ],
-    "goldenFingerprint": "3510a48671fac91da7b2d46f98e6f1bddaa04dd9198217d47974163b24e0de1b"
+    "goldenFingerprint": "3510a48671fac91da7b2d46f98e6f1bddaa04dd9198217d47974163b24e0de1b",
+    "goldenCallableFingerprint": "c5cb9c51170b97049e0a19db4ee101987ae472edf0bc83b01276b5554a620d06"
+  },
+  "providerAbi": {
+    "entrypointTypeName": "JellyfinCanopy.ExtensionProviderEntrypoint",
+    "invocationMethodName": "InvokeAsync",
+    "invocationSignature": "Task<string> InvokeAsync(string operationId, string requestJson, CancellationToken cancellationToken)",
+    "providerSchemaResourcePrefix": "JellyfinCanopy.ProviderSchemas.",
+    "providerSchemaResourceSuffix": ".json",
+    "providerSchemaSha256Characters": 64,
+    "requestEnvelopeSchemaId": "urn:jellyfin-canopy:platform:v1:provider-request-envelope",
+    "responseEnvelopeSchemaId": "urn:jellyfin-canopy:platform:v1:provider-response-envelope",
+    "requestEnvelopeSchemaSha256": "8cfa3dcaf32bca70c9fbe14a9102dc2671f4409be042a68057cacc64c425985f",
+    "responseEnvelopeSchemaSha256": "938876c800ca084909882e330401cefb53a26486f33af520ef093c1a05761016",
+    "requestGoldenSha256": "745711b5fa436f3101d39d9d611342d1f78f66ee9cd17a5c1096624f0274ae0c",
+    "responseGoldenSha256": "bdec09e0eb2bf550b4b0f99ddba6505e650c8713a4c8f1be7447a54d42e069b7"
   },
   "capabilityVocabulary": [
     "jellyfin.canopy.discovery.read",

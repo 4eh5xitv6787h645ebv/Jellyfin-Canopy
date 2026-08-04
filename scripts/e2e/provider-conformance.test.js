@@ -56,3 +56,12 @@ test('the provider harness proves graceful ownership and exact fixture loading',
     assert.match(harness, /canonical_fixture_records/);
     assert.match(harness, /REVERSE_CANONICAL.*FORWARD_CANONICAL/s);
 });
+
+test('load-order and Canopy-absence evidence never invokes provider code', () => {
+    assert.doesNotMatch(harness, /org\.jellyfin\.canopy\.conformance\.hello/);
+    assert.doesNotMatch(harness, /InvokeAsync/);
+    assert.doesNotMatch(harness, /provider[/_-]invoke/i);
+    assert.match(harness, /start_server fixtures-without-canopy false/);
+    assert.match(harness, /assert_load_order baseline/);
+    assert.match(harness, /assert_load_order reverse-order/);
+});

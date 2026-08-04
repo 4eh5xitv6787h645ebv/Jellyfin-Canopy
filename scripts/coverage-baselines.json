@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 40797,
-        "totalLines": 50352
+        "coveredLines": 40988,
+        "totalLines": 50558
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 40794,
-        "maximumCoveredLines": 40797
+        "cleanRuns": 4,
+        "minimumCoveredLines": 40985,
+        "maximumCoveredLines": 40988
       },
       "tolerance": {
         "missingCoveredLines": 3,
-        "rationale": "The #652 EP-03.4 change adds lazy ApplicationStarted-gated registry composition, one owned single-flight acquisition worker, opaque one-use reconciliation epochs, cancellation-versus-commit linearization, stop fencing/joining, and independent Alpha/Omega provider conformance packages without adding routes, provider invocation, automatic approval, deployment, or Android/client work. Three clean local .NET 10.0.9 Coverlet runs on the identical final 50,352-line source and 3,899-test scope measured 40,795, 40,797 and 40,794 covered lines. The reviewed observed high-water is therefore 40,797/50,352 (81.024%) and the exact observed floor is 40,794/50,352 (81.018%); the three-line schedule-dependent concurrency instrumentation spread is bounded to 0.006 percentage points. Relative to the #650 baseline of 40,502/50,031 (80.954%), the change adds 321 instrumented lines and at least 292 covered lines while increasing overall coverage. Repeated trigger/stale, stop, failure/retry, persistence and cancellation/commit races plus independent architecture, security and test review cover the authority-critical paths. #648 remains the explicit nonreturning-filesystem isolation residual. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #654 EP-04.1 contract slice freezes provider operation declarations, the load-context-safe string/JSON/cancellation ABI, bounded request and response envelopes, content-addressed embedded payload schemas, and an independent deterministic Alpha Hello provider fixture without adding reflection binding, invocation routes, automatic approval, deployment, or Android/client work. Four clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 50,558-line production source and 3,940-test scope measured 40,988, 40,986, 40,987 and 40,985 covered lines. The reviewed observed high-water is therefore 40,988/50,558 (81.071%) and the exact observed floor is 40,985/50,558 (81.065%); the three-line schedule-dependent concurrency instrumentation spread is bounded to 0.006 percentage points. Relative to the #652 baseline of 40,797/50,352 (81.024%), the change adds 206 instrumented lines and at least 188 covered lines while increasing overall coverage. Independent manifest, schema, fingerprint, resource-byte, package-shape, ABI and disposable Jellyfin 12 conformance tests cover the contract-critical paths. Production schema loading/validation, reflection invocation and resilience remain explicitly deferred by #654, while #648 remains the explicit nonreturning-filesystem isolation residual. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

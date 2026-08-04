@@ -5,11 +5,22 @@
   "version": "1.0.0.0",
   "kind": "installed-provider",
   "displayName": "Canopy Conformance Alpha",
-  "description": "Independent no-op provider fixture Alpha.",
+  "description": "Independent deterministic Hello provider fixture Alpha.",
   "platform": { "min": 1, "max": 1 },
   "host": { "minMajor": 12, "maxMajor": 12 },
   "requestedCapabilities": [
     "jellyfin.canopy.items.lookup",
     "jellyfin.canopy.storage.read"
+  ],
+  "providerOperations": [
+    {
+      "id": "org.jellyfin.canopy.conformance.hello",
+      "protocol": { "min": 1, "max": 1 },
+      "requiredCapabilities": ["jellyfin.canopy.items.lookup"],
+      "requestSchemaId": "urn:jellyfin-canopy:provider-schema:org.jellyfin.canopy-alpha:org.jellyfin.canopy.conformance.hello:request:1",
+      "requestSchemaSha256": "9cb99774427c0836710a42bf94cb647980f76fe6150300f9b8e824f667402330",
+      "responseSchemaId": "urn:jellyfin-canopy:provider-schema:org.jellyfin.canopy-alpha:org.jellyfin.canopy.conformance.hello:response:1",
+      "responseSchemaSha256": "dd8c7f2456f95f2404c9274e1b2dfa7e71958d7013e53cd35dbfcb8fe1bbffd2"
+    }
   ]
 }

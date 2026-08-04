@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "correlationId": "01J00000000000000000000000",
+  "protocol": 1,
+  "grantedScopes": [
+    "jellyfin.canopy.integrations.invoke"
+  ],
+  "attribution": {
+    "user": "opaque-user-01",
+    "device": "opaque-device-01"
+  },
+  "context": {
+    "itemId": "11111111-2222-3333-8444-555555555555",
+    "surface": "item-detail"
+  },
+  "hints": {
+    "locale": "en-AU",
+    "accessibility": [
+      "reduced-motion"
+    ]
+  },
+  "remainingDeadlineMilliseconds": 2500,
+  "input": {
+    "name": "Canopy"
+  }
+}
