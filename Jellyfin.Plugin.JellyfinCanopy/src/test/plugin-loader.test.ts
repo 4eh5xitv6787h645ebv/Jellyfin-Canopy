@@ -1795,4 +1795,49 @@ describe('plugin.js loader guards', () => {
         classicHeader.remove();
         expect(gateFor({ state: 'Error' })()).toBe(false);
     });
+
+    it('exits an unsupported legacy layout before client initialization starts (LAYOUT-3)', async () => {
+        const startSrc = extractFunctionSource('startInitialization');
+        expect(startSrc, 'startInitialization not found').toBeTruthy();
+
+        type StartFactory = (
+            jc: { initialized: boolean; hideSplashScreen: () => void },
+            identity: { isCurrent: (context: IdentityContext) => boolean },
+            initializationRegistry: { start: ReturnType<typeof vi.fn> },
+            isUnsupportedLegacyLayout: () => boolean,
+            runInitialization: ReturnType<typeof vi.fn>,
+        ) => (context: IdentityContext, client: object) => Promise<void>;
+        const factory = eval(
+            `(function(JC, identity, initializationRegistry, isUnsupportedLegacyLayout, runInitialization) {
+                let unsupportedLayoutEpoch = null;
+                let initializedEpoch = null;
+                ${startSrc}
+                return startInitialization;
+            })`,
+        ) as StartFactory;
+
+        const hideSplashScreen = vi.fn();
+        const registryStart = vi.fn(() => Promise.resolve());
+        const runInitialization = vi.fn();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        warn.mockClear();
+        const jc = { initialized: true, hideSplashScreen };
+        const start = factory(
+            jc,
+            { isCurrent: () => true },
+            { start: registryStart },
+            () => true,
+            runInitialization,
+        );
+        const context = { serverId: 'server', userId: 'user', epoch: 7 };
+
+        await start(context, {});
+        await start(context, {});
+
+        expect(jc.initialized).toBe(false);
+        expect(hideSplashScreen).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(registryStart).not.toHaveBeenCalled();
+        expect(runInitialization).not.toHaveBeenCalled();
+    });
 });

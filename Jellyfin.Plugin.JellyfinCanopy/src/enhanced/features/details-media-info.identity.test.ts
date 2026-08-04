@@ -127,8 +127,108 @@ describe('details media-info identity lifecycle', () => {
         await flushPromises();
 
         expect(getItem).toHaveBeenNthCalledWith(2, 'detailsuserb', 'audio-item');
-        expect(container.querySelector('[data-lang="spa"]')).not.toBeNull();
-        expect(container.querySelector('[data-lang="eng"]')).toBeNull();
+        expect(container.querySelector('[data-lang="es"]')).not.toBeNull();
+        expect(container.querySelector('[data-lang="en"]')).toBeNull();
+    });
+
+    it('renders explicit regional flags and leaves ambiguous languages neutral', async () => {
+        const container = mountContainer();
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Type: 'Movie',
+            MediaSources: [{
+                MediaStreams: [
+                    { Type: 'Audio', Language: 'pt-BR' },
+                    { Type: 'Audio', Language: 'pt-PT' },
+                    { Type: 'Audio', Language: 'eng' },
+                    { Type: 'Audio', Language: 'en-ZZ' },
+                ],
+            }],
+        });
+
+        displayAudioLanguages('regional-details', container);
+        await flushPromises();
+
+        const brazil = container.querySelector<HTMLElement>('[data-lang="pt-BR"]');
+        const portugal = container.querySelector<HTMLElement>('[data-lang="pt-PT"]');
+        const english = container.querySelector<HTMLElement>('[data-lang="en"]');
+        const unknown = container.querySelector<HTMLElement>('[data-lang="en-ZZ"]');
+        expect(brazil?.dataset.langTags).toBe('["pt-BR"]');
+        expect(brazil?.dataset.region).toBe('BR');
+        expect(brazil?.getAttribute('aria-label')).toContain('(pt-BR)');
+        expect(brazil?.querySelector('img')?.getAttribute('src'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/flags/4x3/br.svg');
+        expect(portugal?.dataset.region).toBe('PT');
+        expect(portugal?.querySelector('img')?.getAttribute('src'))
+            .toBe('http://jellyfin.test/JellyfinCanopy/assets/flags/4x3/pt.svg');
+        expect(english?.dataset.region).toBe('');
+        expect(english?.querySelector('img')).toBeNull();
+        expect(unknown?.dataset.region).toBe('');
+        expect(unknown?.querySelector('img')).toBeNull();
+        expect(container.innerHTML).not.toContain('zz.svg');
+        for (const image of container.querySelectorAll('img')) {
+            expect(image.getAttribute('alt')).toBe('');
+            expect(image.getAttribute('aria-hidden')).toBe('true');
+        }
+    });
+
+    it('replays canonical regional tags from the details cache without refetching', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Type: 'Movie',
+            MediaSources: [{
+                MediaStreams: [
+                    { Type: 'Audio', Language: 'por-BR' },
+                    { Type: 'Audio', Language: 'pt-PT' },
+                ],
+            }],
+        });
+        const first = mountContainer();
+        displayAudioLanguages('regional-cache-details', first);
+        await flushPromises();
+
+        const second = mountContainer();
+        displayAudioLanguages('regional-cache-details', second);
+        await flushPromises();
+
+        expect(getItem).toHaveBeenCalledTimes(1);
+        expect(Array.from(second.querySelectorAll<HTMLElement>('.audio-language-item')).map((entry) => ({
+            tags: entry.dataset.langTags,
+            region: entry.dataset.region,
+        }))).toEqual([
+            { tags: '["pt-BR"]', region: 'BR' },
+            { tags: '["pt-PT"]', region: 'PT' },
+        ]);
+    });
+
+    it('keeps numeric and retired regions neutral through details rendering and cache replay', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Type: 'Movie',
+            MediaSources: [{
+                MediaStreams: [
+                    { Type: 'Audio', Language: 'en-840' },
+                    { Type: 'Audio', Language: 'en-SU' },
+                    { Type: 'Audio', Language: 'pt-076' },
+                ],
+            }],
+        });
+        const first = mountContainer();
+        displayAudioLanguages('untrusted-region-details', first);
+        await flushPromises();
+        const second = mountContainer();
+        displayAudioLanguages('untrusted-region-details', second);
+        await flushPromises();
+
+        expect(getItem).toHaveBeenCalledTimes(1);
+        for (const container of [first, second]) {
+            expect(Array.from(container.querySelectorAll<HTMLElement>('.audio-language-item')).map((entry) => ({
+                tag: entry.dataset.lang,
+                region: entry.dataset.region,
+                hasFlag: !!entry.querySelector('img'),
+            }))).toEqual([
+                { tag: 'en-RU', region: '', hasFlag: false },
+                { tag: 'en-US', region: '', hasFlag: false },
+                { tag: 'pt-BR', region: '', hasFlag: false },
+            ]);
+        }
     });
 
     it('hides a long audio-language scrollbar with a real WebKit pseudo-element rule', async () => {

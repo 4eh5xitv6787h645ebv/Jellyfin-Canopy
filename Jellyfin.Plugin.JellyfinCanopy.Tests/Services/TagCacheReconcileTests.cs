@@ -124,6 +124,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.True(TagCacheService.ContentEquals(a, b));
         }
 
+        [Fact]
+        public void Reconcile_PreservesFullRegionalAudioLanguageTags()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var id = Guid.NewGuid();
+                var movie = new RegionalLanguageMovie
+                {
+                    Id = id,
+                    Name = "Regional languages",
+                    DateLastSaved = T0,
+                };
+                var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+
+                var entry = svc.GetEntryForTest(Key(id));
+                Assert.NotNull(entry);
+                var audioLanguages = Assert.IsType<string[]>(entry!.AudioLanguages);
+                Assert.Equal(
+                    new[] { "en-us", "es-mx", "pt-br" },
+                    audioLanguages.OrderBy(value => value, StringComparer.Ordinal));
+                Assert.DoesNotContain("en", audioLanguages);
+                Assert.DoesNotContain("es", audioLanguages);
+                Assert.DoesNotContain("pt", audioLanguages);
+                Assert.Equal(
+                    new[] { "en-US", "es-MX", "pt-BR" },
+                    entry.StreamData!.Streams!
+                        .Where(stream => stream.Type == "Audio")
+                        .Select(stream => stream.Language)
+                        .OrderBy(value => value, StringComparer.Ordinal));
+            }
+            finally { TryDelete(dir); }
+        }
+
         // ── Reconcile wiring, driven through a fake library ───────────────────────────────
 
         [Fact]
@@ -540,6 +577,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                                 Width = 8192,
                                 Height = 4096,
                             },
+                        },
+                    },
+                };
+        }
+
+        /// <summary>A Movie with explicit regional BCP-47 audio metadata.</summary>
+        private sealed class RegionalLanguageMovie : Movie
+        {
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution) =>
+                new[]
+                {
+                    new MediaSourceInfo
+                    {
+                        Name = "regional-source",
+                        MediaStreams = new[]
+                        {
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "pt-BR", Codec = "aac" },
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "en-US", Codec = "aac" },
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "es-MX", Codec = "aac" },
                         },
                     },
                 };

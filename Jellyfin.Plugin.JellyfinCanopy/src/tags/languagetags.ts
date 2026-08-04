@@ -2,11 +2,17 @@
 // Jellyfin Language Flags Overlay — a spec over the core tag-renderer factory
 // (src/core/tag-renderer-base.ts), which owns the cache/ignore/tagged/CSS/
 // reinitialize plumbing. This module supplies only the language-specific
-// parts: the language→country map, audio-stream extraction and flag markup.
+// parts: audio-stream extraction and regional/neutral language markup.
 
 import { JC as JEBase } from '../globals';
 import { flagSvgUrl } from '../core/asset-urls';
 import { createStableMethodFacade } from '../core/feature-loader';
+import {
+    buildMediaLanguagePresentations,
+    resolveMediaLanguageIdentities,
+    validateMediaLanguageIdentity,
+} from '../core/media-language';
+import type { MediaLanguageIdentity } from '../core/media-language';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 
@@ -22,46 +28,63 @@ const JC = JEBase as typeof JEBase & {
 const logPrefix = '🪼 Jellyfin Canopy: Language Tags:';
 const containerClass = 'language-overlay-container';
 const flagClass = 'language-flag';
-const langDisplayNames = new Intl.DisplayNames(['en'], { type: 'language' });
+const neutralClass = 'language-code-badge';
+const presentationClass = 'language-tag-presentation';
+const LANGUAGE_CACHE_SCHEMA_VERSION = 3;
 
-/** Normalized language entry rendered as a flag. */
-interface LanguageEntry {
-    name: string;
-    code: string;
+/** Versioned browser-cache shape. Pre-version caches lost regional subtags. */
+export interface LanguageCachePayload {
+    schemaVersion: typeof LANGUAGE_CACHE_SCHEMA_VERSION;
+    languages: MediaLanguageIdentity[];
+    timestamp: number;
 }
 
-// Language to country code mapping (shared with features.js)
-const languageToCountryMap: Record<string, string> = {
-    English: 'gb', eng: 'gb', Japanese: 'jp', jpn: 'jp', Spanish: 'es', spa: 'es', French: 'fr', fre: 'fr', fra: 'fr',
-    German: 'de', ger: 'de', deu: 'de', Italian: 'it', ita: 'it', Korean: 'kr', kor: 'kr', Chinese: 'cn', chi: 'cn',
-    zho: 'cn', Russian: 'ru', rus: 'ru', Portuguese: 'pt', por: 'pt', Hindi: 'in', hin: 'in', Dutch: 'nl', dut: 'nl',
-    nld: 'nl', Arabic: 'sa', ara: 'sa', Bengali: 'in', ben: 'in', Czech: 'cz', ces: 'cz', Danish: 'dk',
-    dan: 'dk', Greek: 'gr', ell: 'gr', Finnish: 'fi', fin: 'fi', Hebrew: 'il', heb: 'il', Hungarian: 'hu',
-    hun: 'hu', Indonesian: 'id', ind: 'id', Norwegian: 'no', nor: 'no', Polish: 'pl', pol: 'pl', Persian: 'ir',
-    per: 'ir', fas: 'ir', Romanian: 'ro', ron: 'ro', rum: 'ro', Swedish: 'se', swe: 'se', Thai: 'th', tha: 'th',
-    Turkish: 'tr', tur: 'tr', Ukrainian: 'ua', ukr: 'ua', Vietnamese: 'vn', vie: 'vn', Malay: 'my', msa: 'my',
-    may: 'my', Swahili: 'ke', swa: 'ke', Tagalog: 'ph', tgl: 'ph', Filipino: 'ph', Tamil: 'in', tam: 'in',
-    Telugu: 'in', tel: 'in', Marathi: 'in', mar: 'in', Punjabi: 'in', pan: 'in', Urdu: 'pk', urd: 'pk',
-    Gujarati: 'in', guj: 'in', Kannada: 'in', kan: 'in', Malayalam: 'in', mal: 'in', Sinhala: 'lk', sin: 'lk',
-    Nepali: 'np', nep: 'np', Pashto: 'af', pus: 'af', Kurdish: 'iq', kur: 'iq', Slovak: 'sk', slk: 'sk',
-    Slovenian: 'si', slv: 'si', Serbian: 'rs', srp: 'rs', Croatian: 'hr', hrv: 'hr', Bulgarian: 'bg', bul: 'bg',
-    Macedonian: 'mk', mkd: 'mk', Albanian: 'al', sqi: 'al', Estonian: 'ee', est: 'ee', Latvian: 'lv', lav: 'lv',
-    Lithuanian: 'lt', lit: 'lt', Icelandic: 'is', isl: 'is', Georgian: 'ge', kat: 'ge', Armenian: 'am',
-    hye: 'am', Mongolian: 'mn', mon: 'mn', Kazakh: 'kz', kaz: 'kz', Uzbek: 'uz', uzb: 'uz', Azerbaijani: 'az',
-    aze: 'az', Belarusian: 'by', bel: 'by', Amharic: 'et', amh: 'et', Zulu: 'za', zul: 'za', Afrikaans: 'za',
-    afr: 'za', Hausa: 'ng', hau: 'ng', Yoruba: 'ng', yor: 'ng', Igbo: 'ng', ibo: 'ng', Brazilian: 'br', bra: 'br',
-    Catalan: 'es-ct', cat: 'es-ct', ca: 'es-ct', Galician: 'es-ga', glg: 'es-ga', gl: 'es-ga', Basque: 'es-pv',
-    baq: 'es-pv', eus: 'es-pv'
-};
+export function createLanguageCachePayload(values: unknown, now = Date.now()): LanguageCachePayload | null {
+    const languages = resolveMediaLanguageIdentities(values);
+    return languages.length > 0 && Number.isSafeInteger(now) && now >= 0 ? {
+        schemaVersion: LANGUAGE_CACHE_SCHEMA_VERSION,
+        languages,
+        timestamp: now,
+    } : null;
+}
+
+export function readLanguageCachePayload(value: unknown): LanguageCachePayload | null {
+    // The hot cache adds exactly one `{ value, timestamp }` wrapper. Never
+    // recurse through attacker-controlled storage shapes.
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const outer = value as Record<string, unknown>;
+    const candidate = 'value' in outer ? outer.value : value;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const record = candidate as Record<string, unknown>;
+    if (record.schemaVersion !== LANGUAGE_CACHE_SCHEMA_VERSION || !Array.isArray(record.languages)) return null;
+    if (!Number.isSafeInteger(record.timestamp) || (record.timestamp as number) < 0) return null;
+    const validated = record.languages.map(validateMediaLanguageIdentity);
+    if (validated.some((language) => language === null)) return null;
+    const languages = resolveMediaLanguageIdentities(validated);
+    // Schema-v3 payloads are already canonical and deduplicated. Any dropped,
+    // duplicated, forged or malformed member invalidates the whole snapshot.
+    if (languages.length === 0 || languages.length !== record.languages.length) return null;
+    if (JSON.stringify(languages) !== JSON.stringify(validated)) return null;
+    return {
+        schemaVersion: LANGUAGE_CACHE_SCHEMA_VERSION,
+        languages,
+        timestamp: record.timestamp as number,
+    };
+}
+
+function isFreshLanguageCachePayload(payload: LanguageCachePayload, now: number, ttl: number): boolean {
+    const age = now - payload.timestamp;
+    return Number.isFinite(ttl) && ttl >= 0 && age >= 0 && age < ttl;
+}
 
 /**
  * Extracts audio languages from a Jellyfin item's media sources.
  * @param sourceItem - The item (or first episode) to extract languages from.
- * @returns Normalized array of language objects.
+ * @returns Canonical, de-duplicated BCP-47 language tags.
  */
-function extractLanguagesFromItem(sourceItem: any): LanguageEntry[] {
+function extractLanguagesFromItem(sourceItem: any): MediaLanguageIdentity[] {
     if (!sourceItem) return [];
-    const languages = new Set<string>();
+    const languages: string[] = [];
 
     // Process audio streams from a flat list
     const processStreams = function(streams: any[] | undefined) {
@@ -69,12 +92,7 @@ function extractLanguagesFromItem(sourceItem: any): LanguageEntry[] {
         streams.filter(function(s: any) { return s.Type === 'Audio'; }).forEach(function(stream: any) {
             const langCode = stream.Language;
             if (langCode && !['und', 'root'].includes(langCode.toLowerCase())) {
-                try {
-                    const langName = langDisplayNames.of(langCode);
-                    languages.add(JSON.stringify({ name: langName, code: langCode }));
-                } catch (e) {
-                    languages.add(JSON.stringify({ name: langCode.toUpperCase(), code: langCode }));
-                }
+                languages.push(langCode);
             }
         });
     };
@@ -89,39 +107,7 @@ function extractLanguagesFromItem(sourceItem: any): LanguageEntry[] {
         processStreams(sourceItem.MediaStreams);
     }
 
-    return normalizeLanguages(Array.from(languages).map((s) => JSON.parse(s)));
-}
-
-// Normalize different shapes of language arrays into [{ name, code }] and de-duplicate
-function normalizeLanguages(languages: any): LanguageEntry[] {
-    if (!Array.isArray(languages)) return [];
-    const norm: LanguageEntry[] = [];
-    const seen = new Set<string>();
-    for (const entry of languages) {
-        let obj: LanguageEntry | null = null;
-        if (!entry) continue;
-        if (typeof entry === 'string') {
-            // Handle legacy cache that stored ["en", "fr", ...]
-            const code = entry.split('-')[0].toLowerCase();
-            let name = null;
-            try { name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code.toUpperCase(); }
-            catch { name = code.toUpperCase(); }
-            obj = { name, code };
-        } else if (typeof entry === 'object') {
-            const code = (entry.code || entry.Code || '').toString().split('-')[0];
-            const name = entry.name || entry.Name || null;
-            if (code) {
-                let resolvedName = name;
-                try { if (!resolvedName) resolvedName = new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code.toUpperCase(); }
-                catch { resolvedName = (name || code.toUpperCase()); }
-                obj = { name: resolvedName, code };
-            }
-        }
-        if (!obj) continue;
-        const key = `${obj.code.toLowerCase()}|${(obj.name || '').toLowerCase()}`;
-        if (!seen.has(key)) { seen.add(key); norm.push(obj); }
-    }
-    return norm;
+    return resolveMediaLanguageIdentities(languages);
 }
 
 /**
@@ -148,39 +134,30 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
         wrap.style.marginTop = 'clamp(20px, 3vw, 30px)';
     }
 
-    const normalized = normalizeLanguages(languages);
     const maxToShow = 3;
-    const seenCountries = new Set<string>();
-    const uniqueFlags: Array<{ countryCode: string; name: string; allLanguages: string[] }> = [];
+    buildMediaLanguagePresentations(languages).slice(0, maxToShow).forEach((presentation) => {
+        const tag = document.createElement('span');
+        tag.className = presentationClass;
+        tag.setAttribute('role', 'img');
+        tag.setAttribute('aria-label', presentation.accessibleLabel);
+        tag.dataset.langTags = JSON.stringify(presentation.canonicalTags);
 
-    // Deduplicate by country code while preserving language info for tooltips
-    normalized.forEach(lang => {
-        const codeKey = (lang.code || '').toString().split('-')[0];
-        const nameKey = (lang.name || '').toString();
-        const countryCode = languageToCountryMap[nameKey] || languageToCountryMap[codeKey];
-        if (countryCode && !seenCountries.has(countryCode)) {
-            seenCountries.add(countryCode);
-            uniqueFlags.push({ countryCode, name: nameKey || codeKey.toUpperCase(), allLanguages: [nameKey || codeKey.toUpperCase()] });
-        } else if (countryCode && seenCountries.has(countryCode)) {
-            // Add language name to existing country's tooltip
-            const existingFlag = uniqueFlags.find(f => f.countryCode === countryCode);
-            if (existingFlag && !existingFlag.allLanguages.includes(nameKey || codeKey.toUpperCase())) {
-                existingFlag.allLanguages.push(nameKey || codeKey.toUpperCase());
-            }
+        if (presentation.kind === 'flag' && presentation.flagRegion) {
+            tag.dataset.region = presentation.flagRegion;
+            const img = document.createElement('img');
+            // PERF(R6): the validated ISO region is served from the local asset cache.
+            img.src = flagSvgUrl(presentation.flagRegion);
+            img.className = flagClass;
+            img.alt = '';
+            img.setAttribute('aria-hidden', 'true');
+            img.loading = 'lazy';
+            tag.appendChild(img);
+        } else {
+            tag.classList.add(neutralClass);
+            tag.dataset.region = '';
+            tag.textContent = presentation.token;
         }
-    });
-
-    uniqueFlags.slice(0, maxToShow).forEach(flagInfo => {
-        const img = document.createElement('img');
-        // PERF(R6): no remote assets — flag served from the local asset cache.
-        img.src = flagSvgUrl(flagInfo.countryCode);
-        img.className = flagClass;
-        img.alt = flagInfo.allLanguages.join(', ');
-        img.title = flagInfo.allLanguages.join(', ');
-        img.loading = 'lazy';
-        img.dataset.lang = flagInfo.countryCode.toLowerCase();
-        img.dataset.langName = flagInfo.allLanguages.join(', ');
-        wrap.appendChild(img);
+        wrap.appendChild(tag);
     });
     ctx.commitOverlay(container, wrap);
 }
@@ -196,6 +173,7 @@ const spec: TagSpec = {
         key: 'JellyfinCanopy-languageTagsCache',
         legacyPrefix: 'languageTagsCache',
         hotBucket: 'language',
+        pruneOnSave: true,
     },
     buildCss() {
         return `
@@ -216,15 +194,46 @@ const spec: TagSpec = {
                 flex-shrink: 0;
                 object-fit: cover;
             }
+            .${presentationClass} {
+                display: inline-flex;
+                min-width: clamp(24px, 6vw, 32px);
+                min-height: 1.25em;
+                align-items: center;
+                justify-content: center;
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+            .${neutralClass} {
+                max-width: 5.5em;
+                padding: 0.12em 0.3em;
+                overflow: hidden;
+                border: 1px solid rgba(255,255,255,0.72);
+                border-radius: 3px;
+                background: rgba(18,18,18,0.88);
+                color: #fff;
+                font-size: clamp(9px, 2.2vw, 12px);
+                font-weight: 700;
+                line-height: 1.1;
+                letter-spacing: 0.02em;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+            }
             @media (max-width: 768px) {
                 .${flagClass} {
                     width: clamp(20px, 5vw, 26px);
+                }
+                .${presentationClass} {
+                    min-width: clamp(20px, 5vw, 26px);
                 }
                 .${containerClass} { gap: 2px; }
             }
             @media (max-width: 480px) {
                 .${flagClass} {
                     width: clamp(16px, 4vw, 20px);
+                }
+                .${presentationClass} {
+                    min-width: clamp(16px, 4vw, 20px);
                 }
                 .${containerClass} {
                     gap: 2px;
@@ -243,10 +252,15 @@ const spec: TagSpec = {
 
             const itemId = item.Id;
             // Check hot cache first
-            const hot = ctx.hot?.get(itemId) as any;
-            if (hot && (Date.now() - hot.timestamp) < ctx.cacheTtl) {
-                if (hot.value && hot.value.length) insertLanguageTags(ctx, el, hot.value);
-                return;
+            const hot = ctx.hot?.get(itemId);
+            if (hot) {
+                const payload = readLanguageCachePayload(hot);
+                if (payload && isFreshLanguageCachePayload(payload, Date.now(), ctx.cacheTtl)) {
+                    insertLanguageTags(ctx, el, payload.languages);
+                    return;
+                }
+                // Pre-version cache entries irreversibly lost region data.
+                ctx.hot?.delete(itemId);
             }
 
             let sourceItem = item;
@@ -261,24 +275,37 @@ const spec: TagSpec = {
             const languages = extractLanguagesFromItem(sourceItem);
 
             if (languages.length > 0) {
-                ctx.setPersistent(itemId, languages);
-                ctx.hot?.set(itemId, { value: languages, timestamp: Date.now() });
-                insertLanguageTags(ctx, el, languages);
+                const payload = createLanguageCachePayload(languages)!;
+                ctx.setPersistent(itemId, payload);
+                ctx.hot?.set(itemId, { value: payload, timestamp: payload.timestamp });
+                insertLanguageTags(ctx, el, payload.languages);
             }
         },
         renderFromCache(ctx, el, itemId) {
             if (ctx.isTagged(el)) return true;
             if (ctx.shouldIgnore(el)) return true;
             if (el.closest('.jc-hidden')) return true;
-            const hot = ctx.hot?.get(itemId) as any;
-            const cached = hot || (ctx.getPersistent(itemId) as any);
-            if (cached) {
-                const languages = Array.isArray(cached) ? cached : (cached.value || cached.languages);
-                if (languages && languages.length > 0) {
-                    insertLanguageTags(ctx, el, languages);
+            const now = Date.now();
+            const hot = ctx.hot?.get(itemId);
+            if (hot !== undefined) {
+                const payload = readLanguageCachePayload(hot);
+                if (payload && isFreshLanguageCachePayload(payload, now, ctx.cacheTtl)) {
+                    insertLanguageTags(ctx, el, payload.languages);
                     return true;
                 }
+                ctx.hot?.delete(itemId);
             }
+            const persistent = ctx.getPersistent(itemId);
+            if (persistent !== undefined) {
+                const payload = readLanguageCachePayload(persistent);
+                if (payload && isFreshLanguageCachePayload(payload, now, ctx.cacheTtl)) {
+                    insertLanguageTags(ctx, el, payload.languages);
+                    return true;
+                }
+                ctx.setPersistent(itemId, undefined);
+            }
+            // Reject legacy, corrupt, stale and future-dated entries so the
+            // authoritative server/live path can refill on this scan.
             return false;
         },
         renderFromServerCache(ctx, el, entry: any) {
@@ -286,14 +313,7 @@ const spec: TagSpec = {
             if (ctx.shouldIgnore(el)) return;
             const codes = entry.AudioLanguages;
             if (!codes || codes.length === 0) return;
-            const languages = codes.map(function(code: string) {
-                try {
-                    return { name: langDisplayNames.of(code), code: code };
-                } catch (e) {
-                    return { name: code.toUpperCase(), code: code };
-                }
-            });
-            insertLanguageTags(ctx, el, languages);
+            insertLanguageTags(ctx, el, codes);
         },
     },
 };
