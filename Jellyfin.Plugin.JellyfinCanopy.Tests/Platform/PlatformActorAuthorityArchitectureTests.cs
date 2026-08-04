@@ -92,6 +92,7 @@ public sealed class PlatformActorAuthorityArchitectureTests
             typeof(PlatformUserBoundaryResult),
             typeof(PlatformInstalledPluginId),
             typeof(PlatformManifestFingerprint),
+            typeof(PlatformProviderGeneration),
             typeof(PlatformApprovedProviderIdentity),
             typeof(PlatformServiceRegistrationId),
             typeof(PlatformCredentialGeneration),
@@ -225,6 +226,7 @@ public sealed class PlatformActorAuthorityArchitectureTests
                 "PlatformActionInvocationCoordinator.cs",
                 "PlatformActorBoundaryFilter.cs",
                 "PlatformNativeCatalogService.cs",
+                "PlatformProviderRegistryDomain.cs",
             },
             SensitiveMemberOwners("ReauthorizeUserActor"));
 
@@ -242,7 +244,7 @@ public sealed class PlatformActorAuthorityArchitectureTests
     }
 
     [Fact]
-    public void ProviderAndServiceProofsHaveNoProductionIssuerOrRegistrationSurfaceYet()
+    public void ProviderProofHasOnlyTheRegistryIssuerAndServiceProofStillHasNoIssuer()
     {
         var source = string.Join(
             "\n",
@@ -250,6 +252,9 @@ public sealed class PlatformActorAuthorityArchitectureTests
 
         Assert.DoesNotContain("new PlatformApprovedProviderIdentity", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new PlatformCurrentServiceIdentity", source, StringComparison.Ordinal);
+        Assert.Equal(
+            new[] { "PlatformActorDomain.cs", "PlatformProviderRegistry.cs" },
+            SensitiveMemberOwners("EstablishCurrentRegistryApproval"));
         Assert.DoesNotContain("PlatformActorFactory.CreateProvider(", source.Replace(
             "internal static PlatformInstalledProviderActor CreateProvider(",
             string.Empty,

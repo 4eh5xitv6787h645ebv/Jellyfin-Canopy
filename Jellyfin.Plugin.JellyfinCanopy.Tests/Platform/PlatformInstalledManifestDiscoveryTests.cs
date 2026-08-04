@@ -184,6 +184,24 @@ public sealed class PlatformInstalledManifestDiscoveryTests
     }
 
     [Fact]
+    public async Task CancellationByFinalReobserverCannotMintACompletedSweep()
+    {
+        var snapshot = Snapshot("10000000-2222-3333-4444-555555555555", "Final");
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await PlatformInstalledManifestDiscovery.SweepAsync(
+                new[] { snapshot },
+                new FakeReader(ReadFor),
+                (_, _) =>
+                {
+                    cancellation.Cancel();
+                    return ValueTask.FromResult<PlatformInstalledPluginSnapshot?>(snapshot);
+                },
+                cancellation.Token));
+    }
+
+    [Fact]
     public async Task HostOwnedBoundaryEnumeratesOnceAndPerformsFreshReobservation()
     {
         var first = Snapshot("10000000-2222-3333-4444-555555555555", "First");
@@ -318,7 +336,7 @@ public sealed class PlatformInstalledManifestDiscoveryTests
                 version: snapshot.Version.ToString()),
             "sha256:test-assembly-set");
 
-    private static ValueTask<ImmutableArray<PlatformInstalledManifestObservation>> Sweep(
+    private static ValueTask<PlatformInstalledManifestSweep> Sweep(
         IReadOnlyList<PlatformInstalledPluginSnapshot> inventory,
         IPlatformInstalledManifestReader reader,
         CancellationToken cancellationToken = default) =>

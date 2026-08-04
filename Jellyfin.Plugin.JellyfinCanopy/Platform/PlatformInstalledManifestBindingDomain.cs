@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
@@ -212,6 +213,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 null);
     }
 
+    /// <summary>
+    /// A fully materialized sweep completion token. Cancellation and acquisition failure paths
+    /// cannot mint this value, so an omission can only mean absence after this exact boundary.
+    /// </summary>
+    internal sealed class PlatformInstalledManifestSweep : IReadOnlyList<PlatformInstalledManifestObservation>
+    {
+        private readonly ImmutableArray<PlatformInstalledManifestObservation> _observations;
+
+        private PlatformInstalledManifestSweep(
+            ImmutableArray<PlatformInstalledManifestObservation> observations) =>
+            _observations = observations;
+
+        internal int Length => _observations.Length;
+
+        public int Count => _observations.Length;
+
+        public PlatformInstalledManifestObservation this[int index] => _observations[index];
+
+        internal ImmutableArray<PlatformInstalledManifestObservation> Observations => _observations;
+
+        public IEnumerator<PlatformInstalledManifestObservation> GetEnumerator() =>
+            ((IEnumerable<PlatformInstalledManifestObservation>)_observations).GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        internal static PlatformInstalledManifestSweep EstablishCompleted(
+            ImmutableArray<PlatformInstalledManifestObservation> observations)
+        {
+            if (observations.IsDefault)
+            {
+                throw new ArgumentException("A completed sweep cannot contain a default array.", nameof(observations));
+            }
+
+            return new PlatformInstalledManifestSweep(observations);
+        }
+    }
+
     /// <summary>Pure parser handoff, host binding and compatibility observation.</summary>
     internal static class PlatformInstalledManifestBinder
     {
@@ -332,7 +370,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         internal const int MaximumPluginCount = 1024;
         internal const int MaximumConcurrentAcquisitions = 1;
 
-        internal static async ValueTask<ImmutableArray<PlatformInstalledManifestObservation>> SweepAsync(
+        internal static async ValueTask<PlatformInstalledManifestSweep> SweepAsync(
             IReadOnlyList<PlatformInstalledPluginSnapshot> inventory,
             IPlatformInstalledManifestReader reader,
             Func<Guid, CancellationToken, ValueTask<PlatformInstalledPluginSnapshot?>> reobserve,
@@ -346,12 +384,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             var snapshots = inventory.ToArray();
             if (snapshots.Length > MaximumPluginCount)
             {
-                return snapshots
+                cancellationToken.ThrowIfCancellationRequested();
+                var rejected = snapshots
                     .OrderBy(snapshot => snapshot.PluginId)
                     .Select(snapshot => PlatformInstalledManifestObservation.Rejected(
                         snapshot,
                         PlatformInstalledManifestOutcome.HostMetadataInvalid))
                     .ToImmutableArray();
+                cancellationToken.ThrowIfCancellationRequested();
+                return PlatformInstalledManifestSweep.EstablishCompleted(rejected);
             }
 
             var hasInvalidMetadata = snapshots.Any(
@@ -365,7 +406,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
             var invalidInventory = hasInvalidMetadata || duplicateIds.Count > 0;
             if (invalidInventory)
             {
-                return snapshots
+                cancellationToken.ThrowIfCancellationRequested();
+                var rejected = snapshots
                     .OrderBy(snapshot => snapshot.PluginId)
                     .Select(snapshot => PlatformInstalledManifestObservation.Rejected(
                         snapshot,
@@ -373,6 +415,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                             ? PlatformInstalledManifestOutcome.AmbiguousHostIdentity
                             : PlatformInstalledManifestOutcome.HostMetadataInvalid))
                     .ToImmutableArray();
+                cancellationToken.ThrowIfCancellationRequested();
+                return PlatformInstalledManifestSweep.EstablishCompleted(rejected);
             }
 
             var observations = ImmutableArray.CreateBuilder<PlatformInstalledManifestObservation>(
@@ -393,6 +437,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                     var readResult = await reader.ReadAsync(snapshot, cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     var current = await reobserve(snapshot.PluginId, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
                     observations.Add(PlatformInstalledManifestBinder.Bind(snapshot, current, readResult));
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -407,7 +452,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
                 }
             }
 
-            return observations.MoveToImmutable();
+            cancellationToken.ThrowIfCancellationRequested();
+            return PlatformInstalledManifestSweep.EstablishCompleted(observations.MoveToImmutable());
         }
     }
 }

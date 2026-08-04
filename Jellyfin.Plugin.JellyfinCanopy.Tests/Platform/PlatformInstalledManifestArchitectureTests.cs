@@ -173,7 +173,7 @@ public sealed class PlatformInstalledManifestArchitectureTests
     }
 
     [Fact]
-    public void BindingSliceDoesNotWireRoutesPersistenceStartupActorsOrExistingActionPaths()
+    public void BindingSliceFeedsOnlyRegistryWithoutRoutesStartupOrExistingActionPaths()
     {
         var production = ProductionFiles().ToDictionary(
             file => Path.GetFileName(file)!,
@@ -184,7 +184,9 @@ public sealed class PlatformInstalledManifestArchitectureTests
             .Select(pair => pair.Key)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        Assert.Equal(new[] { AcquisitionFileName, BindingFileName }, bindingConsumers);
+        Assert.Equal(
+            new[] { AcquisitionFileName, BindingFileName, "PlatformProviderRegistry.cs" },
+            bindingConsumers);
 
         foreach (var pair in production)
         {
