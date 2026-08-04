@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin;
 using MediaBrowser.Common.Plugins;
@@ -24,12 +25,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
     {
         private static User NewUser(string name) => new(name, "provider", "resetProvider");
 
-        private static LocalPlugin NewPlugin(string name, PluginStatus status) => new(
+        private static LocalPlugin NewPlugin(
+            string name,
+            PluginStatus status,
+            Guid? id = null) => new(
             "/plugins/" + name,
             true,
             new PluginManifest
             {
-                Id = Guid.NewGuid(),
+                Id = id ?? Guid.NewGuid(),
                 Name = name,
                 Version = "1.2.3",
                 Status = status,
@@ -199,6 +203,122 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         }
 
         [Fact]
+        public void AnInstalledPluginSnapshotCarriesAnImmutableHostIssuedObservation()
+        {
+            var plugin = NewPlugin("Canopy", PluginStatus.Active);
+            var dllFiles = new[]
+            {
+                "/plugins/Canopy/Jellyfin.Plugin.Canopy.dll",
+                "/plugins/Canopy/Canopy.Contracts.dll",
+            };
+            plugin.DllFiles = dllFiles;
+            plugin.Instance = new InertPluginInstance();
+            var host = Host(plugins: () => new[] { plugin });
+
+            var snapshot = Assert.Single(host.Plugins.InstalledSnapshots());
+            dllFiles[0] = "/changed-after-snapshot.dll";
+
+            Assert.Equal(plugin.Id, snapshot.PluginId);
+            Assert.Equal("Canopy", snapshot.Name);
+            Assert.Equal(new Version(1, 2, 3), snapshot.Version);
+            Assert.Equal(PlatformInstalledPluginHostStatus.Active, snapshot.Status);
+            Assert.Equal("/plugins/Canopy", snapshot.ReportedRoot);
+            Assert.Equal(
+                new[]
+                {
+                    "/plugins/Canopy/Jellyfin.Plugin.Canopy.dll",
+                    "/plugins/Canopy/Canopy.Contracts.dll",
+                },
+                snapshot.DllFiles);
+        }
+
+        [Fact]
+        public void InstalledPluginSnapshotCapsHostDllEnumerationAtOneOverTheSecurityBound()
+        {
+            var plugin = NewPlugin("Canopy", PluginStatus.Active);
+            plugin.DllFiles = Enumerable.Range(
+                    0,
+                    PlatformInstalledManifestLimits.MaximumDllFileCount + 100)
+                .Select(index => "/plugins/Canopy/Provider-" + index + ".dll")
+                .ToArray();
+
+            var snapshot = Assert.Single(Host(plugins: () => new[] { plugin })
+                .Plugins
+                .InstalledSnapshots());
+
+            Assert.Equal(
+                PlatformInstalledManifestLimits.MaximumDllFileCount + 1,
+                snapshot.DllFiles.Length);
+            Assert.False(PlatformInstalledManifestBinder.HasValidHostMetadata(snapshot));
+        }
+
+        [Theory]
+        [InlineData(PluginStatus.Restart, (int)PlatformInstalledPluginHostStatus.Restart)]
+        [InlineData(PluginStatus.Active, (int)PlatformInstalledPluginHostStatus.Active)]
+        [InlineData(PluginStatus.Disabled, (int)PlatformInstalledPluginHostStatus.Disabled)]
+        [InlineData(PluginStatus.NotSupported, (int)PlatformInstalledPluginHostStatus.NotSupported)]
+        [InlineData(PluginStatus.Malfunctioned, (int)PlatformInstalledPluginHostStatus.Malfunctioned)]
+        [InlineData(PluginStatus.Superseded, (int)PlatformInstalledPluginHostStatus.Superseded)]
+        [InlineData(PluginStatus.Deleted, (int)PlatformInstalledPluginHostStatus.Deleted)]
+        public void InstalledPluginSnapshotsMapEveryKnownHostStatusExactly(
+            PluginStatus hostStatus,
+            int expected)
+        {
+            var snapshot = Assert.Single(Host(
+                plugins: () => new[] { NewPlugin("Canopy", hostStatus) })
+                .Plugins
+                .InstalledSnapshots());
+
+            Assert.Equal(expected, (int)snapshot.Status);
+        }
+
+        [Fact]
+        public void AnUnknownFutureHostStatusKeepsItsNumericIdentity()
+        {
+            const int futureStatus = 731;
+            var plugin = NewPlugin("Canopy", (PluginStatus)futureStatus);
+
+            var snapshot = Assert.Single(Host(plugins: () => new[] { plugin })
+                .Plugins
+                .InstalledSnapshots());
+
+            Assert.Equal(futureStatus, (int)snapshot.Status);
+            Assert.False(Enum.IsDefined(snapshot.Status));
+        }
+
+        [Fact]
+        public void SnapshotEnumerationMaterializesOneHostReadAndFindReobservesByGuid()
+        {
+            var first = NewPlugin("First", PluginStatus.Active);
+            var second = NewPlugin("Second", PluginStatus.Restart);
+            var reads = 0;
+            var host = Host(plugins: () =>
+            {
+                reads++;
+                return new[] { first, second };
+            });
+
+            var installed = host.Plugins.InstalledSnapshots();
+
+            Assert.Equal(1, reads);
+            Assert.Equal(new[] { first.Id, second.Id }, installed.Select(plugin => plugin.PluginId));
+            Assert.Equal(second.Id, host.Plugins.FindSnapshot(second.Id)!.PluginId);
+            Assert.Equal(2, reads);
+            Assert.Null(host.Plugins.FindSnapshot(Guid.NewGuid()));
+            Assert.Equal(3, reads);
+        }
+
+        [Fact]
+        public void SnapshotReobservationRejectsANewDuplicateGuidInsteadOfSelectingOne()
+        {
+            var first = NewPlugin("First", PluginStatus.Active);
+            var duplicate = NewPlugin("Duplicate", PluginStatus.Active, first.Id);
+            var host = Host(plugins: () => new[] { first, duplicate });
+
+            Assert.Null(host.Plugins.FindSnapshot(first.Id));
+        }
+
+        [Fact]
         public void TheAdapterIsPureTranslationAndReReadsTheHostEachTime()
         {
             // No caching, deliberately. A cache here would be a second place where
@@ -215,6 +335,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             host.Users.All();
 
             Assert.Equal(2, reads);
+        }
+
+        private sealed class InertPluginInstance : IPlugin
+        {
+            public string Name => "Inert test plugin";
+
+            public string Description => "Test-only instance used to expose assembly metadata.";
+
+            public Guid Id { get; } = Guid.NewGuid();
+
+            public Version Version { get; } = new(1, 2, 3);
+
+            public string AssemblyFilePath => typeof(InertPluginInstance).Assembly.Location;
+
+            public bool CanUninstall => false;
+
+            public string DataFolderPath => "/test-data";
+
+            public PluginInfo GetPluginInfo() => new(Name, Version, Description, Id, CanUninstall);
+
+            public void OnUninstalling()
+            {
+            }
         }
     }
 }

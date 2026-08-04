@@ -1,6 +1,6 @@
 # ADR-0005 — Manifest discovery and registry binding
 
-Status: **accepted; bounded manifest contract and semantic fingerprint implemented** (#645; host-bound discovery and registry lifecycle pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix)
+Status: **accepted; bounded manifest contract, descriptor-safe acquisition and immutable host binding implemented** (#645, #647; registry lifecycle pending) · Owner: platform kernel · Evidence: [S4](../spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another), [S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)
 
 ## Context
 
@@ -24,11 +24,16 @@ declared scopes — are each a distinct vulnerability.
    ([S16](../spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)).
    The kernel opens the file, resolves what the **descriptor** actually refers to,
    and refuses the read outright when that cannot be determined. It must also
-   **bound the open**: `open(2)` blocks forever on a FIFO, so a plugin shipping a
-   named pipe as its manifest would stall discovery for every plugin.
-4. **Containment before I/O.** The resolved path must canonicalize to a location
-   strictly inside the plugin root; absolute paths, embedded NUL, `..` traversal
-   and root-escaping symlinks are rejected before any file is opened.
+   prevent a blocking content open: `open(2)` blocks forever on a FIFO, so a
+   plugin shipping a named pipe as its manifest would stall discovery for every
+   plugin. The production reader type-probes through metadata/nonblocking handles
+   and supports only an explicit local-filesystem allow-list on Linux or fixed
+   local drives on Windows.
+4. **Lexical defence before I/O; descriptor containment after open.** Absolute
+   paths, embedded NUL, `..` traversal and unsafe separator shapes are rejected
+   before opening. Links and mount/reparse transitions cannot be trusted
+   lexically: after opening, the descriptor-resolved target must be strictly
+   inside the descriptor-verified plugin root or the observation is rejected.
    Verified ([S5](../spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
    **Three things the naive implementation gets wrong**, each found in the spike:
    separators must be normalised before any test; link resolution must cover every
@@ -46,6 +51,15 @@ declared scopes — are each a distinct vulnerability.
    stable across property, whitespace and request-set ordering, while every
    validated field change changes the fingerprint. This content fingerprint is
    not proof of installation, a signature, approval, a grant or registry identity.
+   Issue #647 adds the acquisition half: one materialized Jellyfin inventory,
+   one constant filename, nonblocking Linux descriptor opens and cancellable
+   overlapped Windows reads, regular-file and final-target verification, a
+   `MaximumDocumentBytes + 1` read, before/after
+   descriptor-state checks, exact GUID/version/assembly binding and a fresh host
+   re-observation. Unsupported platforms, Linux filesystem types and non-fixed
+   Windows roots fail closed.
+   Successful output is an immutable observation only; it still carries no
+   approval, grant, lifecycle, persistence or invocation authority.
 6. **A manifest is never a grant.** It states what an extension *requests*. An
    administrator approves. Requested and granted scopes are stored separately.
 7. **Fingerprint changes revoke approval.** Any change to the manifest
@@ -102,6 +116,16 @@ declared scopes — are each a distinct vulnerability.
 - **Uninstall does not reclaim anything.** The context stays alive with its
   assemblies loaded for the life of the process. Admin diagnostics should say so
   rather than implying the extension is gone.
+- In-process code cannot impose an absolute wall-clock deadline on a synchronous
+  path lookup or handle open after the operating-system kernel or storage driver
+  accepts it. Classification itself requires the first root lookup, so a
+  host-reported link into an unsupported target can wedge before Canopy can reject
+  it. Once classification succeeds, the v1 reader rejects user-space, network and
+  unknown filesystem roots, uses no abandoned `Task.Run` worker, and bounds all
+  application-controlled bytes, counts and concurrency. Windows cancellation must
+  await native I/O ownership returning before buffers can be reclaimed. Killable
+  isolation for both residuals is tracked by #648; #647 does not claim to sandbox
+  or kill a wedged kernel/driver.
 
 ## Rejected alternatives
 

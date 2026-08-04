@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 38465,
-        "totalLines": 47840
+        "coveredLines": 39220,
+        "totalLines": 48671
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 38465,
-        "maximumCoveredLines": 38465
+        "minimumCoveredLines": 39220,
+        "maximumCoveredLines": 39220
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The #645 EP-03.1 manifest-contract change adds the strict installed-provider v1 schema and frozen inventory, a pure bounded fail-closed parser, immutable validated model, canonical domain-separated semantic fingerprint, exact provider capability ceiling, field-level schema/runtime drift gates, and hardened construction/dependency ownership guards without adding filesystem discovery, host binding, persistence, grants, routes, provider execution, or Android work. Three clean local .NET 10.0.9 Coverlet runs on the identical final 47,840-line source and test scope each passed all 3,574 tests and reproduced exactly 38,465 covered lines. The reviewed observed high-water and exact floor are therefore both 38,465/47,840 (80.403%), requiring no instrumentation tolerance. Relative to the #639 baseline of 38,132/47,506 (80.268%), the change adds 334 instrumented lines and 333 covered lines while increasing overall coverage. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The #647 EP-03.2 change adds host-issued installed-plugin snapshots, exact host reobservation, immutable manifest binding, bounded canonical discovery, Linux descriptor-safe fixed-leaf acquisition, Windows handle/reparse-aware acquisition, final root/manifest/DLL name and object revalidation, fixed byte/plugin/DLL/concurrency limits, fail-closed local/fixed-filesystem classification, adversarial filesystem tests, and a real Windows CI job without adding registry state, grants, routes, provider execution, startup work, or Android work. The Windows-native reader is excluded from Linux Coverlet because its P/Invoke branch cannot execute there; architecture tests bind that exclusion to the blocking windows-latest job. Three clean local .NET 10.0.9 Coverlet runs on the identical final 48,671-line source and test scope each passed all 3,689 tests and reproduced exactly 39,220 covered lines. The reviewed observed high-water and exact floor are therefore both 39,220/48,671 (80.582%), requiring no instrumentation tolerance. Relative to the #645 baseline of 38,465/47,840 (80.403%), the change adds 831 instrumented lines and 755 covered lines while increasing overall coverage. The initial-kernel-syscall/nonreturning-driver availability residual is explicitly decomposed to #648 rather than hidden by an abandoned worker. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

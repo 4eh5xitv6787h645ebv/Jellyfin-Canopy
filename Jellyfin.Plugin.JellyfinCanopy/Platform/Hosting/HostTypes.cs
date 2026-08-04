@@ -137,4 +137,101 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting
     /// <param name="Version">The installed version.</param>
     /// <param name="Status">The host's status string for the plugin, for example <c>Active</c> or <c>Restart</c>.</param>
     public readonly record struct HostPlugin(Guid Id, string Name, string Version, string Status);
+
+    /// <summary>
+    /// Jellyfin's closed installed-plugin states, kept independent of the host enum so
+    /// the rest of the Platform kernel does not acquire a host assembly dependency.
+    ///
+    /// Undefined numeric values are deliberately retained when the adapter sees a newer
+    /// host state. Acquisition can then fail closed without silently reclassifying it as
+    /// one of the states this version understands.
+    /// </summary>
+    internal enum PlatformInstalledPluginHostStatus
+    {
+        /// <summary>A restart is required before the host-side change takes effect.</summary>
+        Restart = 0,
+
+        /// <summary>The plugin is currently active.</summary>
+        Active = 1,
+
+        /// <summary>The plugin is disabled.</summary>
+        Disabled = 2,
+
+        /// <summary>The plugin does not meet the host ABI requirements.</summary>
+        NotSupported = 3,
+
+        /// <summary>The plugin failed while the host instantiated it.</summary>
+        Malfunctioned = 4,
+
+        /// <summary>Another installed version supersedes this plugin.</summary>
+        Superseded = 5,
+
+        /// <summary>The host has marked the plugin for deletion.</summary>
+        Deleted = 6,
+    }
+
+    /// <summary>
+    /// One immutable observation minted from a real Jellyfin <c>LocalPlugin</c>.
+    ///
+    /// The public facts are inert host identity only. Installation topology remains
+    /// internal so it cannot become a caller-selected path API or leak through the
+    /// long-standing public <see cref="HostPlugin"/> projection. This observation is
+    /// not approval, a grant, registry state, or proof that the plugin remains installed.
+    /// </summary>
+    internal sealed class PlatformInstalledPluginSnapshot
+    {
+        private PlatformInstalledPluginSnapshot(
+            Guid pluginId,
+            string name,
+            Version version,
+            PlatformInstalledPluginHostStatus status,
+            string reportedRoot,
+            ImmutableArray<string> reportedDllFiles)
+        {
+            PluginId = pluginId;
+            Name = name;
+            Version = version;
+            Status = status;
+            ReportedRoot = reportedRoot;
+            DllFiles = reportedDllFiles.IsDefault
+                ? ImmutableArray<string>.Empty
+                : reportedDllFiles;
+        }
+
+        /// <summary>Gets the GUID reported by Jellyfin for this installed plugin.</summary>
+        public Guid PluginId { get; }
+
+        /// <summary>Gets the host-reported display name. It is attribution, never identity.</summary>
+        public string Name { get; }
+
+        /// <summary>Gets the typed version reported by Jellyfin.</summary>
+        public Version Version { get; }
+
+        /// <summary>Gets the exact closed host status observed for this plugin.</summary>
+        public PlatformInstalledPluginHostStatus Status { get; }
+
+        /// <summary>Gets the untrusted installation root reported by Jellyfin.</summary>
+        internal string ReportedRoot { get; }
+
+        /// <summary>Gets an immutable copy of Jellyfin's inert DLL-file observations.</summary>
+        internal ImmutableArray<string> DllFiles { get; }
+
+        /// <summary>
+        /// Mints one observation inside the trusted Jellyfin adapter. Architecture tests
+        /// keep this factory out of every other production owner.
+        /// </summary>
+        internal static PlatformInstalledPluginSnapshot EstablishHostSnapshot(
+            Guid pluginId,
+            string name,
+            Version version,
+            PlatformInstalledPluginHostStatus status,
+            string reportedRoot,
+            ImmutableArray<string> reportedDllFiles) => new(
+                pluginId,
+                name,
+                version,
+                status,
+                reportedRoot,
+                reportedDllFiles);
+    }
 }

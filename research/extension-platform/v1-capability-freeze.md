@@ -36,10 +36,11 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-**Activated for the server tranche; contract foundation delivered by #645.** The
+**Activated for the server tranche; acquisition foundation delivered by #645 and #647.** The
 strict installed-provider manifest v1 envelope and its canonical semantic
-fingerprint are frozen without reading a file or creating authority. Host-bound
-safe acquisition, approval/grants, lifecycle and persistence remain undelivered.
+fingerprint are frozen. An explicit descriptor-safe sweep can now bind that
+declaration to an immutable Jellyfin host GUID/version/assembly observation
+without creating authority. Approval/grants, lifecycle and persistence remain undelivered.
 Built-in Canopy families continue to need no third-party manifest or grant. Their existing
 caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
 separate-plugin fixture, fingerprint-bound approval, grant/lifecycle tests and
@@ -288,7 +289,7 @@ health/circuit contract and runtime.
 | Capability | Delivered by | v1 scope |
 |---|---|---|
 | C1 discovery/negotiation | EP-01, EP-06 | **in** |
-| C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; not yet delivered** |
+| C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; manifest contract and host-bound acquisition delivered; registry/lifecycle pending** |
 | C3 provider invocation | EP-04 | **active server tranche; not yet delivered** |
 | C4 namespaced state | EP-05 | **active server tranche; not yet delivered** |
 | C5 events | EP-05 | **registry/provider lifecycle-health-invalidation subset active; broader Jellyfin/Canopy events deferred** |

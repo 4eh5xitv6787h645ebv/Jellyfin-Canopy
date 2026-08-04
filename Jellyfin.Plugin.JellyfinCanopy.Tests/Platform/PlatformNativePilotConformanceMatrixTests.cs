@@ -1109,6 +1109,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             public IReadOnlyList<HostSession> ForUser(Guid userId) => Array.Empty<HostSession>();
             public IReadOnlyList<HostPlugin> Installed() => Array.Empty<HostPlugin>();
             HostPlugin? IHostPlugins.Find(Guid id) => null;
+            IReadOnlyList<PlatformInstalledPluginSnapshot> IHostPlugins.InstalledSnapshots() =>
+                Array.Empty<PlatformInstalledPluginSnapshot>();
+            PlatformInstalledPluginSnapshot? IHostPlugins.FindSnapshot(Guid id) => null;
         }
 
         private sealed class EmptyAuthenticationService : IAuthenticationService

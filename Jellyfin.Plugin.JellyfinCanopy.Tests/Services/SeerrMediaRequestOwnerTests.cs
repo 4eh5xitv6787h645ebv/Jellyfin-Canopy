@@ -698,6 +698,11 @@ public sealed class SeerrMediaRequestOwnerTests
             public IReadOnlyList<HostPlugin> Installed() => Array.Empty<HostPlugin>();
 
             public HostPlugin? Find(Guid id) => null;
+
+            public IReadOnlyList<PlatformInstalledPluginSnapshot> InstalledSnapshots() =>
+                Array.Empty<PlatformInstalledPluginSnapshot>();
+
+            public PlatformInstalledPluginSnapshot? FindSnapshot(Guid id) => null;
         }
     }
 

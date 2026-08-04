@@ -735,6 +735,10 @@ public sealed class PlatformNativeCatalogServiceTests
         public IReadOnlyList<HostPlugin> Installed() => [];
 
         HostPlugin? IHostPlugins.Find(Guid id) => null;
+
+        IReadOnlyList<PlatformInstalledPluginSnapshot> IHostPlugins.InstalledSnapshots() => [];
+
+        PlatformInstalledPluginSnapshot? IHostPlugins.FindSnapshot(Guid id) => null;
     }
 
     private sealed class FakeSpoilerOwner : ISpoilerGuardItemActionOwner

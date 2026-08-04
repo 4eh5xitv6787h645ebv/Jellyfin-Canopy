@@ -208,9 +208,11 @@ a symlink can therefore prevent the server from booting. Related to
 [T-16](threat-model.md#t-16--plugin-directory-deletion-by-manifest-name-collision--high-accepted),
 and the reason the fixtures moved out of `/config/plugins`.
 
-The remaining gap is TOCTOU: the path is validated and then opened, with no
-revalidation on the handle —
-[#494](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues/494).
+The spike's remaining TOCTOU gap is closed by #647's production reader: the
+opened descriptor is the authority, its resolved target must remain inside the
+verified root, descriptor state is compared before and after the bounded read,
+and a fresh Jellyfin host snapshot must still match before an immutable bound
+observation can be returned. The pre-open resolution is defense in depth only.
 
 ## S6 — Provider failure modes all map to bounded host errors
 
@@ -566,8 +568,15 @@ declines rather than guessing. A real kernel retries; it does not relax the chec
 `open(2)` on a FIFO **blocks until a writer appears**. A plugin that ships a named
 pipe called `jellyfin-canopy-extension.json` would hang the reader indefinitely —
 and discovery iterates every plugin, so one such file stalls discovery for all of
-them. The open is now bounded and the candidate refused. Directories are rejected
-before the open rather than by failing it.
+them. The spike bounded the open and refused the candidate. The production #647
+reader instead avoids the blocking content open entirely: it opens metadata with
+nonblocking/descriptor semantics, rejects non-regular types, and accepts only an
+explicit local-filesystem allow-list on Linux or fixed local drives on Windows.
+Classification itself still requires a first root lookup, and this does not claim
+that in-process code can kill a synchronous kernel/driver operation after the OS
+accepts it or safely reclaim buffers before cancelled Windows I/O completes. That
+host-availability residual is recorded in ADR-0005 and the threat model and tracked
+by #648. Directories are rejected before content reading.
 
 Two related notes: a 5,000-character name is refused by the platform
 (`PathTooLongException`), and neither Unicode normalisation form of `café.json`
