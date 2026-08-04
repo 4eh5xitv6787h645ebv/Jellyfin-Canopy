@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 40498,
+        "coveredLines": 40500,
         "totalLines": 50031
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 40496,
-        "maximumCoveredLines": 40498
+        "maximumCoveredLines": 40500
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The #650 EP-03.3 change adds the authoritative fingerprint/generation-bound installed-provider registry, closed lifecycle and admin command contracts, immutable whole-revision snapshots, consume-time elevated-user reauthorization, current-generation authority release, deterministic bounded persistence, store-wide corruption/capacity fencing, and eight immutable evidence-preserving recovery epochs without adding routes, provider execution, startup work, companion credentials, deployment, or Android/client work. Three clean local .NET 10.0.9 Coverlet runs on the identical final 50,031-line source and test scope each passed all 3,783 tests and measured 40,496, 40,498 and 40,496 covered lines. The reviewed observed high-water is therefore 40,498/50,031 (80.946%) and the exact observed floor is 40,496/50,031 (80.942%); the two-line instrumentation spread is bounded to 0.004 percentage points. Relative to the #647 baseline of 39,220/48,671 (80.582%), the change adds 1,360 instrumented lines and at least 1,276 covered lines while increasing overall coverage. Focused cancellation, stale-authority, mixed-race, exact-bound, failed-write, corruption and repeated-recovery regressions plus independent architecture/security/test review cover the authority-critical paths. #648 remains the explicit nonreturning-filesystem isolation residual. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 4,
+        "rationale": "The #650 EP-03.3 change adds the authoritative fingerprint/generation-bound installed-provider registry, closed lifecycle and admin command contracts, immutable whole-revision snapshots, consume-time elevated-user reauthorization, current-generation authority release, deterministic bounded persistence, store-wide corruption/capacity fencing, and eight immutable evidence-preserving recovery epochs without adding routes, provider execution, startup work, companion credentials, deployment, or Android/client work. Three clean local .NET 10.0.9 Coverlet runs and the first clean Ubuntu CI run on the identical final 50,031-line source and test scope each passed all 3,783 tests and measured 40,496, 40,498, 40,496 and 40,500 covered lines. The reviewed observed high-water is therefore 40,500/50,031 (80.950%) and the exact observed floor is 40,496/50,031 (80.942%); the four-line cross-run instrumentation spread is bounded to 0.008 percentage points. Relative to the #647 baseline of 39,220/48,671 (80.582%), the change adds 1,360 instrumented lines and at least 1,276 covered lines while increasing overall coverage. Focused cancellation, stale-authority, mixed-race, exact-bound, failed-write, corruption and repeated-recovery regressions plus independent architecture/security/test review cover the authority-critical paths. #648 remains the explicit nonreturning-filesystem isolation residual. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
