@@ -19,6 +19,9 @@ records what actually breaks, with the evidence that established it.
 Like the Canopy guide, it favours precision over hand-holding, and every claim
 that came from a live device says so.
 
+See [Android TV Client](androidtv-features.md) for screenshots of every
+surface described here.
+
 ---
 
 ## The Android TV platform
@@ -33,7 +36,7 @@ that came from a live device says so.
 | Used for | item-detail actions (Spoiler Guard, Hidden Content, Seerr request) | search, discovery, ratings, credits |
 
 Platform v1 has no search or discovery surface — that is
-ADR-0012 (`research/extension-platform/adr/`)'s scope
+[ADR-0012](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy)'s scope
 decision, not an oversight. Discovery therefore rides the authorized legacy
 proxy. **Do not "unify" these two halves.** The platform half must stay
 feature-agnostic so new server contributions appear with no client change; the
@@ -58,7 +61,7 @@ linked, the client shows **nothing** — no empty state, no dead button, no
 error toast on a screen the user did not ask about.
 
 This is a hard requirement of the
-supported client matrix,
+[supported client matrix](https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy),
 and it is also why the Discover toolbar entry is gated on a *resolved*
 capability rather than on a preference alone: a preference defaults to on, and
 a default-on button on a server with no Canopy is a dead end.
@@ -69,6 +72,24 @@ a default-on button on a server with no Canopy is a dead end.
 
 These are numbered so review comments can cite them. T-rules are TV-specific;
 they exist because each one has already broken this app at least once.
+
+### T0 — Memory growth in a soak is usually the bitmap cache
+
+Total PSS is not a leak signal on this app. Across a 90-move soak on a Shield,
+PSS grew from 101 MB to 324 MB — but the breakdown says it is cache, not a
+leak:
+
+| Pool | Start | End |
+|---|---:|---:|
+| Java heap | 27 MB | **23 MB** |
+| Native | 15 MB | 60 MB |
+| Graphics | 12 MB | 140 MB |
+
+Java heap *shrank*; the growth is entirely bitmaps in Graphics/Native, which is
+Coil filling its cache budget against a real library. PSS also drops
+mid-run when the cache trims. Always read the breakdown
+(`e2e_soak.py` prints it) before calling growth a leak — and treat a rising
+**Java heap** as the signal that matters.
 
 ### T1 — Never mutate a row that may hold focus
 
@@ -91,7 +112,19 @@ and targeted `addActionView`/`removeActionView` instead of a full rebind.
 **Corollary:** the crash also surfaces inside Compose's
 `AndroidComposeView.findNextViewInEmbeddedView` when the mutated rows live in
 an `AndroidFragment<RowsSupportFragment>` — which is every Compose-hosted
-screen in this app. The fix is the same; the stack just looks different.
+screen in this app.
+
+Conservative mutation narrows the window but **cannot close it**: the throw is
+inside framework code the app does not drive. `MainActivity.dispatchKeyEvent`
+therefore contains that one exception and resets focus. This is measured, not
+defensive habit — removing the guard reproduced the crash three times in 180
+soak moves on seeds that are otherwise clean.
+
+**Corollary 2:** `ListRow` rejects a null adapter. Building a placeholder row
+to carry a header throws `IllegalArgumentException: ObjectAdapter cannot be
+null` — an easy mistake to make while restructuring row updates, and one that
+looked exactly like the focus crash until the *message* was compared rather
+than the exception type.
 
 ### T2 — Claim focus after asynchronous content
 
@@ -171,13 +204,83 @@ that, so bound it in the mapper: cap rows (20) and credits (50), validate TMDB
 image paths against `^/[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp)$` before building a
 URL, and ignore unknown enum values rather than failing the whole response.
 
-### T10 — Never log a server-controlled response fragment
+### T10 — Notice the host retiring a route
+
+Canopy emits `Deprecation` and `Sunset` headers on Platform routes it is
+retiring (EP-01.10). A client that ignores them keeps working right up to the
+sunset date and then fails with no warning.
+
+`CanopyClient` logs the notice once per route per process. It is deliberately
+a **developer** signal, not a user-facing one: a viewer cannot act on it, so it
+must never reach the UI or repeat per request.
+
+### T11 — A control never shows a clipped label
+
+Detail-row buttons are a fixed-width, two-line field. Contribution labels come
+from the *server* and are far longer than the app's own one-word labels
+("Play", "Watched"), so they overflow: first wrapping oddly, then breaking
+**mid-word** into things like `Con figure`.
+
+Two rules, both enforced in `FullDetailsFragment`:
+
+1. **Measure, do not guess.** An action becomes a button only when its label
+   renders whole at the button's real dimensions (`labelFitsButton` builds a
+   `StaticLayout` against the same width, size and line count as
+   `text_under_button.xml`). Labels vary by feature, locale and translation,
+   so a hardcoded length limit would be wrong somewhere.
+2. **Overflow is a destination, not a failure.** Anything that does not fit —
+   or does not fit *the remaining slots* — goes to "Other options" rather than
+   being squeezed into the row.
+
+Injected actions must also re-run the host's own overflow accounting
+(`showMoreButtonIfNeeded`) so built-in actions collapse around them. Reserve
+slots first and let that accounting rebalance: measuring free space at
+resolve time always concludes there is none, because nothing has collapsed
+yet.
+
+### T12 — A control that carries state must announce it
+
+The shared `Checkbox`/`RadioButton` were drawn but not described: no
+`toggleableState`, no `selected`. On a 10-foot UI that means a screen-reader
+user hears the row's label and never learns whether the setting is on — and
+the accessibility tree exposes no state at all, so tests have to infer a
+setting from downstream UI instead of reading it.
+
+Any control representing state gets semantics at the component, not the call
+site, so every screen using it benefits at once. `atv_driver`'s
+`toggle_state()` then reads the real value.
+
+### T13 — Never log a server-controlled response fragment
 
 `SerializationException` messages embed the offending JSON. `Timber.DebugTree`
 is planted in release builds. Log the message, never the throwable, for any
 parse failure — the platform client already does this deliberately.
 
 ---
+
+### T14 — A title linked to a Jellyfin item is already in the library
+
+Seerr reports its own `status`, and that status describes *Seerr's* request
+pipeline, not your library. A title the server has matched to a Jellyfin item
+carries a `jellyfinMediaId`, and that link is the authoritative answer to "do I
+have this?" — whatever `status` says beside it.
+
+Trusting the raw status offers a Request action for something the user is
+already looking at in their own library, which reads as the integration being
+broken.
+
+Resolve the effective status once, at the boundary:
+
+```kotlin
+private fun effectiveStatus(wire: Int?, jellyfinMediaId: String?) =
+    if (!jellyfinMediaId.isNullOrBlank()) SeerrMediaStatus.AVAILABLE
+    else SeerrMediaStatus.fromWire(wire)
+```
+
+Apply it in **every** mapper, not just the one whose bug you noticed. Cards and
+detail screens are mapped separately here, so fixing `toDiscoverItem` left
+`toItemDetails` still offering Request for owned titles. The 4K state is a
+separate axis with its own link — resolve it against `jellyfinMediaId4k`.
 
 ## Testing
 
@@ -223,7 +326,20 @@ changes later runs.
 
 **This layer earns its keep.** The T1 crash survived four clean scenario runs
 and could not be reproduced by hand; the soak found it in 13 moves and gave a
-replayable path.
+replayable path. It also caught a null-adapter regression that a passing
+scenario suite missed entirely.
+
+A 25-minute run on merged master (seed 42) covered **1068 moves with zero
+failures**, and settled the memory question for good: PSS climbs while the
+bitmap cache fills and then sits flat.
+
+```
+PSS MB by move: 0:119 100:109 200:159 300:318 400:286 600:288 800:288 1000:284
+```
+
+Steady from move ~300 onward across 750 further moves, with the Java heap
+*shrinking* 27 → 19 MB. Growth that plateaus is a cache; growth that keeps
+climbing is a leak.
 
 ### Driver
 
