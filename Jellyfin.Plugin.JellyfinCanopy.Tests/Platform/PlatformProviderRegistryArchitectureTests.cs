@@ -30,7 +30,7 @@ public sealed class PlatformProviderRegistryArchitectureTests
             {
                 "Applied", "ElevationRequired", "StaleRevision", "ProviderNotFound",
                 "StaleProvider", "InvalidGrant", "InvalidCommand", "PersistenceFailed",
-                "StoreQuarantined", "InvalidSweep",
+                "StoreQuarantined", "InvalidSweep", "StaleReconciliation",
             },
             Enum.GetNames<PlatformProviderRegistryMutationStatus>());
         Assert.Equal(1024, PlatformProviderRegistry.MaximumProviderCount);
@@ -112,7 +112,11 @@ public sealed class PlatformProviderRegistryArchitectureTests
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(reconcile);
         Assert.Equal(
-            new[] { typeof(PlatformInstalledManifestSweep) },
+            new[]
+            {
+                typeof(IPlatformProviderRegistryReconciliationEpoch),
+                typeof(PlatformInstalledManifestSweep),
+            },
             reconcile.GetParameters().Select(parameter => parameter.ParameterType));
     }
 
@@ -176,7 +180,7 @@ public sealed class PlatformProviderRegistryArchitectureTests
     }
 
     [Fact]
-    public void RegistrySliceHasNoRoutesStartupRegistrationOrAndroidConsumers()
+    public void RegistryCompositionIsSingleOwnedAndHasNoRoutesOrAndroidConsumers()
     {
         var consumers = ProductionFiles()
             .Where(file => Code(file).Contains(nameof(PlatformProviderRegistry), StringComparison.Ordinal))
@@ -191,12 +195,68 @@ public sealed class PlatformProviderRegistryArchitectureTests
                 "PlatformProviderRegistryAdminBoundary.cs",
                 DomainFile,
                 StoreFile,
+                "PlatformProviderRegistryOrchestrator.cs",
+                "PluginServiceRegistrator.cs",
             },
             consumers);
         var production = string.Join("\n", ProductionFiles().Select(Code));
-        Assert.DoesNotContain("AddSingleton<PlatformProviderRegistry", production, StringComparison.Ordinal);
         Assert.DoesNotContain("AddHostedService<PlatformProviderRegistry", production, StringComparison.Ordinal);
         Assert.DoesNotContain("PlatformProviderRegistryController", production, StringComparison.Ordinal);
+        Assert.Equal(
+            new[] { RegistryFile, "PlatformProviderRegistryOrchestrator.cs" },
+            MemberOwners("BeginReconciliation"));
+        Assert.Equal(
+            new[] { RegistryFile, "PlatformProviderRegistryOrchestrator.cs" },
+            MemberOwners("AbandonReconciliation"));
+        Assert.Equal(
+            new[] { RegistryFile, "PlatformProviderRegistryOrchestrator.cs" },
+            MemberOwners("IPlatformProviderRegistryReconciliationEpoch"));
+        Assert.Equal(
+            new[] { RegistryFile },
+            MemberOwners("private sealed class ReconciliationEpoch"));
+
+        var orchestrator = Code(SourceFile("PlatformProviderRegistryOrchestrator.cs"));
+        foreach (var forbidden in new[]
+        {
+            "Controller", "Route(", "OpenApi", "Assembly.Load", "System.Reflection",
+            "Activator.CreateInstance", "Type.GetType", "ProviderInvocation", "TryRelease(",
+            "BackgroundService", "PeriodicTimer", "System.Threading.Timer", "new Timer(",
+            "System.Timers.Timer", "CreateTimer(", "Task.Delay(", "ConcurrentQueue",
+            "BlockingCollection", "Queue<", "HealthCheck", "CircuitBreaker", "EventBus", "StateEvent",
+            "Catalog", "CompanionCredential", "ProviderResolver", "HttpClient", "Android",
+            "System.Threading.Channels",
+        })
+        {
+            Assert.DoesNotContain(forbidden, orchestrator, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void OrchestratorIsSoleProductionAcquisitionToReconcileCallerAndFixturesStayAbsent()
+    {
+        Assert.Equal(
+            new[] { "PlatformProviderRegistryOrchestrator.cs" },
+            ProductionFiles()
+                .Where(file => Code(file).Contains("registry.Reconcile(", StringComparison.Ordinal))
+                .Select(file => Path.GetFileName(file)!)
+                .OrderBy(value => value, StringComparer.Ordinal));
+        Assert.Equal(
+            new[] { "PlatformProviderRegistryOrchestrator.cs" },
+            ProductionFiles()
+                .Where(file => Code(file).Contains("_sweepSource.SweepAsync(", StringComparison.Ordinal))
+                .Select(file => Path.GetFileName(file)!)
+                .OrderBy(value => value, StringComparer.Ordinal));
+        Assert.Equal(
+            new[] { RegistryFile, DomainFile },
+            ProductionFiles()
+                .Where(file => Code(file).Contains(nameof(PlatformProviderAuthorityRelease), StringComparison.Ordinal))
+                .Select(file => Path.GetFileName(file)!)
+                .OrderBy(value => value, StringComparer.Ordinal));
+
+        var production = string.Join("\n", ProductionFiles().Select(Code));
+        Assert.DoesNotContain("CanopyConformance", production, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("conformance/platform-providers", production, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("conformance\\platform-providers", production, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AssertImmutable(Type type, IReadOnlyList<string> expectedProperties)

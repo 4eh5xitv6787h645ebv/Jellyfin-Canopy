@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Jellyfin.Plugin.CanopyConformance.Omega</AssemblyName>
+    <RootNamespace>Jellyfin.Plugin.CanopyConformance.Omega</RootNamespace>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <JellyfinVersion>12.0.0-rc1</JellyfinVersion>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
+  </ItemGroup>
+  <Target Name="StageConformancePackage" AfterTargets="Build">
+    <PropertyGroup>
+      <ConformancePackageDir>$(OutputPath)package</ConformancePackageDir>
+    </PropertyGroup>
+    <RemoveDir Directories="$(ConformancePackageDir)" />
+    <MakeDir Directories="$(ConformancePackageDir)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/meta.json;$(MSBuildProjectDirectory)/jellyfin-canopy-extension.json"
+          DestinationFolder="$(ConformancePackageDir)" />
+  </Target>
+</Project>

@@ -8,6 +8,14 @@ using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 {
     /// <summary>
+    /// Opaque one-use registry reconciliation authority. The implementation is private to
+    /// the registry, so callers can retain and return it but cannot construct one.
+    /// </summary>
+    internal interface IPlatformProviderRegistryReconciliationEpoch
+    {
+    }
+
+    /// <summary>
     /// The authoritative installed-provider registry. Durable records remain dormant facts;
     /// authority is released only from a current exact enabled observation under this lock.
     /// </summary>
@@ -22,7 +30,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         private PlatformProviderRegistryDurableState _durable;
         private ImmutableDictionary<Guid, PlatformInstalledManifestObservation> _current;
         private PlatformProviderRegistrySnapshot _snapshot;
-        private bool _authorityReleaseFenced;
+        private IPlatformProviderRegistryReconciliationEpoch? _currentReconciliationEpoch;
+        private bool _authorityReleaseFenced = true;
+
+        /// <summary>
+        /// Opaque one-use registry-owned reconciliation authority. Reference identity is
+        /// deliberate: no caller-controlled number or deserialized value can become current.
+        /// </summary>
+        private sealed class ReconciliationEpoch : IPlatformProviderRegistryReconciliationEpoch
+        {
+            internal ReconciliationEpoch()
+            {
+            }
+        }
 
         internal PlatformProviderRegistry(
             IPlatformProviderRegistryStateStore store,
@@ -65,14 +85,56 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
         internal PlatformProviderRegistrySnapshot Snapshot => Volatile.Read(ref _snapshot);
 
+        /// <summary>
+        /// Fences every live release and supersedes any earlier acquisition before new host
+        /// or filesystem observation begins. Only this exact one-use epoch may reconcile.
+        /// </summary>
+        internal IPlatformProviderRegistryReconciliationEpoch BeginReconciliation()
+        {
+            lock (_gate)
+            {
+                _authorityReleaseFenced = true;
+                _currentReconciliationEpoch = new ReconciliationEpoch();
+                return _currentReconciliationEpoch;
+            }
+        }
+
+        /// <summary>
+        /// Atomically retires an in-flight epoch when cancellation wins the registry
+        /// lock. A newer epoch or already-committed epoch is never disturbed.
+        /// </summary>
+        internal void AbandonReconciliation(
+            IPlatformProviderRegistryReconciliationEpoch epoch)
+        {
+            ArgumentNullException.ThrowIfNull(epoch);
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_currentReconciliationEpoch, epoch))
+                {
+                    return;
+                }
+
+                _currentReconciliationEpoch = null;
+                _authorityReleaseFenced = true;
+            }
+        }
+
         internal PlatformProviderRegistryMutationResult Reconcile(
+            IPlatformProviderRegistryReconciliationEpoch epoch,
             PlatformInstalledManifestSweep sweep)
         {
+            ArgumentNullException.ThrowIfNull(epoch);
             ArgumentNullException.ThrowIfNull(sweep);
             var observations = sweep.Observations;
 
             lock (_gate)
             {
+                if (!ReferenceEquals(_currentReconciliationEpoch, epoch))
+                {
+                    return Result(PlatformProviderRegistryMutationStatus.StaleReconciliation);
+                }
+
+                _currentReconciliationEpoch = null;
                 if (_snapshot.StoreHealth != PlatformProviderRegistryStoreHealth.Healthy)
                 {
                     return Result(PlatformProviderRegistryMutationStatus.StoreQuarantined);
@@ -360,7 +422,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 
                 _durable = PlatformProviderRegistryDurableState.Empty;
                 _current = ImmutableDictionary<Guid, PlatformInstalledManifestObservation>.Empty;
-                _authorityReleaseFenced = false;
+                _currentReconciliationEpoch = null;
+                _authorityReleaseFenced = true;
                 Volatile.Write(
                     ref _snapshot,
                     new PlatformProviderRegistrySnapshot(

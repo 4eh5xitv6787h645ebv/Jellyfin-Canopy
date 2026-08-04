@@ -131,6 +131,37 @@ jobs:
       - name: Unit tests + coverage (plugin assembly line-coverage ratchet)
         run: npm run test:server:coverage
 
+  provider-conformance:
+    name: Provider conformance (disposable Jellyfin 12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      JF_IMAGE: jellyfin/jellyfin:unstable@sha256:f961d7bd9f38457b2bce2aea3a22f120ab50b3885573b184abf46e892dd59119
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Verify Node toolchain
+        run: npm run check:toolchain
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run installed-provider lifecycle and absence matrix
+        run: bash scripts/e2e/run-provider-conformance.sh
+
   client-scripts:
     name: Client checks (lint advisory; all other gates blocking)
     runs-on: ubuntu-latest
@@ -431,7 +462,7 @@ jobs:
 
   e2e:
     name: E2E (dockerized Jellyfin 12)
-    needs: [e2e_shard, bundle-equivalence]
+    needs: [e2e_shard, bundle-equivalence, provider-conformance]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -480,6 +511,12 @@ jobs:
         env:
           BUNDLE_EQUIVALENCE_RESULT: ${{ needs.bundle-equivalence.result }}
         run: test "${BUNDLE_EQUIVALENCE_RESULT}" = success
+
+      - name: Require provider conformance
+        if: always()
+        env:
+          PROVIDER_CONFORMANCE_RESULT: ${{ needs.provider-conformance.result }}
+        run: test "${PROVIDER_CONFORMANCE_RESULT}" = success
 
       - name: Aggregate shard results
         if: always()

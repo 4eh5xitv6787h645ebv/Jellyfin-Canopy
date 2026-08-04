@@ -193,7 +193,19 @@ Approval/recovery proofs are one-use, repeat the elevated-user lookup when
 consumed and are never serialized, so deletion or demotion after minting fails
 closed. Strict bounded state corruption quarantines the whole store; explicit
 recovery commits a new bounded immutable epoch while preserving the corrupt base
-and prior epochs.
+and prior epochs. Issue #652 makes acquisition-to-reconcile sequencing a single
+lazy post-start owner. Before its first host-inventory or descriptor read it
+mints an opaque registry-owned epoch and fences live release. Concurrent triggers
+retain only the latest follow-up; stale, foreign and duplicate completions are
+rejected before a write. Stop, acquisition failure, invalid sweep or persistence
+failure publishes no partial observation and cannot clear the fence. Cancellation
+that wins epoch abandonment has the same property. Two independent no-op Jellyfin
+plugin packages exercise exact GUID,
+version, verified assembly, semantic fingerprint, requested-scope and peer
+isolation without Canopy resolving, reflecting over or invoking fixture code.
+Cancellation abandonment and whole commit are serialized by the same registry
+gate: abandonment that wins retires the epoch before any write, while a complete
+commit already linearized at that gate is allowed to finish atomically.
 *Residual.* **Low.** Four defects found during the spike were fixed rather than
 documented away: separators are normalised before any test; every path component
 is resolved, not just the leaf; resolution runs to a **fixed point**, because one

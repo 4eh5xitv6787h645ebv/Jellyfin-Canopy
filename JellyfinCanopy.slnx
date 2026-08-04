@@ -5,4 +5,11 @@
   <Folder Name="/Jellyfin.Plugin.JellyfinCanopy/">
     <Project Path="Jellyfin.Plugin.JellyfinCanopy/JellyfinCanopy.csproj" />
   </Folder>
+  <Folder Name="/conformance/platform-providers/">
+    <Project Path="conformance/platform-providers/Jellyfin.Plugin.CanopyConformance.Alpha/Jellyfin.Plugin.CanopyConformance.Alpha.csproj" />
+    <Project Path="conformance/platform-providers/Jellyfin.Plugin.CanopyConformance.Alpha.AssemblyDrift/Jellyfin.Plugin.CanopyConformance.Alpha.AssemblyDrift.csproj" />
+    <Project Path="conformance/platform-providers/Jellyfin.Plugin.CanopyConformance.Alpha.Downgrade/Jellyfin.Plugin.CanopyConformance.Alpha.Downgrade.csproj" />
+    <Project Path="conformance/platform-providers/Jellyfin.Plugin.CanopyConformance.Alpha.Upgrade/Jellyfin.Plugin.CanopyConformance.Alpha.Upgrade.csproj" />
+    <Project Path="conformance/platform-providers/Jellyfin.Plugin.CanopyConformance.Omega/Jellyfin.Plugin.CanopyConformance.Omega.csproj" />
+  </Folder>
 </Solution>

@@ -179,7 +179,7 @@ test('stable blocking aggregate reuses same-run attempts and rejects invalid sha
     const aggregate = jobBlock('e2e', 'manifest');
 
     assert.match(aggregate, /name: E2E \(dockerized Jellyfin 12\)/);
-    assert.match(aggregate, /needs: \[e2e_shard, bundle-equivalence\]/);
+    assert.match(aggregate, /needs: \[e2e_shard, bundle-equivalence, provider-conformance\]/);
     assert.match(aggregate, /if: always\(\)/);
     const aggregateHeader = aggregate.slice(0, aggregate.indexOf('\n    steps:'));
     assert.doesNotMatch(aggregateHeader, /continue-on-error:/);
@@ -187,6 +187,8 @@ test('stable blocking aggregate reuses same-run attempts and rejects invalid sha
     assert.match(aggregate, /name: Require shard artifact download/);
     assert.match(aggregate, /name: Require reproducible client bundle/);
     assert.match(aggregate, /BUNDLE_EQUIVALENCE_RESULT: \$\{\{ needs\.bundle-equivalence\.result \}\}/);
+    assert.match(aggregate, /name: Require provider conformance/);
+    assert.match(aggregate, /PROVIDER_CONFORMANCE_RESULT: \$\{\{ needs\.provider-conformance\.result \}\}/);
     assert.match(aggregate, /permissions:\n\s+actions: read\n\s+contents: read/);
     assert.match(aggregate, /github-token: \$\{\{ github\.token \}\}/);
     assert.match(aggregate, /run-id: \$\{\{ github\.run_id \}\}/);
@@ -201,6 +203,16 @@ test('stable blocking aggregate reuses same-run attempts and rejects invalid sha
     for (const argument of ['--total "${E2E_SHARD_TOTAL}"', '--sha', '--run-id', '--run-attempt']) {
         assert.ok(aggregate.includes(argument), `aggregate lost ${argument}`);
     }
+});
+
+test('provider conformance uses the pinned image and feeds the required E2E aggregate', () => {
+    const provider = jobBlock('provider-conformance', 'client-scripts');
+
+    assert.match(provider, /name: Provider conformance \(disposable Jellyfin 12\)/);
+    assert.match(provider, /timeout-minutes: 45/);
+    assert.match(provider, /JF_IMAGE: jellyfin\/jellyfin:unstable@sha256:[0-9a-f]{64}/);
+    assert.match(provider, /bash scripts\/e2e\/run-provider-conformance\.sh/);
+    assert.doesNotMatch(provider, /continue-on-error:/);
 });
 
 test('the same blocking workflow proves pull-request, main and release source SHAs', () => {

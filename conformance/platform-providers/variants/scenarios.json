@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "fixturePluginId": "0a110000-1111-4222-8333-444455556666",
+  "scenarios": [
+    { "id": "baseline", "source": "Jellyfin.Plugin.CanopyConformance.Alpha", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "upgrade", "source": "Jellyfin.Plugin.CanopyConformance.Alpha.Upgrade", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "downgrade", "source": "Jellyfin.Plugin.CanopyConformance.Alpha.Downgrade", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "assembly-drift", "source": "Jellyfin.Plugin.CanopyConformance.Alpha.AssemblyDrift", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "requested-scope-drift", "source": "variants/alpha-scope-drift", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "malformed-manifest", "source": "variants/alpha-malformed", "hostStatus": "Active", "evidence": "disposable-host" },
+    { "id": "disabled", "source": "Jellyfin.Plugin.CanopyConformance.Alpha", "hostStatus": "Disabled", "evidence": "disposable-host" },
+    {
+      "id": "restart-pending",
+      "source": "Jellyfin.Plugin.CanopyConformance.Alpha",
+      "hostStatus": "Restart",
+      "evidence": "component-only",
+      "reason": "Jellyfin 12 Restart is an in-memory status created by a live enable/disable transition; a pre-boot meta.json cannot preserve it."
+    },
+    { "id": "removed", "source": null, "hostStatus": null, "evidence": "disposable-host" },
+    { "id": "same-guid-reinstall", "source": "Jellyfin.Plugin.CanopyConformance.Alpha", "hostStatus": "Active", "freshRoot": true, "evidence": "disposable-host" },
+    { "id": "load-order-alpha-canopy-omega", "sequence": ["alpha", "canopy", "omega"], "evidence": "disposable-host" },
+    { "id": "load-order-omega-canopy-alpha", "sequence": ["omega", "canopy", "alpha"], "evidence": "disposable-host" },
+    { "id": "aba", "sequence": ["baseline", "upgrade", "baseline"], "evidence": "disposable-host" }
+  ]
+}

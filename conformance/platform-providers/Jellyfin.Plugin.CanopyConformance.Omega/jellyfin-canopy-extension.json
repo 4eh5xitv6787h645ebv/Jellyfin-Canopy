@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "org.jellyfin.canopy-omega",
+  "pluginId": "0b220000-1111-4222-8333-444455556777",
+  "version": "1.0.0.0",
+  "kind": "installed-provider",
+  "displayName": "Canopy Conformance Omega",
+  "description": "Independent no-op provider fixture Omega.",
+  "platform": {
+    "min": 1,
+    "max": 1
+  },
+  "host": {
+    "minMajor": 12,
+    "maxMajor": 12
+  },
+  "requestedCapabilities": [
+    "jellyfin.canopy.user-data.read",
+    "jellyfin.canopy.ui.contribute",
+    "jellyfin.canopy.integrations.invoke"
+  ]
+}

@@ -103,7 +103,7 @@ public sealed class PlatformProviderRegistryJsonStateStoreTests
         var path = scope.PathFor("registry.json");
         var store = new PlatformProviderRegistryJsonStateStore(path);
         var registry = Registry(store);
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var pending = Assert.Single(registry.Snapshot.Entries);
         var approved = registry.Apply(
             PlatformProviderAdminCommand.Approve(
@@ -128,7 +128,7 @@ public sealed class PlatformProviderRegistryJsonStateStoreTests
         Assert.Equal(PlatformProviderLifecycleState.Absent, Assert.Single(restarted.Snapshot.Entries).State);
         Assert.Null(restarted.TryRelease(PluginId, pending.Fingerprint!, pending.Generation));
 
-        restarted.Reconcile(Completed(Acquired()));
+        Reconcile(restarted, Completed(Acquired()));
         Assert.Equal(PlatformProviderLifecycleState.Enabled, Assert.Single(restarted.Snapshot.Entries).State);
     }
 
@@ -414,7 +414,7 @@ public sealed class PlatformProviderRegistryJsonStateStoreTests
         using var scope = TempScope.Create();
         var validPath = scope.PathFor("valid.json");
         var registry = Registry(new PlatformProviderRegistryJsonStateStore(validPath));
-        registry.Reconcile(Completed(Acquired()));
+        Reconcile(registry, Completed(Acquired()));
         var pending = Assert.Single(registry.Snapshot.Entries);
         registry.Apply(
             PlatformProviderAdminCommand.Approve(
@@ -485,6 +485,11 @@ public sealed class PlatformProviderRegistryJsonStateStoreTests
 
     private static PlatformProviderRegistry Registry(IPlatformProviderRegistryStateStore store) =>
         new(store, new FixedTimeProvider(new DateTimeOffset(2026, 8, 4, 2, 0, 0, TimeSpan.Zero)));
+
+    private static PlatformProviderRegistryMutationResult Reconcile(
+        PlatformProviderRegistry registry,
+        PlatformInstalledManifestSweep sweep) =>
+        registry.Reconcile(registry.BeginReconciliation(), sweep);
 
     private static PlatformInstalledManifestSweep Completed(
         params PlatformInstalledManifestObservation[] observations) =>

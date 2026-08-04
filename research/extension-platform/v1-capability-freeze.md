@@ -36,16 +36,21 @@ requested-versus-granted scopes; the lifecycle states in
 [compatibility-terminology](compatibility-terminology.md#state-words); a
 user-filtered catalog and admin diagnostics.
 
-**Activated for the server tranche; authority-domain foundation delivered by #645, #647 and #650.** The
+**Activated for the server tranche; discovery, authority and orchestration foundations delivered by #645, #647, #650 and #652.** The
 strict installed-provider manifest v1 envelope and its canonical semantic
 fingerprint are frozen. An explicit descriptor-safe sweep can now bind that
 declaration to an immutable Jellyfin host GUID/version/assembly observation
 without creating authority. The internal #650 registry now owns exact
 fingerprint/request approval, provider-ceiling grants, one-use elevated decisions,
 generation-fenced lifecycle, dormant restart hydration, strict atomic persistence
-and evidence-preserving corruption recovery. It adds no routes, startup work or
-provider invocation. Orchestration, independent provider fixtures, runtime health
-and the EP-03 exit gate remain undelivered.
+and evidence-preserving corruption recovery. #652 composes one lazy
+`ApplicationStarted`-gated, single-flight owner whose opaque one-use epochs fence
+authority before host/filesystem reads and reject stale completions before
+persistence. Its independently built Alpha/Omega packages and deterministic
+upgrade, downgrade, assembly, scope, malformed and lifecycle variants remain
+test-only and are never loaded or invoked by Canopy. The slice adds no routes,
+automatic approval or provider invocation. Runtime health and the EP-03 exit gate
+remain undelivered.
 Built-in Canopy families continue to need no third-party manifest or grant. Their existing
 caller-filtered C1/C6 catalog is not evidence for C2. Delivery requires the
 separate-plugin fixtures, orchestration, runtime admission tests and
@@ -294,7 +299,7 @@ health/circuit contract and runtime.
 | Capability | Delivered by | v1 scope |
 |---|---|---|
 | C1 discovery/negotiation | EP-01, EP-06 | **in** |
-| C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; manifest contract and host-bound acquisition delivered; registry/lifecycle pending** |
+| C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; manifest, host binding, authoritative lifecycle registry and lazy single-flight orchestration delivered** |
 | C3 provider invocation | EP-04 | **active server tranche; not yet delivered** |
 | C4 namespaced state | EP-05 | **active server tranche; not yet delivered** |
 | C5 events | EP-05 | **registry/provider lifecycle-health-invalidation subset active; broader Jellyfin/Canopy events deferred** |

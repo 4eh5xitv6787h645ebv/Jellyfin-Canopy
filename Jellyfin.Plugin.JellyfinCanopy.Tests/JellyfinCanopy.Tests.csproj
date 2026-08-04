@@ -46,6 +46,16 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Jellyfin.Plugin.JellyfinCanopy\JellyfinCanopy.csproj" />
+    <ProjectReference Include="..\conformance\platform-providers\Jellyfin.Plugin.CanopyConformance.Alpha\Jellyfin.Plugin.CanopyConformance.Alpha.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\conformance\platform-providers\Jellyfin.Plugin.CanopyConformance.Alpha.AssemblyDrift\Jellyfin.Plugin.CanopyConformance.Alpha.AssemblyDrift.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\conformance\platform-providers\Jellyfin.Plugin.CanopyConformance.Alpha.Downgrade\Jellyfin.Plugin.CanopyConformance.Alpha.Downgrade.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\conformance\platform-providers\Jellyfin.Plugin.CanopyConformance.Alpha.Upgrade\Jellyfin.Plugin.CanopyConformance.Alpha.Upgrade.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\conformance\platform-providers\Jellyfin.Plugin.CanopyConformance.Omega\Jellyfin.Plugin.CanopyConformance.Omega.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Golden snapshots for the public/private config payload contract
