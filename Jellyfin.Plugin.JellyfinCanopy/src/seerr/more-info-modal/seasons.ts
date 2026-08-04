@@ -290,20 +290,66 @@ cards.forEach((card: any) => {
 });
 }
 
+export interface UnrequestedSeasonsResolution {
+    /** Whether at least one normal-quality season can be requested now. */
+    hasUnrequestedSeasons: boolean;
+    /**
+     * False only when an async prerequisite could not be proven. Callers must
+     * fail closed for this render without memoizing the negative result.
+     */
+    definitive: boolean;
+}
+
+const DEFINITIVE_NO_SEASONS: UnrequestedSeasonsResolution = Object.freeze({
+    hasUnrequestedSeasons: false,
+    definitive: true,
+});
+const INDETERMINATE_SEASONS: UnrequestedSeasonsResolution = Object.freeze({
+    hasUnrequestedSeasons: false,
+    definitive: false,
+});
+
 /**
- * Check if a TV show has any unrequested seasons by querying the request endpoint
- * @param {object} data - The TV show data from Seerr
- * @returns {Promise<boolean>} - True if there are seasons that can be requested
+ * Resolve whether a TV show has an unrequested normal-quality season.
+ *
+ * Regular seasons are independent of Seerr's Specials capability. Season 0
+ * participates only when it is non-empty, otherwise requestable under the
+ * same request/media-state rules, and a complete request-settings snapshot
+ * proves both partial-season requests and special-episode requests are
+ * enabled. Exact-generation `stale:true` settings remain authoritative; an
+ * unavailable snapshot produces an indeterminate result so lifecycle owners
+ * can retry without publishing a stale affordance.
+ *
+ * @param {object} data - Complete TV details from Seerr.
+ * @returns {Promise<UnrequestedSeasonsResolution>}
  */
-// Kept async because callers and the exported internal test seam consume a
-// Promise; the unsafe viewer-scoped Jellyfin read was deliberately removed.
-// eslint-disable-next-line @typescript-eslint/require-await
-async function checkForUnrequestedSeasons(data: any) {
-// Get all seasons from TMDB data that have episodes (excluding specials and unaired seasons)
-const tmdbSeasons = (data.seasons || []).filter((s: any) => s.seasonNumber > 0 && s.episodeCount > 0);
-if (tmdbSeasons.length === 0) return false;
+async function resolveUnrequestedSeasons(data: any): Promise<UnrequestedSeasonsResolution> {
 
 try {
+    if (!data || typeof data !== 'object' || !Array.isArray(data.seasons)) {
+        throw new Error('TV detail did not contain a complete root-season relation.');
+    }
+
+    const seenRootSeasons = new Set<number>();
+    const tmdbSeasons: any[] = [];
+    for (const season of data.seasons) {
+        const seasonNumber = season?.seasonNumber;
+        const episodeCount = season?.episodeCount;
+        if (!Number.isInteger(seasonNumber)
+            || seasonNumber < 0
+            || !Number.isInteger(episodeCount)
+            || episodeCount < 0
+            || seenRootSeasons.has(seasonNumber)) {
+            throw new Error('TV detail contained an invalid root-season row.');
+        }
+        seenRootSeasons.add(seasonNumber);
+        if (episodeCount > 0) tmdbSeasons.push(season);
+    }
+
+    const regularSeasons = tmdbSeasons.filter((season) => season.seasonNumber > 0);
+    const specialsSeason = tmdbSeasons.find((season) => season.seasonNumber === 0) || null;
+    if (regularSeasons.length === 0 && !specialsSeason) return DEFINITIVE_NO_SEASONS;
+
     // Seerr's TV-detail response loads this media row with its complete
     // `requests` relation, and each MediaRequest eagerly loads its season rows.
     // Consume that bounded per-title relation instead of scanning the server's
@@ -388,24 +434,51 @@ try {
     // link IDs cannot prove global absence across all scanner libraries.
     const jellyfinMediaId = data.mediaInfo?.jellyfinMediaId || null;
 
-    for (const tmdbSeason of tmdbSeasons) {
+    const isRequestableSeason = (tmdbSeason: any): boolean => {
         const seasonNumber = Number(tmdbSeason.seasonNumber);
         if (activeNormalRequestSeasons.has(seasonNumber)) {
-            continue;
+            return false;
         }
 
         const rawStatus = mediaStatusMap.get(seasonNumber);
         const effectiveStatus = JC.seerrStatus!.effectiveMediaStatus(rawStatus, jellyfinMediaId);
-        if (JC.seerrStatus!.isRequestable(effectiveStatus)) {
-            return true;
-        }
+        return JC.seerrStatus!.isRequestable(effectiveStatus);
+    };
+
+    if (regularSeasons.some(isRequestableSeason)) {
+        return { hasUnrequestedSeasons: true, definitive: true };
     }
 
-    return false;
+    // If Specials is already active or available, its capability cannot alter
+    // the result and no settings request is needed.
+    if (!specialsSeason || !isRequestableSeason(specialsSeason)) {
+        return DEFINITIVE_NO_SEASONS;
+    }
+
+    const requestSettings = await JC.seerrAPI!.fetchRequestSettings();
+    if (!requestSettings.available) return INDETERMINATE_SEASONS;
+
+    // Seerr's whole-show path deliberately excludes season 0. Specials are
+    // actionable only through the partial-season flow, so both capabilities
+    // are required to avoid publishing a dead-end Request More affordance.
+    const specialsEnabled = requestSettings.partialRequestsEnabled
+        && requestSettings.enableSpecialEpisodes;
+    return {
+        hasUnrequestedSeasons: specialsEnabled,
+        definitive: true,
+    };
 } catch (error: any) {
     console.error(`[More Info Modal] Error checking unrequested seasons:`, error);
-    return false;
+    return INDETERMINATE_SEASONS;
 }
+}
+
+/**
+ * Legacy boolean seam retained for existing callers while lifecycle-aware
+ * owners consume resolveUnrequestedSeasons and its definitive flag.
+ */
+async function checkForUnrequestedSeasons(data: any): Promise<boolean> {
+    return (await resolveUnrequestedSeasons(data)).hasUnrequestedSeasons;
 }
 
 /**
@@ -466,4 +539,5 @@ internal.buildSeasonAvailabilityLinks = buildSeasonAvailabilityLinks;
 internal.fetchJellyfinSeasonMap = fetchJellyfinSeasonMap;
 internal.enrichSeasonCardsWithJellyfinLinks = enrichSeasonCardsWithJellyfinLinks;
 internal.checkForUnrequestedSeasons = checkForUnrequestedSeasons;
+internal.resolveUnrequestedSeasons = resolveUnrequestedSeasons;
 internal.buildSeasonsSection = buildSeasonsSection;

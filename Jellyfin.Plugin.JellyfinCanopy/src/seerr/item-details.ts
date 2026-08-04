@@ -15,6 +15,8 @@ const requestMoreLogPrefix = '🪼 Jellyfin Canopy: Series Request More:';
 // Track processed items to avoid duplicate renders
 const processedItems = new Set();
 const processedRequestMoreItems = new Set();
+const requestMoreRetryTimers = new Set<number>();
+const REQUEST_MORE_RETRY_DELAYS_MS = [2_000, 5_000, 10_000] as const;
 
 // CSS class used to mark and dedupe the injected Request More button
 const REQUEST_MORE_BTN_CLASS = 'jc-series-request-more-btn';
@@ -568,7 +570,7 @@ function waitForSeasonsHeading(itemId: string, signal?: AbortSignal): Promise<an
 }
 
 /**
- * Waits for `JC.seerrMoreInfo.checkForUnrequestedSeasons` to become
+ * Waits for `JC.seerrMoreInfo.resolveUnrequestedSeasons` to become
  * available. The Seerr modules are loaded in parallel by plugin.js
  * via dynamically-inserted <script> tags, so on a cold page load
  * item-details.js may execute before more-info-modal.js has finished
@@ -580,13 +582,29 @@ function waitForSeasonsHeading(itemId: string, signal?: AbortSignal): Promise<an
 function waitForChecker(signal?: AbortSignal): Promise<any> {
     return pollUntil(
         () => {
-            const fn = JC.seerrMoreInfo && JC.seerrMoreInfo.checkForUnrequestedSeasons;
+            const fn = JC.seerrMoreInfo && JC.seerrMoreInfo.resolveUnrequestedSeasons;
             return typeof fn === 'function' ? fn : null;
         },
         // PERF(R9): on a slow connection the module scripts themselves load
         // slowly — 3s lost the button for the page view. Decayed poll + nav abort.
         { intervalMs: 50, maxIntervalMs: 500, timeoutMs: 30_000, signal }
     );
+}
+
+/**
+ * Retry an indeterminate Specials capability without turning a transient
+ * settings failure into a page-lifetime negative. The finite backoff is owned
+ * by the current details navigation and cleanup() cancels it synchronously.
+ */
+function scheduleRequestMoreRetry(itemId: string, attempt: number): void {
+    const delay = REQUEST_MORE_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    const timer = window.setTimeout(() => {
+        requestMoreRetryTimers.delete(timer);
+        if (getItemIdFromUrl() !== itemId) return;
+        void renderSeriesRequestMoreButton(itemId, attempt + 1);
+    }, delay);
+    requestMoreRetryTimers.add(timer);
 }
 
 /**
@@ -649,11 +667,11 @@ function buildSeriesRequestMoreButton(tvDetails: any, context: IdentityContext):
 /**
  * Renders a "Request More" button next to the Seasons section heading on
  * a Series detail page when the show has unrequested seasons in Seerr.
- * Reuses checkForUnrequestedSeasons from more-info-modal.js so the
+ * Reuses resolveUnrequestedSeasons from the More Info owner so the
  * detection logic stays in one place.
  * @param {string} itemId - Jellyfin item ID
  */
-async function renderSeriesRequestMoreButton(itemId: string) {
+async function renderSeriesRequestMoreButton(itemId: string, retryAttempt = 0) {
     const context = JC.identity.capture();
     if (!context) return;
     if (processedRequestMoreItems.has(itemId)) return;
@@ -708,16 +726,24 @@ async function renderSeriesRequestMoreButton(itemId: string) {
         const checker = await waitForChecker(signal);
         if (!isCurrent(context, signal)) return;
         if (!checker) {
-            console.warn(`${requestMoreLogPrefix} checkForUnrequestedSeasons unavailable after 3s, skipping`);
+            console.warn(`${requestMoreLogPrefix} Request More resolver unavailable after 30s, skipping`);
             return;
         }
-        const hasUnrequested = await checker(tvDetails);
+        const resolution = await checker(tvDetails);
         if (!isCurrent(context, signal)) return;
-        if (!hasUnrequested) {
-            // Dedupe negative results too. Each call to checker() runs an
-            // HTTP request to /JellyfinCanopy/seerr/request, so we
-            // don't want to repeat it on every viewshow for the same item.
-            // cleanup() clears this set on real navigation.
+        if (!resolution
+            || typeof resolution.hasUnrequestedSeasons !== 'boolean'
+            || typeof resolution.definitive !== 'boolean') {
+            throw new TypeError('Request More resolver returned an invalid result.');
+        }
+        if (!resolution.definitive) {
+            scheduleRequestMoreRetry(itemId, retryAttempt);
+            console.debug(`${requestMoreLogPrefix} Request settings unavailable; retrying for "${tvDetails.name || tvDetails.title}"`);
+            return;
+        }
+        if (!resolution.hasUnrequestedSeasons) {
+            // Definitive negatives are safe to memoize for this page identity.
+            // Indeterminate settings failures take the bounded retry path above.
             processedRequestMoreItems.add(itemId);
             console.debug(`${requestMoreLogPrefix} No unrequested seasons for "${tvDetails.name || tvDetails.title}"`);
             return;
@@ -790,6 +816,8 @@ function handleItemDetailsPage() {
 function cleanup() {
     for (const frame of pendingFrames) cancelAnimationFrame(frame);
     pendingFrames.clear();
+    for (const timer of requestMoreRetryTimers) clearTimeout(timer);
+    requestMoreRetryTimers.clear();
     // Abort any in-flight requests
     if (currentAbortController) {
         currentAbortController.abort();

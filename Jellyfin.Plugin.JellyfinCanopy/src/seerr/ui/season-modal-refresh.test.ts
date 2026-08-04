@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 describe('season modal refresh lifecycle', () => {
     let fetchTvShowDetails: ReturnType<typeof vi.fn>;
     let fetchTvSeasonDetails: ReturnType<typeof vi.fn>;
+    let fetchRequestSettings: ReturnType<typeof vi.fn>;
+    let requestTvSeasons: ReturnType<typeof vi.fn>;
     let modalRecords: Array<{ options: any; modalElement: HTMLElement }>;
 
     function tvDetails(activeRequest = false, includeAirDate = true) {
@@ -37,6 +39,13 @@ describe('season modal refresh lifecycle', () => {
         modalRecords = [];
         fetchTvShowDetails = vi.fn();
         fetchTvSeasonDetails = vi.fn().mockResolvedValue(null);
+        fetchRequestSettings = vi.fn().mockResolvedValue({
+            available: true,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: false,
+            stale: false,
+        });
+        requestTvSeasons = vi.fn();
 
         const jc = window.JellyfinCanopy as unknown as Record<string, any>;
         jc.seerrUI = {};
@@ -55,18 +64,13 @@ describe('season modal refresh lifecycle', () => {
         internal.handleRequestError = vi.fn();
 
         jc.seerrAPI = {
-            fetchRequestSettings: vi.fn().mockResolvedValue({
-                available: true,
-                partialRequestsEnabled: true,
-                enableSpecialEpisodes: false,
-                stale: false,
-            }),
+            fetchRequestSettings,
             fetchTvShowDetails,
             fetchTvSeasonDetails,
             fetchTmdbTvDetails: vi.fn().mockResolvedValue(null),
             fetchAdvancedRequestData: vi.fn(),
             fetchUserQuota: vi.fn().mockResolvedValue(null),
-            requestTvSeasons: vi.fn(),
+            requestTvSeasons,
             requestMedia: vi.fn(),
         };
         jc.seerrModal = {
@@ -127,6 +131,40 @@ describe('season modal refresh lifecycle', () => {
         expect(checkbox.disabled).toBe(true);
         expect(modal.modalElement.querySelector('.seerr-season-status')?.textContent)
             .toBe('seerr_season_status_requested');
+    });
+
+    it('submits season zero when Specials and partial requests are enabled', async () => {
+        fetchRequestSettings.mockResolvedValue({
+            available: true,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: true,
+            stale: false,
+        });
+        fetchTvShowDetails.mockResolvedValue({
+            name: 'Specials fixture',
+            seasons: [{ seasonNumber: 0, episodeCount: 3, name: 'Specials' }],
+            mediaInfo: {
+                status: 5,
+                status4k: 1,
+                seasons: [{ seasonNumber: 0, status: 1, status4k: 1 }],
+                requests: [],
+                downloadStatus: [],
+                downloadStatus4k: [],
+            },
+        });
+        const modal = await openModal();
+        const checkbox = modal.modalElement.querySelector<HTMLInputElement>(
+            '.seerr-season-item[data-season-number="0"] .seerr-season-checkbox',
+        )!;
+        expect(checkbox.disabled).toBe(false);
+        checkbox.checked = true;
+
+        const requestButton = document.createElement('button');
+        const close = vi.fn();
+        await modal.options.onSave(modal.modalElement, requestButton, close);
+
+        expect(requestTvSeasons).toHaveBeenCalledWith(123, [0], {}, null, false);
+        expect(close).toHaveBeenCalledOnce();
     });
 
     it('serializes polls and ignores an in-flight result after the modal closes', async () => {

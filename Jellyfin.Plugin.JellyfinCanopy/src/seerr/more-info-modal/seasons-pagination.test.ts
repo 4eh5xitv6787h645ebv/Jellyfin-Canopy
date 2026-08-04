@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JC } from '../../globals';
 
 describe('more-info unrequested-season per-title request state', () => {
     let ajax: ReturnType<typeof vi.fn>;
     let checkForUnrequestedSeasons: (data: unknown) => Promise<boolean>;
+    let resolveUnrequestedSeasons: (data: unknown) => Promise<{
+        hasUnrequestedSeasons: boolean;
+        definitive: boolean;
+    }>;
+    let fetchRequestSettings: ReturnType<typeof vi.fn>;
     let buildSeasonAvailabilityLinks: (seasonInfo: unknown, normalId?: string | null, fourKId?: string | null) => string;
     let getSeasonStatusInfo: (data: unknown, seasonNumber: unknown) => any;
     let fetchJellyfinSeasonMap: (seriesId: unknown) => Promise<Record<number, any>>;
@@ -15,12 +21,23 @@ describe('more-info unrequested-season per-title request state', () => {
         client.ajax = ajax;
         client.getUrl = (path: string) => `http://jellyfin.test${path}`;
         client.getCurrentUserId = () => 'test-user-id';
+        fetchRequestSettings = vi.fn().mockResolvedValue({
+            available: true,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: false,
+            stale: false,
+        });
+        JC.seerrAPI = {
+            ...(JC.seerrAPI || {}),
+            fetchRequestSettings,
+        } as unknown as NonNullable<typeof JC.seerrAPI>;
 
         const { installSeerrStatus } = await import('../seerr-status');
         installSeerrStatus();
         const { internal } = await import('./internal');
         await import('./seasons');
         checkForUnrequestedSeasons = internal.checkForUnrequestedSeasons as typeof checkForUnrequestedSeasons;
+        resolveUnrequestedSeasons = internal.resolveUnrequestedSeasons as typeof resolveUnrequestedSeasons;
         buildSeasonAvailabilityLinks = internal.buildSeasonAvailabilityLinks as typeof buildSeasonAvailabilityLinks;
         getSeasonStatusInfo = internal.getSeasonStatusInfo as typeof getSeasonStatusInfo;
         fetchJellyfinSeasonMap = internal.fetchJellyfinSeasonMap as typeof fetchJellyfinSeasonMap;
@@ -109,6 +126,142 @@ describe('more-info unrequested-season per-title request state', () => {
             },
         })).resolves.toBe(true);
         expect(ajax).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        {
+            name: 'fresh enabled settings',
+            settings: { available: true, partialRequestsEnabled: true, enableSpecialEpisodes: true, stale: false },
+            expected: true,
+        },
+        {
+            name: 'exact-generation stale enabled settings',
+            settings: { available: true, partialRequestsEnabled: true, enableSpecialEpisodes: true, stale: true },
+            expected: true,
+        },
+        {
+            name: 'Specials disabled',
+            settings: { available: true, partialRequestsEnabled: true, enableSpecialEpisodes: false, stale: false },
+            expected: false,
+        },
+        {
+            name: 'partial requests disabled',
+            settings: { available: true, partialRequestsEnabled: false, enableSpecialEpisodes: true, stale: false },
+            expected: false,
+        },
+    ])('resolves requestable Specials with $name', async ({ settings, expected }) => {
+        fetchRequestSettings.mockResolvedValue(settings);
+
+        await expect(resolveUnrequestedSeasons({
+            id: 42,
+            seasons: [
+                { seasonNumber: 0, episodeCount: 3 },
+                { seasonNumber: 1, episodeCount: 8 },
+            ],
+            mediaInfo: {
+                requests: [],
+                seasons: [
+                    { seasonNumber: 0, status: 1 },
+                    { seasonNumber: 1, status: 5 },
+                ],
+                jellyfinMediaId: 'series-id',
+            },
+        })).resolves.toEqual({ hasUnrequestedSeasons: expected, definitive: true });
+        expect(fetchRequestSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not suppress a requestable regular season when settings are unavailable', async () => {
+        fetchRequestSettings.mockResolvedValue({ available: false });
+
+        await expect(resolveUnrequestedSeasons({
+            id: 42,
+            seasons: [
+                { seasonNumber: 0, episodeCount: 3 },
+                { seasonNumber: 1, episodeCount: 8 },
+            ],
+            mediaInfo: {
+                requests: [],
+                seasons: [
+                    { seasonNumber: 0, status: 1 },
+                    { seasonNumber: 1, status: 7 },
+                ],
+            },
+        })).resolves.toEqual({ hasUnrequestedSeasons: true, definitive: true });
+        expect(fetchRequestSettings).not.toHaveBeenCalled();
+    });
+
+    it('leaves a Specials-only decision indeterminate when settings are unavailable', async () => {
+        fetchRequestSettings.mockResolvedValue({ available: false });
+
+        await expect(resolveUnrequestedSeasons({
+            id: 42,
+            seasons: [{ seasonNumber: 0, episodeCount: 3 }],
+            mediaInfo: {
+                requests: [],
+                seasons: [{ seasonNumber: 0, status: 1 }],
+            },
+        })).resolves.toEqual({ hasUnrequestedSeasons: false, definitive: false });
+    });
+
+    it.each([
+        {
+            name: 'empty',
+            root: { seasonNumber: 0, episodeCount: 0 },
+            mediaStatus: 1,
+            requests: [],
+        },
+        {
+            name: 'active',
+            root: { seasonNumber: 0, episodeCount: 3 },
+            mediaStatus: 1,
+            requests: [{
+                id: 1,
+                type: 'tv',
+                is4k: false,
+                status: 2,
+                seasons: [{ seasonNumber: 0, status: 2 }],
+            }],
+        },
+        {
+            name: 'available',
+            root: { seasonNumber: 0, episodeCount: 3 },
+            mediaStatus: 5,
+            requests: [],
+        },
+    ])('keeps $name Specials nonrequestable without consulting settings', async ({ root, mediaStatus, requests }) => {
+        await expect(resolveUnrequestedSeasons({
+            id: 42,
+            seasons: [root],
+            mediaInfo: {
+                requests,
+                seasons: [{ seasonNumber: 0, status: mediaStatus }],
+            },
+        })).resolves.toEqual({ hasUnrequestedSeasons: false, definitive: true });
+        expect(fetchRequestSettings).not.toHaveBeenCalled();
+    });
+
+    it('lets deleted Specials become the sole requestable season when enabled', async () => {
+        fetchRequestSettings.mockResolvedValue({
+            available: true,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: true,
+            stale: false,
+        });
+
+        await expect(resolveUnrequestedSeasons({
+            id: 42,
+            seasons: [{ seasonNumber: 0, episodeCount: 2 }],
+            mediaInfo: {
+                requests: [{
+                    id: 1,
+                    type: 'tv',
+                    is4k: false,
+                    status: 5,
+                    seasons: [{ seasonNumber: 0, status: 5 }],
+                }],
+                seasons: [{ seasonNumber: 0, status: 7 }],
+            },
+        })).resolves.toEqual({ hasUnrequestedSeasons: true, definitive: true });
     });
 
     it('keeps raw AVAILABLE fail-closed without a viewer-scoped Jellyfin absence query', async () => {
