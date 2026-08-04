@@ -7,6 +7,7 @@ using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyfinCanopy.Data;
+using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Dto;
@@ -319,6 +320,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
                 return plugin is null ? null : Map(plugin);
             }
 
+            public IReadOnlyList<PlatformInstalledPluginSnapshot> InstalledSnapshots()
+            {
+                // Materialize the manager's view once. A later acquisition owner may
+                // re-observe a plugin explicitly, but one sweep must not combine two
+                // independently changing enumerations.
+                var installed = _installed().ToList();
+                return installed.Select(MapSnapshot).ToImmutableArray();
+            }
+
+            public PlatformInstalledPluginSnapshot? FindSnapshot(Guid id)
+            {
+                var matches = _installed()
+                    .Where(candidate => candidate.Id == id)
+                    .Take(2)
+                    .ToList();
+                return matches.Count == 1 ? MapSnapshot(matches[0]) : null;
+            }
+
             // EP-00 (spike-evidence S5/S6): the status lives on the MANIFEST, not on the
             // LocalPlugin - LocalPlugin.Status does not exist - and a runtime disable
             // produces Restart rather than Disabled, because nothing is ever unloaded.
@@ -327,6 +346,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting.Jellyfin
                 plugin.Name,
                 plugin.Version.ToString(),
                 plugin.Manifest.Status.ToString());
+
+            private static PlatformInstalledPluginSnapshot MapSnapshot(LocalPlugin plugin)
+            {
+                return PlatformInstalledPluginSnapshot.EstablishHostSnapshot(
+                    plugin.Id,
+                    plugin.Name,
+                    plugin.Version,
+                    MapStatus(plugin.Manifest.Status),
+                    plugin.Path,
+                    plugin.DllFiles
+                        .Take(PlatformInstalledManifestLimits.MaximumDllFileCount + 1)
+                        .ToImmutableArray());
+            }
+
+            private static PlatformInstalledPluginHostStatus MapStatus(
+                MediaBrowser.Model.Plugins.PluginStatus status) => status switch
+                {
+                    MediaBrowser.Model.Plugins.PluginStatus.Restart => PlatformInstalledPluginHostStatus.Restart,
+                    MediaBrowser.Model.Plugins.PluginStatus.Active => PlatformInstalledPluginHostStatus.Active,
+                    MediaBrowser.Model.Plugins.PluginStatus.Disabled => PlatformInstalledPluginHostStatus.Disabled,
+                    MediaBrowser.Model.Plugins.PluginStatus.NotSupported => PlatformInstalledPluginHostStatus.NotSupported,
+                    MediaBrowser.Model.Plugins.PluginStatus.Malfunctioned => PlatformInstalledPluginHostStatus.Malfunctioned,
+                    MediaBrowser.Model.Plugins.PluginStatus.Superseded => PlatformInstalledPluginHostStatus.Superseded,
+                    MediaBrowser.Model.Plugins.PluginStatus.Deleted => PlatformInstalledPluginHostStatus.Deleted,
+                    _ => (PlatformInstalledPluginHostStatus)(int)status,
+                };
         }
     }
 }

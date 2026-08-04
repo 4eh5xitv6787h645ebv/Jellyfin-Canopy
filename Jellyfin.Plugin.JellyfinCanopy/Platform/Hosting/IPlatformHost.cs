@@ -105,5 +105,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting
 
         /// <summary>The installed plugin with <paramref name="id"/>, or <c>null</c>.</summary>
         HostPlugin? Find(Guid id);
+
+        /// <summary>
+        /// Takes one immutable host-issued observation of every installed plugin.
+        /// Internal because installation topology is acquisition input, not public API.
+        /// </summary>
+        internal IReadOnlyList<PlatformInstalledPluginSnapshot> InstalledSnapshots();
+
+        /// <summary>
+        /// Takes one host-issued observation for <paramref name="id"/>, or <c>null</c>.
+        /// This is a fresh host read and not authority that an earlier snapshot remains current.
+        /// </summary>
+        internal PlatformInstalledPluginSnapshot? FindSnapshot(Guid id);
     }
 }

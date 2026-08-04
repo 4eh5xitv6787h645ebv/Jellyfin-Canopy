@@ -45,6 +45,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
         private static readonly Regex PositiveAccessMint = new(
             @"\bHostItemAccessResult\s*\.\s*Accessible\s*\(",
             RegexOptions.Compiled);
+        private static readonly Regex InstalledPluginSnapshotMint = new(
+            @"\bPlatformInstalledPluginSnapshot\s*\.\s*EstablishHostSnapshot\s*\(",
+            RegexOptions.Compiled);
 
         /// <summary>
         /// The only kernel files permitted to mention the host, each with its reason.
@@ -173,6 +176,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform
             Assert.Matches(
                 PositiveAccessMint,
                 "return HostItemAccessResult.Accessible(item);");
+        }
+
+        [Fact]
+        public void OnlyTheJellyfinAdapterCanMintAnInstalledPluginSnapshot()
+        {
+            var offenders = ProductionSourceFiles()
+                .Where(file => Path.GetFileName(file) != "JellyfinPlatformHost.cs")
+                .Where(file => InstalledPluginSnapshotMint.IsMatch(CodeOnly(File.ReadAllText(file))))
+                .Select(file => Path.GetRelativePath(ProductionSourceRoot(), file))
+                .OrderBy(file => file, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(
+                offenders.Count == 0,
+                "Only JellyfinPlatformHost may mint installed-plugin acquisition snapshots; "
+                + "manifest declarations and other kernel owners are not host identity. Offenders: "
+                + string.Join(", ", offenders));
+
+            Assert.Matches(
+                InstalledPluginSnapshotMint,
+                "return PlatformInstalledPluginSnapshot.EstablishHostSnapshot(id, name, version, status, root, dlls);");
         }
 
         [Fact]

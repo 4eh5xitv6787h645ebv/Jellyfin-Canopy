@@ -15,6 +15,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 public sealed class PlatformExtensionManifestArchitectureTests
 {
     private const string ManifestDomainFileName = "PlatformExtensionManifestDomain.cs";
+    private const string InstalledManifestBindingDomainFileName =
+        "PlatformInstalledManifestBindingDomain.cs";
 
     private static readonly Regex IdentifierUnicodeEscape = new(
         @"\\(?:u(?<short>[0-9a-fA-F]{4})|U(?<long>[0-9a-fA-F]{8}))",
@@ -227,7 +229,7 @@ public sealed class PlatformExtensionManifestArchitectureTests
     public void ManifestParsingConstructionAndFingerprintEstablishmentAreSourceOwned()
     {
         Assert.Equal(
-            new[] { ManifestDomainFileName },
+            new[] { ManifestDomainFileName, InstalledManifestBindingDomainFileName },
             MemberOwners(nameof(PlatformExtensionManifestParser), nameof(PlatformExtensionManifestParser.TryParse)));
         Assert.Equal(
             new[] { "PlatformActorDomain.cs", ManifestDomainFileName },

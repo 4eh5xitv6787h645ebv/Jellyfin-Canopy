@@ -162,12 +162,22 @@ extension, a compromised supply chain, a fork that copied a manifest, and a
 partially completed install. It is worth doing for exactly those cases.
 
 *Mitigation.* Manifests are read only from the root `IPluginManager` reports and
-fingerprint-bound to the GUID Jellyfin reports
+bound exactly to the GUID and canonical version Jellyfin reports
 ([S4](spike-evidence.md#s4--manifest-discovery-binds-to-the-real-plugin-identity-and-rejects-a-claim-to-another)).
-Traversal, absolute paths, embedded NUL and escaping symlinks are rejected before
-any file is opened
+The production reader opens only the fixed manifest leaf with nonblocking Linux
+descriptors or cancellable overlapped Windows reads, rejects non-regular or
+unverifiable descriptors before reading, and supports only an explicit
+local-filesystem allow-list on Linux or fixed local drives on Windows. It verifies
+the descriptor-resolved target inside the descriptor-verified root, caps the
+owned read at 256 KiB plus one detection byte, and rechecks root, file, DLL-name
+and host observations after the read. In-root links are accepted only when
+their resolved target and opened descriptor agree; traversal, separator aliases,
+embedded NUL, broken/cyclic links, root escapes and TOCTOU swaps fail closed
 ([S5](spike-evidence.md#s5--path-containment-holds-against-traversal-symlinks-and-link-cycles)).
-Size, malformed-JSON and non-object manifests are rejected before registration, and a fingerprint mismatch is a rejection rather than a flag — all verified. A manifest requests; an admin grants.
+FIFO, socket, device and directory leaves are type-probed without a blocking
+content open. Size, malformed-JSON and non-object manifests are rejected before
+any future registration, and identity mismatch is a rejection rather than a flag.
+The host-bound result is explicitly unapproved: a manifest requests; an admin grants.
 Issue #645 additionally freezes the pure pre-filesystem contract: strict bounded
 UTF-8 JSON, closed fields, canonical identifiers/versions/ranges, exact
 provider-eligible requests through the #639 vocabulary, stable closed rejection
@@ -186,7 +196,17 @@ opening it leaked a file from outside the root on 17% of successful reads under 
 swap race, and validating the open descriptor instead leaked zero
 ([S16](spike-evidence.md#s16--the-manifest-read-is-a-toctou-and-a-fifo-stalls-it)).
 A FIFO shipped as a manifest, which would otherwise block discovery for every
-plugin, is refused by a bounded open.
+plugin, is refused before a content open. The residual availability limit is
+stated rather than hidden: filesystem classification itself requires a first root
+lookup, so a host-reported link can enter an unsupported target before rejection.
+Once any synchronous path lookup/open or overlapped read enters the kernel or
+storage driver, in-process Canopy cannot guarantee an absolute wall-clock deadline
+or safely reclaim native buffers until I/O ownership returns. Unknown, network and
+user-space filesystem roots are rejected after successful classification;
+application-controlled bytes, counts and concurrency are bounded, and no
+background worker is abandoned. Killable syscall isolation is tracked by #648. A
+wedged kernel/driver remains a host failure under Z0 until that separate boundary
+lands, not a sandbox guarantee.
 
 ### T-05 · Token theft through the provider boundary — **high, accepted**
 
