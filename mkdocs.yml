@@ -71,6 +71,7 @@ nav:
   - Customization: customization.md
   - Reference: reference.md
   - Developer Guide: developers.md
+  - Android TV Client: androidtv-features.md
   - Android TV Client Guide: androidtv-client.md
   - Platform v1 Contract: platform-contract.md
   - Platform Support Policy: platform-support-policy.md
