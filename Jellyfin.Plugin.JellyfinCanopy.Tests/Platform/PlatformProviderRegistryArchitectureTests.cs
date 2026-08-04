@@ -191,6 +191,7 @@ public sealed class PlatformProviderRegistryArchitectureTests
         Assert.Equal(
             new[]
             {
+                "PlatformProviderBindingService.cs",
                 RegistryFile,
                 "PlatformProviderRegistryAdminBoundary.cs",
                 DomainFile,

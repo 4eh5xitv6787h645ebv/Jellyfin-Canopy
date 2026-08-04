@@ -47,8 +47,8 @@ not claims that a route already ships.
 |---|---|---|
 | [0001](adr/0001-route-prefix-and-namespace.md) | route prefix and namespace | accepted and implemented (EP-01) |
 | [0002](adr/0002-protocol-and-version-negotiation.md) | protocol, version negotiation, error envelope | accepted and implemented (EP-01) |
-| [0003](adr/0003-json-abi.md) | the load-context-safe JSON ABI | accepted; ABI and envelope contract frozen by EP-04.1, binding pending |
-| [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | accepted; ABI/envelope contract frozen by EP-04.1, invocation and resilience pending |
+| [0003](adr/0003-json-abi.md) | the load-context-safe JSON ABI | accepted; ABI frozen by EP-04.1, exact binding/schema admission implemented by EP-04.2, invocation pending |
+| [0004](adr/0004-provider-invocation.md) | provider binding and failure isolation | accepted; lazy binding/schema admission implemented by EP-04.2, invocation and resilience pending |
 | [0005](adr/0005-manifest-discovery.md) | manifest discovery and registry binding | manifest/acquisition, authoritative approval/grant/generation/lifecycle registry, orchestration and independent fixtures implemented |
 | [0006](adr/0006-client-event-transport.md) | client event transport | accepted for the registry/provider C5 subset; EP-05 implementation pending |
 | [0007](adr/0007-declarative-web-contributions.md) | declarative web contributions | proposed (1–6); the sandboxed-frame decision **deferred, not in v1** |

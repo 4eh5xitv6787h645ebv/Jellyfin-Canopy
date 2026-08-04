@@ -81,12 +81,15 @@ A convention-based entrypoint invoked over the JSON ABI with a derived context,
 a kernel-owned deadline, concurrency caps, bulkheads, circuit breakers, a
 response size cap, and stable failure codes.
 
-**Activated for the server tranche; contract foundation delivered by #654,
-runtime not yet delivered.** The exact foreign concrete-type convention,
+**Activated for the server tranche; contract foundation delivered by #654 and
+exact lazy binding/schema admission delivered by #656; invocation not yet
+delivered.** The exact foreign concrete-type convention,
 string/JSON/cancellation ABI, bounded operation declarations, request/response
 envelopes, content-addressed embedded payload schemas and independent Hello
-fixture are frozen. No reflection binder or
-provider invocation ships from that contract-only slice. Existing EP-06 pilot
+fixture are frozen. The internal binder revalidates current registry authority,
+resolves only the code-owned foreign concrete type from the live plugin assembly,
+checks the exact ABI and admits the two bounded content-addressed schemas. It
+invokes no provider method and publishes no reusable authority. Existing EP-06 pilot
 routes continue to call Canopy's in-process owning services and do not silently
 become provider routes. C3 delivery still requires the EP-04
 binding/failure/lifecycle/bounds gates. Provider-to-provider calls,
@@ -305,7 +308,7 @@ health/circuit contract and runtime.
 |---|---|---|
 | C1 discovery/negotiation | EP-01, EP-06 | **in** |
 | C2 registry + lifecycle | EP-02, EP-03 | **active server tranche; manifest, host binding, authoritative lifecycle registry and lazy single-flight orchestration delivered** |
-| C3 provider invocation | EP-04 | **active server tranche; ABI/operation/envelope/Hello-fixture contract delivered by #654; runtime pending** |
+| C3 provider invocation | EP-04 | **active server tranche; #654 contract and #656 exact binding/schema admission delivered; invocation/runtime resilience pending** |
 | C4 namespaced state | EP-05 | **active server tranche; not yet delivered** |
 | C5 events | EP-05 | **registry/provider lifecycle-health-invalidation subset active; broader Jellyfin/Canopy events deferred** |
 | C6 opaque actions | EP-02, EP-06 | **in** |

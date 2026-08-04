@@ -1,6 +1,6 @@
 # ADR-0004 — Provider invocation, binding and failure isolation
 
-Status: **accepted; ABI/envelope contract frozen by EP-04.1, invocation pending** · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
+Status: **accepted; ABI/envelopes frozen by EP-04.1 and lazy binding/schema admission implemented by EP-04.2; invocation and resilience pending** · Owner: platform kernel · Evidence: [S3](../spike-evidence.md#s3--cross-plugin-di-works-but-only-by-foreign-concrete-type), [S6](../spike-evidence.md#s6--provider-failure-modes-all-map-to-bounded-host-errors), [S13](../spike-evidence.md#s13--lifecycle-matrix), [S14](../spike-evidence.md#s14--forged-identity-is-fully-resisted-but-the-token-is-in-the-claims)
 
 ## Context
 
@@ -29,6 +29,28 @@ ask Jellyfin's shared container for that `Type`, and invoke reflectively.
    the fixed content-addressed resource convention frozen by ADR-0003, and their
    bytes must hash to the manifest digest before use. Binding never follows a
    manifest-selected path or CLR selector.
+
+EP-04.2 implements these five binding rules behind an explicit internal bind
+request. The registry mints and revalidates an exact operation claim around
+foreign concrete-DI resolution and bounded schema admission; authority drift
+publishes nothing. The Jellyfin adapter repeats the exact GUID, Active status,
+version and same live plugin-instance/assembly observation after DI resolution,
+and the coordinator repeats that host check after schema admission. Resolving
+that concrete service may run trusted provider
+constructor code, so this is lazy construction, not containment or a claim that
+zero provider code can execute. The result is not reusable invocation authority,
+does not establish provider health, and must not be invoked until the later owner
+acquires its own generation/cancellation and protected result-release leases.
+
+`AssemblyIdentity` is the descriptor-verified installed DLL-set observation from
+ADR-0005. It fences generations when a completed reconciliation observes drift;
+it is not a content digest or attestation of the assembly Jellyfin already loaded.
+EP-04.2 trusts Jellyfin's `LocalPlugin.Instance` association and proves the exact
+live instance and `Assembly` reference across binding/schema work. Stronger
+loaded-code-to-disk byte equivalence would require a bounded measurement retained
+by the host at load time and is not claimed here; comparing `Assembly.FullName`,
+`Location` or MVID with the descriptor-set fingerprint would provide false
+assurance.
 
 ### Provider context
 
@@ -122,8 +144,10 @@ document in this program may claim otherwise.
 
 ## Consequences
 
-- Reflection on every call. Method handles are cached per bound assembly version
-  and invalidated on rebind.
+- EP-04.2 deliberately caches no assembly, type, method, service instance or
+  schema state; every explicit bind re-observes the live provider. A later
+  invocation owner may introduce a bounded per-assembly-version method cache
+  only with exact generation invalidation and equivalent revalidation.
 - The kernel must distinguish `disabled` from `absent`, which it can: a disabled
   plugin is still in `IPluginManager.Plugins` with `Manifest.Status = Disabled`,
   an uninstalled one is gone entirely.
