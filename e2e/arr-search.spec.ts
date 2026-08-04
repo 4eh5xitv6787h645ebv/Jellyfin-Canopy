@@ -1,7 +1,7 @@
 // E2E for the admin-only arr Search action-sheet items (Search / Interactive Search / Manage).
 //
 // The action sheet is opened from a home-page CARD — the primary surface, with DOM identical on
-// the modern and legacy layouts, and no detail-page chrome (so this feature's test stays decoupled
+// the modern layout, and no detail-page chrome (so this feature's test stays decoupled
 // from unrelated detail-page features). The items appear for an admin when an enabled instance of
 // the matching service is configured (Radarr for movies, Sonarr for series), independent of whether
 // the item is tracked yet. Required CI supplies a hermetic Radarr context; the

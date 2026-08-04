@@ -2809,7 +2809,7 @@ function auditSupportContract(options = {}) {
         ['Client environment', [
             { name: 'client or browser version', pattern: /\bclient or browser\b.{0,80}\bversion\b/i },
             { name: 'client operating system', pattern: /\boperating system\b.{0,80}\bversion\b/i },
-            { name: 'modern or legacy layout', pattern: /\b(?:modern|mui)\b.{0,80}\blegacy\b/i },
+            { name: 'supported modern layout or unsupported-layout boundary', pattern: /\b(?:modern|mui)\b.{0,120}\bunsupported[- ]layout\b/i },
             { name: 'local or proxied access', pattern: /\blocal\b.{0,80}\b(?:proxied|proxy|external)\b/i },
         ]],
         ['Relevant configuration', [

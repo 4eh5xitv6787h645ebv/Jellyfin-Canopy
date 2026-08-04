@@ -39,9 +39,8 @@ const shownItemIds = new WeakMap<Element, string>();
 let everRecorded = false;
 
 /**
- * Item id of the current URL. Legacy layout carries it in the hash query
- * (`#/details?id=X`); the modern layout keeps the hash empty and uses
- * `location.search` (`/details?id=X`).
+ * Item id of the current URL. Accept both modern-host URL forms: a hash query
+ * (`#/details?id=X`) or `location.search` (`/details?id=X`).
  * @returns The item id, or null when the URL has none.
  */
 export function getItemIdFromUrl(): string | null {

@@ -53,7 +53,7 @@ Describe what happens instead, including the exact visible error when one exists
 
 - Client or browser and version:
 - Operating system and version:
-- Jellyfin modern (MUI) or legacy web layout:
+- Confirm Jellyfin's supported modern (MUI) web layout, or state that this is an unsupported-layout boot/enforcement report:
 - Local or externally proxied access:
 
 ## Relevant configuration

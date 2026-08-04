@@ -760,10 +760,8 @@ async function renderSeriesRequestMoreButton(itemId: string) {
 function handleItemDetailsPage() {
     const context = JC.identity.capture();
     if (!context) return;
-    // Details route on either layout: the legacy layout keeps it in the hash
-    // (#/details?id=X), the modern layout in the path + search
-    // (/web/details?id=X with an empty hash). The old hash-only check meant
-    // these sections could never inject on the modern layout at all.
+    // Accept both URL shapes the modern host can expose during navigation:
+    // hash-routed (#/details?id=X) and path-routed (/web/details?id=X).
     const onDetailsRoute = window.location.hash.includes('/details?')
         || window.location.pathname.endsWith('/details');
     if (!onDetailsRoute) {

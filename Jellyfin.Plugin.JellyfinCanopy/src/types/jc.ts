@@ -422,7 +422,7 @@ export interface MuiIconButtonOptions {
     onClick?: (ev: MouseEvent) => void;
     /** Element id. */
     id?: string;
-    /** Extra classes (e.g. legacy `headerButton` classes for dual-layout). */
+    /** Extra classes for the supported MUI control. */
     className?: string;
     /** MUI IconButton size. Defaults to `large` (matches the AppBar tray). */
     size?: 'small' | 'medium' | 'large';

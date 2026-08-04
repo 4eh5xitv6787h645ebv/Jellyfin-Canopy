@@ -498,57 +498,6 @@ test.describe.serial('Maintainerr integration', () => {
         assertNoRuntimeErrors(consoleErrors);
     });
 
-    test('legacy drawer keeps Maintainerr in configured page order and route round-trips cleanly', async ({ page, consoleErrors }) => {
-        await page.addInitScript(() => localStorage.setItem('layout', 'desktop-legacy'));
-        const direct = collectBrowserUpstreamAttempts(page);
-        await loginAs(page, 'admin', consoleErrors);
-        await page.waitForFunction(
-            () => document.documentElement.classList.contains('jc-legacy-layout'),
-            undefined,
-            { timeout: 20_000 },
-        );
-        const maintainerrLink = page.locator('#jcPageLink-maintainerr');
-        await expect(maintainerrLink).toBeAttached({ timeout: 30_000 });
-
-        const drawerOrder = await page.evaluate(() =>
-            [...document.querySelectorAll<HTMLElement>(
-                '.jellyfinCanopySection [id^="jcPageLink-"]',
-            )].map((entry) => entry.id.replace('jcPageLink-', '')));
-        expect(drawerOrder).toEqual([
-            'calendar',
-            'downloads',
-            'bookmarks',
-            'hidden-content',
-            'maintainerr',
-        ]);
-
-        const drawerTrigger = page.locator(
-            'button.headerButtonLeft:visible, '
-                + '.headerButtonLeft button:visible, '
-                + '.headerButtonLeft:visible',
-        ).first();
-        await expect(drawerTrigger).toBeVisible();
-        await drawerTrigger.click();
-        await expect(maintainerrLink).toBeVisible();
-        await expect(maintainerrLink).toBeInViewport();
-        await maintainerrLink.click();
-        await waitForHash(page, '/maintainerr');
-        await page.waitForSelector('#jc-maintainerr-container', { state: 'visible' });
-        await waitForDashboard(page);
-        await showRoute(page, '/home');
-        await waitForHash(page, '/home');
-        await expect(page.locator('#jc-maintainerr-container')).toHaveCount(0);
-        await page.goBack();
-        await page.waitForSelector('#jc-maintainerr-container', {
-            state: 'visible',
-            timeout: 30_000,
-        });
-        await waitForDashboard(page);
-
-        expect(direct, 'browser never contacts private Maintainerr').toEqual([]);
-        assertNoRuntimeErrors(consoleErrors);
-    });
-
     test('administrator item details render safe labels and links without HTML or topology leakage', async ({ page, consoleErrors, baseURL }) => {
         const itemId = await seededMaintainerrItemId();
         const library = await api<{ Items: Array<{ Id: string }> }>(

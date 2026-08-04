@@ -144,7 +144,7 @@ function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
     // The native pageshow scroll-to-top only runs for freshly shown views;
     // an in-place page→page swap reuses the element and would inherit the
     // previous page's scroll position. Reset the document scroll owner on
-    // every adoption (probe: both layouts scroll at document level here).
+    // every adoption (the modern host scrolls at document level here).
     const scroller = document.scrollingElement || document.documentElement;
     scroller.scrollTop = 0;
 

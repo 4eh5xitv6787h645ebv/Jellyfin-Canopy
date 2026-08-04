@@ -229,19 +229,14 @@ const spec: TagSpec = {
             .card:hover .${tagClass} .genre-text {
                 opacity: 1;
             }
-            .layout-mobile .${containerClass} { gap: 2px; }
-            .layout-mobile .${tagClass} {
-                height: clamp(20px, 4vw, 26px);
-                min-width: clamp(20px, 4vw, 26px);
-            }
-            .layout-mobile .${tagClass} .material-symbols-outlined {
-                font-size: clamp(0.95em, 2.4vw, 1.25em);
-            }
             @media (max-width: 768px) {
                 .${containerClass} { gap: 2px; }
                 .${tagClass} {
                     height: clamp(21px, 4vw, 26px);
                     min-width: clamp(21px, 4vw, 26px);
+                }
+                .${tagClass} .material-symbols-outlined {
+                    font-size: clamp(0.95em, 2.4vw, 1.25em);
                 }
             }
             @media (max-width: 480px) {

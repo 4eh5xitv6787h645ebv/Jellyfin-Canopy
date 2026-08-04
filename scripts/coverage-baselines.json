@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2808,
-        "totalLines": 3201
+        "coveredLines": 2798,
+        "totalLines": 3191
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 2808,
-        "maximumCoveredLines": 2808
+        "minimumCoveredLines": 2798,
+        "maximumCoveredLines": 2798
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The combined rebased #128 and #176/#538/#550 client changes extend modal-history ownership, private navigation suppression, nested-modal accessibility, and navigation-ledger coverage in the instrumented client/core scope. Three clean Node 22.20/V8 runs on 2026-08-02 each passed all 2,011 tests across 243 files with zero unhandled errors and reproduced exactly 2,808/3,201 (87.723%). Relative to the reviewed #128 main baseline of 2,738/3,128 (87.532%), the combined tree adds 73 instrumented lines and 70 covered lines while increasing coverage percentage. The exact observed envelope needs no instrumentation tolerance, so the new floor is 2,808/3,201 (87.723%). coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "The modern-layout-only change removes ten fully covered legacy-layout lines from the instrumented client/core scope. Three clean Node/V8 runs on 2026-08-04 each passed all 2,038 tests across 244 files with zero unhandled errors and reproduced exactly 2,798/3,191 (87.684%). The numeric percentage is not directly comparable with the prior 2,808/3,201 scope because the removed lines were all covered; no surviving line lost coverage. The exact observed envelope needs no instrumentation tolerance, so the reviewed floor and high-water for this smaller scope are 2,798/3,191. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 42793,
-        "totalLines": 52590
+        "coveredLines": 42792,
+        "totalLines": 52592
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 42783,
-        "maximumCoveredLines": 42793
+        "cleanRuns": 3,
+        "minimumCoveredLines": 42786,
+        "maximumCoveredLines": 42792
       },
       "tolerance": {
-        "missingCoveredLines": 10,
-        "rationale": "The #659 EP-04.3 slice adds registry-owned generation invocation and protected result-release leases, zero-queue per-provider bulkheads, caller/generation/deadline arbitration with fixed cooperative grace, owned runaway observation, strict bounded Alpha request/response validation, and the first real collectible Alpha Hello invocation without routes, startup workers, deployment, or Android/client production behavior. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 52,590-line production source and 4,094-test scope measured 42,783, 42,786 and 42,785 covered lines; the first clean GitHub Actions run on the same source and scope measured 42,793 after all 4,094 tests passed. The reviewed observed high-water is therefore 42,793/52,590 (81.371%) and the exact observed floor is 42,783/52,590 (81.352%); the ten-line schedule-dependent instrumentation spread is bounded to 0.019 percentage points. Relative to the #656 baseline of 41,758/51,374 (81.282%), the change adds 1,216 instrumented lines and at least 1,025 covered lines while increasing overall coverage. Focused payload-boundary, schema, authority-race, lifecycle-race, cancellation, bulkhead, peer-isolation, collectible-load-context, real-fixture and architecture tests cover the new invocation-critical paths. Circuit breakers, health probes, public gateways, SDKs, state/events and #648 killable filesystem isolation remain explicitly deferred. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 6,
+        "rationale": "The modern-layout-only change adds configuration normalization for the retired layout values and ten focused configuration tests. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 52,592-line production source and 4,104-test scope measured 42,786, 42,788 and 42,792 covered lines after every test passed. The reviewed observed high-water is therefore 42,792/52,592 (81.366%) and the exact observed floor is 42,786/52,592 (81.354%); the six-line schedule-dependent instrumentation spread is bounded to 0.012 percentage points. Relative to the prior 42,783/52,590 floor (81.352%), the new floor adds three covered and two instrumented lines while slightly increasing the enforced percentage. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

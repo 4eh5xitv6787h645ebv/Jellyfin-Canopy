@@ -199,12 +199,11 @@ function initScript() {
     } catch { /* longtask unsupported */ }
 
     // --- Pop-in timing (anchor mount → JC decoration) ---
-    // Overlays mount inside .cardScalable (.jc-tag-host) on current builds and
-    // inside .cardImageContainer on legacy ones, so anchor times are tracked on
-    // both the outer .card and the .cardImageContainer.
+    // Modern Jellyfin card variants can expose either the outer .card or the
+    // inner .cardImageContainer first, so track both anchors.
     const CARD_SEL = '.card,.cardImageContainer';
     const TAG_SEL = '.genre-overlay-container,.quality-overlay-container,.language-overlay-container,.rating-overlay-container';
-    const HEADER_ANCHOR = '.headerRight,.MuiToolbar-root';
+    const HEADER_ANCHOR = '.MuiToolbar-root';
     const HEADER_DECOR = '#randomItemButton,#enhancedSettingsBtn';
     const DETAIL_ANCHOR = '.mainDetailButtons';
     const DETAIL_DECOR = '.arr-link,.mediaInfoItem-watchProgress,.mediaInfoItem-fileSize,.mediaInfoItem-audioLanguage,#streaming-result-container';

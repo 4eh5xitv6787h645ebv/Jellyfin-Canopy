@@ -414,7 +414,7 @@ describe('getItemFromHash id resolution', () => {
         history.replaceState({}, '', '/'); // neutral URL so search/hash don't bleed
     });
 
-    it('resolves the item id from the hash query (legacy layout)', async () => {
+    it('resolves the item id from the host hash-query form', async () => {
         const getItemSpy = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Id: 'ABC' });
         history.replaceState({}, '', '/web/'); // empty search
         window.location.hash = '#/details?id=ABC';

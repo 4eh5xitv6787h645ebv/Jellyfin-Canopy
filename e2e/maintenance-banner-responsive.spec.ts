@@ -14,7 +14,7 @@ import {
     assertNoRuntimeErrors,
 } from './fixtures/auth';
 
-type Layout = 'modern' | 'legacy';
+type Layout = 'modern';
 
 const VISUAL_REVIEW_DIR = process.env.JC_RESPONSIVE_VISUAL_REVIEW_DIR?.trim();
 const MAINTENANCE_MESSAGE = [
@@ -27,19 +27,11 @@ const LAYOUTS: ReadonlyArray<{
     layout: Layout;
     seed: string;
     stamp: string;
-    otherStamp: string;
 }> = [
     {
         layout: 'modern',
         seed: 'modern',
         stamp: 'jc-modern-layout',
-        otherStamp: 'jc-legacy-layout',
-    },
-    {
-        layout: 'legacy',
-        seed: 'mobile-legacy',
-        stamp: 'jc-legacy-layout',
-        otherStamp: 'jc-modern-layout',
     },
 ];
 
@@ -69,24 +61,16 @@ async function interceptMaintenanceConfig(page: Page): Promise<void> {
 async function requireExactLayout(
     page: Page,
     wanted: string,
-    unwanted: string,
 ): Promise<void> {
     await page.waitForFunction(
         (stamp) => document.documentElement.classList.contains(stamp),
         wanted,
         { timeout: 30_000 },
     );
-    const stamps = await page.locator('html').evaluate(
-        (root, values) => ({
-            wanted: root.classList.contains(values.wanted),
-            unwanted: root.classList.contains(values.unwanted),
-        }),
-        { wanted, unwanted },
-    );
-    expect(stamps, `exact layout stamp ${wanted}`).toEqual({
-        wanted: true,
-        unwanted: false,
-    });
+    expect(await page.locator('html').evaluate(
+        (root, stamp) => root.classList.contains(stamp),
+        wanted,
+    ), `layout stamp ${wanted}`).toBe(true);
 }
 
 interface OffsetAudit {
@@ -237,7 +221,7 @@ test.describe('maintenance banner responsive offsets (#466 finding 10)', () => {
                 layoutCase.seed,
             );
             await loginAs(page, 'admin', consoleErrors);
-            await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+            await requireExactLayout(page, layoutCase.stamp);
             await expect(page.locator('#jc-maintenance-banner')).toHaveText(MAINTENANCE_MESSAGE);
 
             const observed = new Map<string, OffsetAudit>();
@@ -290,7 +274,7 @@ test.describe('maintenance banner responsive offsets (#466 finding 10)', () => {
                         `${layoutCase.layout}/${viewport.name}: drawer reaches visible viewport`,
                     ).toBeLessThan(audit.drawerRectRight!);
                 }
-                await requireExactLayout(page, layoutCase.stamp, layoutCase.otherStamp);
+                await requireExactLayout(page, layoutCase.stamp);
 
                 if (
                     viewport.name === 'narrow'

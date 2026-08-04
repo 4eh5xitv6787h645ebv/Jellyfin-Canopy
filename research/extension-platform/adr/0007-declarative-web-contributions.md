@@ -9,7 +9,7 @@ patches history exactly once, a single multiplexed body `MutationObserver` (a
 performance rule forbids feature-owned observers), an idempotent
 `ensureInjected(key, anchor, build)` primitive, a three-layer teardown model, a
 feature loader with import purity, dependency ordering, retry backoff and scope
-staleness, and a layout owner that abstracts modern versus legacy Jellyfin.
+staleness, and a modern-layout readiness owner.
 
 An extension that got raw DOM access would bypass all of it — and would also get
 the viewer's token, because injected script runs same-origin. That is exactly the
@@ -94,7 +94,7 @@ frame, so origin is useless for attribution** — a broker must key on `event.so
 identity against the frame elements it created. That constraint is now recorded
 rather than discovered later.
 
-**Still unverified:** rendering across the legacy, mobile and Web-TV layouts, and
+**Still unverified:** rendering across modern mobile and Web-TV modes, and
 behaviour under the accessibility, localisation and jank budgets. Those are EP-07's
 real cost and remain the content of risk R-04.
 
