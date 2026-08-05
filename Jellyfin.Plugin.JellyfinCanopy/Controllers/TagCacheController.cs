@@ -154,6 +154,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             // hold, so the backward-safe answer is one full personalized snapshot.
             // New clients always send epoch+revision and retain the bounded delta.
             Services.TagCacheService.ContentDelta content;
+            var isFullContentSnapshot = false;
             if (projectionOnly)
             {
                 content = _tagCacheService.GetCurrentContentControl(user);
@@ -180,6 +181,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             else
             {
                 content = _tagCacheService.GetFullContentForUser(user);
+                isFullContentSnapshot = true;
             }
 
             if (content.ResetRequired)
@@ -195,6 +197,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var items = content.Items;
             var projectionIds = new HashSet<string>(projection.ItemIds, StringComparer.Ordinal);
             ReplaceProjectionEntries(items, user, projection.ItemIds);
+
+            // Language coverage is deliberately a response sidecar: the shared
+            // TagCacheEntry remains user-agnostic, while counts and languages are
+            // derived only from this caller's accessible Episode evidence.
+            var languageProjector = new Services.TagLanguageCoverageProjector(
+                _libraryManager,
+                _tagCacheService,
+                _logger);
+            var languageCoverage = new Dictionary<string, Model.TagLanguageCoverage>(
+                isFullContentSnapshot
+                    ? languageProjector.ProjectAccessibleSnapshot(items, cancellationToken)
+                    : languageProjector.ProjectEntries(user, items, cancellationToken),
+                StringComparer.Ordinal);
 
             // One request-scoped resolver outlives every stabilization pass below:
             // it memoizes each guid's item resolution (including misses) for the
@@ -220,7 +235,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 // strip toggle, walk the cache and zero out matching fields for unwatched
                 // episodes/movies/seasons/series that are in the user's spoiler list.
                 // Strips a per-request CLONE only; the shared entry is never mutated.
-                ApplyTagCacheSpoilerStrip(items, effectiveUserId, user, stripResolver, cancellationToken);
+                ApplyTagCacheSpoilerStrip(
+                    items,
+                    languageCoverage,
+                    effectiveUserId,
+                    user,
+                    stripResolver,
+                    cancellationToken);
 
                 var afterStrip = _projectionRevisionService.GetDelta(
                     effectiveUserId,
@@ -250,6 +271,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
 
                 ReplaceProjectionEntries(items, user, afterStrip.ItemIds);
+                foreach (var (key, value) in languageProjector.ProjectEntries(user, items, cancellationToken))
+                {
+                    languageCoverage[key] = value;
+                }
                 // Targeted per-pass invalidation (AC5): the revision advance we just
                 // observed was produced by a UserDataSaved whose delta names exactly
                 // the affected season/episode/series ids. Drop only those seasons from
@@ -313,6 +338,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 timestamp = contentTimestamp,
                 count = items.Count,
                 items,
+                languageCoverage,
                 contentEpoch = content.Epoch,
                 contentRevision = content.Revision,
                 contentReset = false,
@@ -421,6 +447,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // failure still assumes unwatched and strips (fail closed).
         private void ApplyTagCacheSpoilerStrip(
             Dictionary<string, Model.TagCacheEntry> items,
+            IDictionary<string, Model.TagLanguageCoverage> languageCoverage,
             Guid userId,
             JUser user,
             TagStripProjectionResolver resolver,
@@ -485,8 +512,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 stripGenresEnabled,
                 stripRatingsEnabled,
                 sanitizeTitleStreams,
-                (key, entry) => Services.TagCacheService.ResolveTagStripDecision(
-                    key, entry, spState, isMovieInScope, isPlayed, seasonIndexNumber, seasonAnyWatched, onKeyNotGuid),
+                (key, entry) =>
+                {
+                    var decision = Services.TagCacheService.ResolveTagStripDecision(
+                        key, entry, spState, isMovieInScope, isPlayed, seasonIndexNumber, seasonAnyWatched, onKeyNotGuid);
+                    if (stripGenresEnabled && decision == Services.TagCacheService.TagStripDecision.Strip)
+                    {
+                        languageCoverage.Remove(key);
+                    }
+
+                    return decision;
+                },
                 cancellationToken);
         }
 
@@ -1045,7 +1081,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [HttpPost("tag-data/{userId}")]
         [Authorize]
         [Produces("application/json")]
-        public IActionResult GetTagData(Guid userId, [FromBody] string[] ids)
+        public IActionResult GetTagData(
+            Guid userId,
+            [FromBody] string[] ids,
+            CancellationToken cancellationToken = default)
         {
             var authorizationResult = AuthorizeUserAccess(userId, out var user);
             if (authorizationResult != null)
@@ -1113,15 +1152,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var itemIds = ids;
             var results = new List<object>(itemIds.Length);
 
-            // Process items sequentially (Jellyfin library manager is not fully thread-safe for GetMediaSources)
+            var requestedItems = new List<BaseItem>(itemIds.Length);
             foreach (var idStr in itemIds)
             {
-                if (!Guid.TryParse(idStr.Trim(), out var itemId))
-                    continue;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!Guid.TryParse(idStr.Trim(), out var itemId)) continue;
+                var resolved = _libraryManager.GetItemById<BaseItem>(itemId, user);
+                if (resolved != null) requestedItems.Add(resolved);
+            }
 
-                var item = _libraryManager.GetItemById<BaseItem>(itemId, user);
-                if (item == null)
-                    continue;
+            var languageCoverage = new Services.TagLanguageCoverageProjector(
+                    _libraryManager,
+                    _tagCacheService,
+                    _logger)
+                .ProjectContainers(user, requestedItems, cancellationToken);
+
+            // Process items sequentially (Jellyfin library manager is not fully thread-safe for GetMediaSources)
+            foreach (var item in requestedItems)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var kind = item.GetBaseItemKind();
                 var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
@@ -1510,7 +1559,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Path = string.IsNullOrEmpty(item.Path) ? null : System.IO.Path.GetFileName(item.Path),
                     MediaStreams = trimmedStreams,
                     MediaSources = trimmedSources,
-                    FirstEpisode = firstEpisodeData
+                    FirstEpisode = firstEpisodeData,
+                    LanguageCoverage = languageCoverage.TryGetValue(item.Id.ToString("N"), out var coverage)
+                        ? coverage
+                        : null
+                });
+            }
+
+            // Coverage traversal is caller-scoped. Fence publication against a
+            // concurrent folder-policy save so stale counts/languages never cross
+            // the response boundary under a newer authorization generation.
+            var currentUser = _userManager.GetUserById(effectiveUserId);
+            if (currentUser is null) return NotFound();
+            if (currentUser.RowVersion != user.RowVersion)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, new
+                {
+                    error = "user access changed while language coverage was being prepared",
                 });
             }
 

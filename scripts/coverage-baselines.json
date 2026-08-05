@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 44223,
-        "totalLines": 53973
+        "coveredLines": 44617,
+        "totalLines": 54382
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 44212,
-        "maximumCoveredLines": 44223
+        "cleanRuns": 4,
+        "minimumCoveredLines": 44605,
+        "maximumCoveredLines": 44617
       },
       "tolerance": {
-        "missingCoveredLines": 11,
-        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. Three clean runs on this tree observed 44,212 and 44,215 locally and 44,223 on the CI runner (81.916%-81.935%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
+        "missingCoveredLines": 12,
+        "rationale": "Issue #667 is rebased on the advanced per-category Spoiler Guard implementation from #700 and adds caller-scoped Series/Season language-coverage projection, canonical alias handling, bounded paging, and focused regressions. Four clean full-suite runs on this exact 54,382-line source and 4,261-test scope passed every test and measured 44,605 and 44,610 locally under .NET 10.0.9, then 44,616 on the hosted merge ref at head acf32dcd and 44,617 at head 48815c6f under .NET 10.0.10. The reviewed high-water is therefore 44,617/54,382 (82.044%) and the exact observed floor is 44,605/54,382 (82.022%); the twelve-line timing-dependent instrumentation spread is 0.022 percentage points, far inside the 0.15pp policy bound. Earlier attempts are excluded because one test out of 4,261 failed in each run; two diagnostic reruns identified pre-existing BookmarkRevisionController 2-second timing-budget failures under coverage. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

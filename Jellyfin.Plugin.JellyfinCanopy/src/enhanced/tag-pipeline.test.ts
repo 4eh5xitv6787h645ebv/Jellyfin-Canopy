@@ -1799,6 +1799,7 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
 
 describe('revisioned tag-cache content protocol (issue 72)', () => {
     const id = '11111111111111111111111111111111';
+    const siblingId = '22222222222222222222222222222222';
     const response = (
         revision: number,
         items: Record<string, unknown> = {},
@@ -1824,6 +1825,29 @@ describe('revisioned tag-cache content protocol (issue 72)', () => {
         expect(empty.entries.size).toBe(0);
         expect(empty.changedIds).toEqual([id]);
         expect(empty.identity?.revision).toBe(9);
+    });
+
+    it('attaches response-scoped language coverage only to its matching upsert', () => {
+        const source = { Name: 'series' };
+        const sibling = { Name: 'season' };
+        const coverage = {
+            EligibleEpisodeCount: 2,
+            ObservedEpisodeCount: 2,
+            Complete: true,
+            Full: ['en'],
+            Partial: ['ja'],
+            Unknown: [],
+            Truncated: false,
+        };
+        const applied = applyContentResponse(null, new Map(), {
+            ...response(10, { [id]: source, [siblingId]: sibling }),
+            languageCoverage: { [id]: coverage },
+        }, true);
+
+        expect(applied.entries.get(id)).toEqual({ ...source, LanguageCoverage: coverage });
+        expect(applied.entries.get(siblingId)).toBe(sibling);
+        expect(source).not.toHaveProperty('LanguageCoverage');
+        expect(sibling).not.toHaveProperty('LanguageCoverage');
     });
 
     it('is deterministic in both N/N+1 completion orders and never resurrects stale rows', () => {

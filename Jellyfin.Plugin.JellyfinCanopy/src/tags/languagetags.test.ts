@@ -184,6 +184,128 @@ describe('regional language poster tags', () => {
         expect(host.innerHTML).not.toContain('zz.svg');
     });
 
+    it('orders full before partial coverage and applies one three-chip cap', () => {
+        const { host } = cardHost();
+        renderer.renderFromServerCache(host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: 4,
+                ObservedEpisodeCount: 4,
+                Complete: true,
+                FullLanguages: ['eng', 'fra'],
+                PartialLanguages: ['jpn', 'spa'],
+                UnknownLanguages: [],
+                Truncated: false,
+            },
+        }, 'coverage-series');
+
+        expect(presentations(host)).toHaveLength(3);
+        expect(presentations(host).map((tag) => tag.dataset.coverage)).toEqual([
+            'full', 'full', 'partial',
+        ]);
+        expect(presentations(host).map((tag) => tag.getAttribute('aria-label'))).toEqual([
+            expect.stringContaining('full coverage across 4 eligible episodes'),
+            expect.stringContaining('full coverage across 4 eligible episodes'),
+            expect.stringContaining('partial coverage across 4 eligible episodes'),
+        ]);
+    });
+
+    it('orders proven partial before unknown coverage when probes are incomplete', () => {
+        const { host } = cardHost();
+        renderer.renderFromServerCache(host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: 4,
+                ObservedEpisodeCount: 3,
+                Complete: false,
+                FullLanguages: [],
+                PartialLanguages: ['jpn'],
+                UnknownLanguages: ['fra', 'spa'],
+                Truncated: false,
+            },
+        }, 'incomplete-mixed-series');
+        expect(presentations(host).map((tag) => tag.dataset.coverage)).toEqual([
+            'partial', 'unknown', 'unknown',
+        ]);
+    });
+
+    it('filters malformed coverage members and conservatively merges canonical aliases', () => {
+        const { host } = cardHost();
+        renderer.renderFromServerCache(host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: 2,
+                ObservedEpisodeCount: 2,
+                Complete: true,
+                FullLanguages: ['bad_tag', 'fre', 'sl-rozaj-biske'],
+                PartialLanguages: ['fra', 'sl-biske-rozaj'],
+                UnknownLanguages: [],
+                Truncated: false,
+            },
+        }, 'canonical-alias-series');
+
+        expect(presentations(host).map((tag) => ({
+            coverage: tag.dataset.coverage,
+            tags: JSON.parse(tag.dataset.langTags || '[]') as string[],
+        }))).toEqual([
+            { coverage: 'partial', tags: ['fr'] },
+            { coverage: 'partial', tags: ['sl-biske-rozaj'] },
+        ]);
+    });
+
+    it('renders explicit empty, known-none, and incomplete states without caching policy-scoped coverage', () => {
+        const empty = cardHost();
+        renderer.render(empty.host, {
+            Id: 'empty-season',
+            Type: 'Season',
+            LanguageCoverage: {
+                EligibleEpisodeCount: 0,
+                ObservedEpisodeCount: 0,
+                Complete: true,
+                FullLanguages: [],
+                PartialLanguages: [],
+                UnknownLanguages: [],
+                Truncated: false,
+            },
+        });
+        expect(presentations(empty.host)[0].textContent).toBe('0');
+        expect(presentations(empty.host)[0].getAttribute('aria-label')).toBe(
+            'No eligible episodes for language coverage',
+        );
+        expect(renderer.renderFromCache(cardHost().host, 'empty-season')).toBe(false);
+
+        const knownNone = cardHost();
+        renderer.renderFromServerCache(knownNone.host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: 2,
+                ObservedEpisodeCount: 2,
+                Complete: true,
+                FullLanguages: [],
+                PartialLanguages: [],
+                UnknownLanguages: [],
+                Truncated: false,
+            },
+        }, 'known-none-series');
+        expect(presentations(knownNone.host)[0].textContent).toBe('—');
+        expect(presentations(knownNone.host)[0].getAttribute('aria-label')).toBe(
+            'No recognized audio languages across 2 eligible episodes',
+        );
+
+        const incomplete = cardHost();
+        renderer.renderFromServerCache(incomplete.host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: null,
+                ObservedEpisodeCount: null,
+                Complete: false,
+                FullLanguages: [],
+                PartialLanguages: [],
+                UnknownLanguages: [],
+                Truncated: true,
+            },
+        }, 'incomplete-series');
+        expect(presentations(incomplete.host)[0].textContent).toBe('?');
+        expect(presentations(incomplete.host)[0].getAttribute('aria-label')).toBe(
+            'Language coverage incomplete',
+        );
+    });
+
     it('keeps numeric and retired regions neutral through live, browser-cache and server-cache paths', () => {
         const live = cardHost();
         renderer.render(live.host, liveItem('untrusted-regions', ['en-840', 'en-SU', 'pt-076']));
@@ -277,7 +399,7 @@ describe('language browser-cache schema', () => {
             { name: 'stale', code: 'por-BR' },
             { name: 'stale', code: 'PT-pt' },
         ], 123)).toEqual({
-            schemaVersion: 3,
+            schemaVersion: 4,
             languages: [
                 { canonicalTag: 'pt-BR', flagRegion: 'BR' },
                 { canonicalTag: 'pt-PT', flagRegion: 'PT' },
@@ -285,7 +407,7 @@ describe('language browser-cache schema', () => {
             timestamp: 123,
         });
         expect(createLanguageCachePayload(['en-840'], 123)).toEqual({
-            schemaVersion: 3,
+            schemaVersion: 4,
             languages: [{ canonicalTag: 'en-US', flagRegion: null }],
             timestamp: 123,
         });
@@ -296,17 +418,17 @@ describe('language browser-cache schema', () => {
         ['legacy object array', [{ code: 'pt', name: 'Portuguese' }]],
         ['legacy value wrapper', { value: ['pt'], timestamp: 1 }],
         ['legacy languages wrapper', { languages: ['pt'], timestamp: 1 }],
-        ['pre-provenance schema', { schemaVersion: 2, tags: ['pt-BR'], timestamp: 1 }],
-        ['corrupt current payload', { schemaVersion: 3, languages: [{ canonicalTag: 'bad_tag', flagRegion: null }], timestamp: 1 }],
-        ['current payload without timestamp', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }] }],
-        ['current payload with negative timestamp', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: -1 }],
-        ['current payload with non-finite timestamp', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: Number.NaN }],
-        ['current payload with one invalid member', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }, { canonicalTag: 'bad_tag', flagRegion: null }, null], timestamp: 1 }],
-        ['current payload with forged region trust', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'US' }], timestamp: 1 }],
-        ['current payload with noncanonical tag', { schemaVersion: 3, languages: [{ canonicalTag: 'por-BR', flagRegion: 'BR' }], timestamp: 1 }],
-        ['current payload with raw-code fallback fields', { schemaVersion: 3, languages: [{ canonicalTag: 'bad_tag', flagRegion: null, code: 'pt-BR' }], timestamp: 1 }],
-        ['current payload with noncanonical ordering', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }, { canonicalTag: 'en-US', flagRegion: null }], timestamp: 1 }],
-        ['nested hot-cache wrappers', { value: { value: { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: 1 } } }],
+        ['pre-coverage schema', { schemaVersion: 3, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: 1 }],
+        ['corrupt current payload', { schemaVersion: 4, languages: [{ canonicalTag: 'bad_tag', flagRegion: null }], timestamp: 1 }],
+        ['current payload without timestamp', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }] }],
+        ['current payload with negative timestamp', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: -1 }],
+        ['current payload with non-finite timestamp', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: Number.NaN }],
+        ['current payload with one invalid member', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }, { canonicalTag: 'bad_tag', flagRegion: null }, null], timestamp: 1 }],
+        ['current payload with forged region trust', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'US' }], timestamp: 1 }],
+        ['current payload with noncanonical tag', { schemaVersion: 4, languages: [{ canonicalTag: 'por-BR', flagRegion: 'BR' }], timestamp: 1 }],
+        ['current payload with raw-code fallback fields', { schemaVersion: 4, languages: [{ canonicalTag: 'bad_tag', flagRegion: null, code: 'pt-BR' }], timestamp: 1 }],
+        ['current payload with noncanonical ordering', { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }, { canonicalTag: 'en-US', flagRegion: null }], timestamp: 1 }],
+        ['nested hot-cache wrappers', { value: { value: { schemaVersion: 4, languages: [{ canonicalTag: 'pt-BR', flagRegion: 'BR' }], timestamp: 1 } } }],
     ])('rejects %s', (_name, value) => {
         expect(readLanguageCachePayload(value)).toBeNull();
     });
@@ -314,7 +436,7 @@ describe('language browser-cache schema', () => {
     it('accepts a current payload through the hot-cache wrapper', () => {
         expect(readLanguageCachePayload({
             value: {
-                schemaVersion: 3,
+                schemaVersion: 4,
                 languages: [
                     { canonicalTag: 'en-US', flagRegion: null },
                     { canonicalTag: 'pt-BR', flagRegion: 'BR' },
@@ -323,7 +445,7 @@ describe('language browser-cache schema', () => {
             },
             timestamp: 9,
         })).toEqual({
-            schemaVersion: 3,
+            schemaVersion: 4,
             languages: [
                 { canonicalTag: 'en-US', flagRegion: null },
                 { canonicalTag: 'pt-BR', flagRegion: 'BR' },
