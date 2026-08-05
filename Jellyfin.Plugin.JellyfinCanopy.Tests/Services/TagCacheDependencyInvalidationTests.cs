@@ -1530,6 +1530,8 @@ public sealed class TagCacheDependencyInvalidationTests
         var ownEpisodeId = Guid.NewGuid();
         var inheritingSeasonId = Guid.NewGuid();
         var ownSeasonId = Guid.NewGuid();
+        var criticZeroEpisodeId = Guid.NewGuid();
+        var criticSevenSeasonId = Guid.NewGuid();
         var series = new StubSeries
         {
             Id = seriesId,
@@ -1543,6 +1545,8 @@ public sealed class TagCacheDependencyInvalidationTests
         var ownEpisode = new StubEpisode { Id = ownEpisodeId, SeriesId = seriesId, CommunityRating = 6, CriticRating = 60, DateLastSaved = SavedAt };
         var inheritingSeason = new StubSeason { Id = inheritingSeasonId, SeriesId = seriesId, Genres = new[] { "Stable" }, DateLastSaved = SavedAt };
         var ownSeason = new StubSeason { Id = ownSeasonId, SeriesId = seriesId, CommunityRating = 7, CriticRating = 70, Genres = new[] { "Stable" }, DateLastSaved = SavedAt };
+        var criticZeroEpisode = new StubEpisode { Id = criticZeroEpisodeId, SeriesId = seriesId, CriticRating = 0, DateLastSaved = SavedAt };
+        var criticSevenSeason = new StubSeason { Id = criticSevenSeasonId, SeriesId = seriesId, CriticRating = 7, Genres = new[] { "Stable" }, DateLastSaved = SavedAt };
         var items = new Dictionary<Guid, BaseItem>
         {
             [seriesId] = series,
@@ -1550,12 +1554,14 @@ public sealed class TagCacheDependencyInvalidationTests
             [ownEpisodeId] = ownEpisode,
             [inheritingSeasonId] = inheritingSeason,
             [ownSeasonId] = ownSeason,
+            [criticZeroEpisodeId] = criticZeroEpisode,
+            [criticSevenSeasonId] = criticSevenSeason,
         };
         var library = new CountingLibraryManager
         {
             GetItemByIdHook = id => items.GetValueOrDefault(id),
             GetItemListHook = query => query.AncestorIds?.Contains(seriesId) == true
-                ? new BaseItem[] { inheritingEpisode, ownEpisode, inheritingSeason, ownSeason }
+                ? new BaseItem[] { inheritingEpisode, ownEpisode, inheritingSeason, ownSeason, criticZeroEpisode, criticSevenSeason }
                 : Array.Empty<BaseItem>(),
         };
         using var service = NewService(library);
@@ -1571,8 +1577,12 @@ public sealed class TagCacheDependencyInvalidationTests
         service.SeedEntryForTest(Key(inheritingSeasonId), new TagCacheEntry { Type = "Season", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = 1, CriticRating = 10, Genres = new[] { "Stable" }, SourceRevision = SavedAt.Ticks });
         var ownEpisodeEntry = new TagCacheEntry { Type = "Episode", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = 6, CriticRating = 60, SourceRevision = SavedAt.Ticks };
         var ownSeasonEntry = new TagCacheEntry { Type = "Season", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = 7, CriticRating = 70, Genres = new[] { "Stable" }, SourceRevision = SavedAt.Ticks };
+        var criticZeroEpisodeEntry = new TagCacheEntry { Type = "Episode", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = null, CriticRating = 0, SourceRevision = SavedAt.Ticks };
+        var criticSevenSeasonEntry = new TagCacheEntry { Type = "Season", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = null, CriticRating = 7, Genres = new[] { "Stable" }, SourceRevision = SavedAt.Ticks };
         service.SeedEntryForTest(Key(ownEpisodeId), ownEpisodeEntry);
         service.SeedEntryForTest(Key(ownSeasonId), ownSeasonEntry);
+        service.SeedEntryForTest(Key(criticZeroEpisodeId), criticZeroEpisodeEntry);
+        service.SeedEntryForTest(Key(criticSevenSeasonId), criticSevenSeasonEntry);
         using var monitor = new TagCacheMonitor(library, service, NullLogger<TagCacheMonitor>.Instance);
         monitor.Initialize();
 
@@ -1583,6 +1593,8 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal(9, service.GetEntryForTest(Key(inheritingSeasonId))!.CommunityRating);
         Assert.Same(ownEpisodeEntry, service.GetEntryForTest(Key(ownEpisodeId)));
         Assert.Same(ownSeasonEntry, service.GetEntryForTest(Key(ownSeasonId)));
+        Assert.Same(criticZeroEpisodeEntry, service.GetEntryForTest(Key(criticZeroEpisodeId)));
+        Assert.Same(criticSevenSeasonEntry, service.GetEntryForTest(Key(criticSevenSeasonId)));
     }
 
     [Fact]
@@ -1747,6 +1759,50 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal(2, library.GetItemByIdCallCount); // Series discovery + Series rebuild; descendant uses snapshot
         Assert.Equal(9, service.GetEntryForTest(Key(descendants[0].Id))!.CommunityRating);
         Assert.Same(ownRatingSentinel, service.GetEntryForTest(Key(descendants[1].Id)));
+    }
+
+    [Fact]
+    public void EpisodeRelationshipRefresh_PreservesCriticOnlyChildRating()
+    {
+        var oldSeriesId = Guid.NewGuid();
+        var newSeriesId = Guid.NewGuid();
+        var newSeasonId = Guid.NewGuid();
+        var series = new StubSeries
+        {
+            Id = newSeriesId,
+            CommunityRating = 9,
+            CriticRating = 90,
+            ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Tmdb"] = "new-series" },
+        };
+        var episode = new StubEpisode
+        {
+            Id = Guid.NewGuid(),
+            SeriesId = newSeriesId,
+            SeasonId = newSeasonId,
+            ParentIndexNumber = 2,
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+        var existing = new TagCacheEntry
+        {
+            Type = "Episode",
+            SeriesId = Key(oldSeriesId),
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+
+        var refreshed = TagCacheDependencyGraph.ApplySeasonRelationshipRefresh(
+            series,
+            episode,
+            existing,
+            lastUpdated: 123);
+
+        Assert.Equal(Key(newSeriesId), refreshed.SeriesId);
+        Assert.Equal(Key(newSeasonId), refreshed.SeasonId);
+        Assert.Equal("new-series", refreshed.SeriesTmdbId);
+        Assert.Equal(2, refreshed.SeasonNumber);
+        Assert.Null(refreshed.CommunityRating);
+        Assert.Equal(7, refreshed.CriticRating);
     }
 
     [Fact]

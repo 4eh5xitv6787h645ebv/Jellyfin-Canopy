@@ -10,6 +10,7 @@
 // The pipeline handles all scanning, fetching, caching, and scheduling.
 
 import { JC } from '../globals';
+import { ratingsAreMissing } from '../core/critic-rating';
 import type { IdentityContext, TagPipelineLike } from '../types/jc';
 import { addCSS, clearItemCache, getItemCached } from './helpers';
 import { onBodyMutation } from '../core/dom-observer';
@@ -1961,7 +1962,7 @@ async function processBatch(
         for (const item of items) {
             if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId &&
                 item.RatingSuppressed !== true &&
-                !item.CommunityRating && !item.CriticRating) {
+                ratingsAreMissing(item)) {
                 parentSeriesNeeded.add(item.SeriesId);
             }
             // Genre also needs parent series for Season items
@@ -2017,7 +2018,7 @@ async function processBatch(
                 parentSeries = parentSeriesMap.get(parentId) || null;
                 if ((item.Type === 'Season' || item.Type === 'Episode') &&
                     item.RatingSuppressed !== true &&
-                    !item.CommunityRating && !item.CriticRating) {
+                    ratingsAreMissing(item)) {
                     ratingParentSeries = parentSeries;
                 }
             }

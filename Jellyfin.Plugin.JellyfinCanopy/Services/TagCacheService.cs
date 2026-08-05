@@ -196,9 +196,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // starts empty (client falls back to the live/per-batch strip) until rebuild.
         // v3 adds persisted Episode SeasonId and stream-source identity. Both are
         // correctness-critical dependency metadata, so older entries are rebuilt.
-        // v4 adds stream Width. Height alone cannot distinguish cropped DCI 8K
-        // from 4K, so retaining v3 entries would keep quality labels incorrect.
-        private const int CurrentCacheSchemaVersion = 4;
+        // v4 added stream Width so cropped DCI 8K is distinguishable from 4K
+        // (#681). v5 additionally invalidates rows produced by the former
+        // CommunityRating-only inheritance check, which could overwrite a
+        // child's valid CriticRating of 0 or 7 (#682).
+        private const int CurrentCacheSchemaVersion = 5;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -3016,8 +3018,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var series = ResolveParentSeriesOnce();
                         if (series != null)
                         {
-                            entry.CommunityRating = series.CommunityRating;
-                            entry.CriticRating = series.CriticRating;
+                            if (TagCacheRatingInheritance.ShouldInherit(
+                                entry.CommunityRating,
+                                entry.CriticRating))
+                            {
+                                entry.CommunityRating = series.CommunityRating;
+                                entry.CriticRating = series.CriticRating;
+                            }
+
                             if (entry.Genres == null || entry.Genres.Length == 0)
                             {
                                 entry.Genres = series.Genres;
@@ -3059,7 +3067,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         entry.AudioLanguages = media.Value.Languages;
                     }
 
-                    if (kind == BaseItemKind.Episode && entry.CommunityRating == null)
+                    if (kind == BaseItemKind.Episode
+                        && TagCacheRatingInheritance.ShouldInherit(
+                            entry.CommunityRating,
+                            entry.CriticRating))
                     {
                         var series = ResolveParentSeriesOnce();
                         if (series != null)

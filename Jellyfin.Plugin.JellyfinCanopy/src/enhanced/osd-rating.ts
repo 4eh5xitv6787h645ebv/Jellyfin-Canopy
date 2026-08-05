@@ -4,6 +4,7 @@
 // (Converted from js/enhanced/osd-rating.js — bodies semantically identical.)
 
 import { JC } from '../globals';
+import { normalizeCriticPercent, ratingsAreMissing } from '../core/critic-rating';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
 import { createStableMethodFacade } from '../core/feature-loader';
@@ -63,14 +64,6 @@ function isEnabled(): boolean {
   return JC.pluginConfig?.ShowRatingInPlayer !== false;
 }
 
-function normalizeCriticPercent(raw: unknown): number | null {
-  if (raw === null || raw === undefined) return null;
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return null;
-  const percent = num <= 10 ? Math.round(num * 10) : Math.round(num);
-  return Math.max(0, Math.min(100, percent));
-}
-
 function createTomatoIcon(isRotten: boolean): HTMLSpanElement {
   const span = document.createElement('span');
   span.className = `jc-tomato ${isRotten ? 'rotten' : 'fresh'}`;
@@ -91,7 +84,7 @@ async function fetchItemRatings(
   try {
     const params = new URLSearchParams({
       Ids: itemId,
-      Fields: 'CommunityRating,CriticRating,Type'
+      Fields: 'CommunityRating,CriticRating,Type,SeriesId'
     });
     const result = await JC.core.api!.jf(`/Users/${context.userId}/Items?${params}`) as RatingItemsResponse;
     if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };
@@ -99,11 +92,11 @@ async function fetchItemRatings(
     if (!item) return { tmdb: null, critic: null };
 
     let sourceItem = item;
-    if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId && !item.CommunityRating && !item.CriticRating) {
+    if ((item.Type === 'Season' || item.Type === 'Episode') && item.SeriesId && ratingsAreMissing(item)) {
       try {
         const seriesParams = new URLSearchParams({
           Ids: String(item.SeriesId),
-          Fields: 'CommunityRating,CriticRating,Type'
+          Fields: 'CommunityRating,CriticRating,Type,SeriesId'
         });
         const seriesResult = await JC.core.api!.jf(`/Users/${context.userId}/Items?${seriesParams}`) as RatingItemsResponse;
         if (!isActive(context, expectedGeneration)) return { tmdb: null, critic: null };

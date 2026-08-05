@@ -322,7 +322,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             var refreshed = existing.Clone();
             var kind = descendant.GetBaseItemKind();
-            var inheritsRatings = descendant.CommunityRating == null;
+            var inheritsRatings = TagCacheRatingInheritance.ShouldInherit(
+                descendant.CommunityRating,
+                descendant.CriticRating);
             var inheritsGenres = descendant is Season season
                 && season.CommunityRating == null
                 && (season.Genres?.Length ?? 0) == 0
@@ -376,7 +378,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             refreshed.SeriesTmdbId = series?.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true
                 ? tmdbId
                 : null;
-            if (episode.CommunityRating == null)
+            if (TagCacheRatingInheritance.ShouldInherit(
+                episode.CommunityRating,
+                episode.CriticRating))
             {
                 refreshed.CommunityRating = series?.CommunityRating;
                 refreshed.CriticRating = series?.CriticRating;
@@ -424,9 +428,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     existing.SeriesTmdbId,
                     series.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true ? tmdbId : null,
                     StringComparison.Ordinal),
-                nameof(TagCacheEntry.CommunityRating) => descendant.CommunityRating == null
+                nameof(TagCacheEntry.CommunityRating) => TagCacheRatingInheritance.ShouldInherit(
+                    descendant.CommunityRating,
+                    descendant.CriticRating)
                     && existing.CommunityRating != series.CommunityRating,
-                nameof(TagCacheEntry.CriticRating) => descendant.CommunityRating == null
+                nameof(TagCacheEntry.CriticRating) => TagCacheRatingInheritance.ShouldInherit(
+                    descendant.CommunityRating,
+                    descendant.CriticRating)
                     && existing.CriticRating != series.CriticRating,
                 nameof(TagCacheEntry.Genres) => descendant is Season season
                     && season.CommunityRating == null

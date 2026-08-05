@@ -49,7 +49,7 @@ function spoilerGuard(hideRatings: boolean): SpoilerGuardApi {
     };
 }
 
-describe('rating tag guarded-Season projection parity (BI-SEC-125)', () => {
+describe('rating tag projection parity', () => {
     let renderer: RegisteredRenderer;
     let uninstallRatingTags: () => void;
 
@@ -182,5 +182,167 @@ describe('rating tag guarded-Season projection parity (BI-SEC-125)', () => {
             tmdbKey: '1234:s1',
             mediaType: 'tv',
         });
+    });
+
+    it('keeps a single-digit critic value unchanged in live and server-cache paths', () => {
+        JC.pluginConfig = { ...JC.pluginConfig, SpoilerBlurEnabled: false };
+        const live = cardHost();
+        renderer.render(live.host, {
+            Id: 'critic-live-7',
+            Type: 'Movie',
+            CommunityRating: null,
+            CriticRating: 7,
+        });
+        expect(live.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+
+        const server = cardHost();
+        renderer.renderFromServerCache(server.host, {
+            Type: 'Movie',
+            CommunityRating: null,
+            CriticRating: 7,
+        }, 'critic-server-7');
+        expect(server.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+    });
+
+    it('preserves a valid child zero instead of replacing it with a parent rating', () => {
+        JC.pluginConfig = { ...JC.pluginConfig, SpoilerBlurEnabled: false };
+        const { host } = cardHost();
+
+        renderer.render(host, {
+            Id: 'critic-child-zero',
+            Type: 'Season',
+            CommunityRating: null,
+            CriticRating: 0,
+        }, {
+            ratingParentSeries: { CommunityRating: 9.9, CriticRating: 99 },
+        });
+
+        expect(host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('0%');
+        expect(host.textContent).not.toContain('99%');
+    });
+
+    it('uses the parent critic percentage only when both child fields are nullish', () => {
+        JC.pluginConfig = { ...JC.pluginConfig, SpoilerBlurEnabled: false };
+        const { host } = cardHost();
+
+        renderer.render(host, {
+            Id: 'critic-child-missing',
+            Type: 'Episode',
+            CommunityRating: null,
+            CriticRating: null,
+        }, {
+            ratingParentSeries: { CommunityRating: null, CriticRating: 7 },
+        });
+
+        expect(host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+    });
+
+    it('omits invalid non-null critic data without silently falling back', () => {
+        JC.pluginConfig = { ...JC.pluginConfig, SpoilerBlurEnabled: false };
+        const { host } = cardHost();
+
+        renderer.render(host, {
+            Id: 'critic-child-invalid',
+            Type: 'Episode',
+            CommunityRating: null,
+            CriticRating: -1,
+        }, {
+            ratingParentSeries: { CommunityRating: 8.8, CriticRating: 88 },
+        });
+
+        expect(host.querySelector('.rating-overlay-container')).toBeNull();
+    });
+
+    it('loads persistent browser cache, rejects only its pre-contract row, and rewrites v2', () => {
+        JC.pluginConfig = {
+            ...JC.pluginConfig,
+            SpoilerBlurEnabled: false,
+            TagCacheServerMode: false,
+        };
+        const staleItemId = 'critic-stale-persistent-cache';
+        const currentItemId = 'critic-current-persistent-cache';
+        const context = JC.identity.capture();
+        expect(context).not.toBeNull();
+        const payloadKey = 'JellyfinCanopy-ratingTagsCache';
+        const ownerKey = `${payloadKey}:identity-owner`;
+        JC.storage.local.write(
+            'rating-tags',
+            ownerKey,
+            `${context!.serverId}:${context!.userId}`,
+            'cache-owner',
+        );
+        JC.storage.local.write(
+            'rating-tags',
+            payloadKey,
+            JSON.stringify({
+                [staleItemId]: { tmdb: null, critic: 70, sgType: 'Movie' },
+                [currentItemId]: {
+                    schemaVersion: 2,
+                    tmdb: null,
+                    critic: 7,
+                    sgType: 'Movie',
+                },
+            }),
+            'cache-payload',
+        );
+        const surface = JC as typeof JC & { initializeRatingTags?: () => void };
+        surface.initializeRatingTags?.();
+
+        try {
+            const current = cardHost();
+            expect(renderer.renderFromCache(current.host, currentItemId)).toBe(true);
+            expect(current.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+
+            const stale = cardHost();
+            expect(renderer.renderFromCache(stale.host, staleItemId)).toBe(false);
+            expect(stale.host.querySelector('.rating-overlay-container')).toBeNull();
+
+            const refreshed = cardHost();
+            renderer.render(refreshed.host, {
+                Id: staleItemId,
+                Type: 'Movie',
+                CommunityRating: null,
+                CriticRating: 7,
+            });
+            expect(refreshed.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+
+            const cached = cardHost();
+            expect(renderer.renderFromCache(cached.host, staleItemId)).toBe(true);
+            expect(cached.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+        } finally {
+            JC.storage.local.remove('rating-tags', payloadKey, 'cache-payload');
+            JC.storage.local.remove('rating-tags', ownerKey, 'cache-owner');
+        }
+    });
+
+    it('rejects and rewrites a pre-contract session-hot browser-cache row independently', () => {
+        JC.pluginConfig = {
+            ...JC.pluginConfig,
+            SpoilerBlurEnabled: false,
+            TagCacheServerMode: true,
+        };
+        const itemId = 'critic-stale-hot-cache';
+        const hot = (JC._hotCache as unknown as {
+            rating?: { set(key: string, value: unknown): void };
+        }).rating;
+        expect(hot).toBeDefined();
+        hot!.set(itemId, { tmdb: null, critic: 70, sgType: 'Movie' });
+
+        const stale = cardHost();
+        expect(renderer.renderFromCache(stale.host, itemId)).toBe(false);
+        expect(stale.host.querySelector('.rating-overlay-container')).toBeNull();
+
+        const refreshed = cardHost();
+        renderer.render(refreshed.host, {
+            Id: itemId,
+            Type: 'Movie',
+            CommunityRating: null,
+            CriticRating: 7,
+        });
+        expect(refreshed.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
+
+        const cached = cardHost();
+        expect(renderer.renderFromCache(cached.host, itemId)).toBe(true);
+        expect(cached.host.querySelector('.rating-tag-critic .rating-text')?.textContent).toBe('7%');
     });
 });

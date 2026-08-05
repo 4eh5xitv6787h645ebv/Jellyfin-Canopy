@@ -169,6 +169,7 @@
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › unknown or absent markers fail safe (legacy ladder, no errors)",
     "e2e/tags.spec.ts › tags › 8K dimensions render from a title-sanitized server-cache projection",
     "e2e/tags.spec.ts › tags › hide-on-hover fades the detail-page primary poster tags",
-    "e2e/tags.spec.ts › tags › home library cards get data-jc-*-tagged markers per enabled family"
+    "e2e/tags.spec.ts › tags › home library cards get data-jc-*-tagged markers per enabled family",
+    "e2e/tags.spec.ts › tags › single-digit Jellyfin critic values stay single-digit on real poster cards"
   ]
 }

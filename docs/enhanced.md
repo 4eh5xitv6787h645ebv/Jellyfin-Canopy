@@ -283,6 +283,8 @@ Show which audio languages a title has as country flags. Language Tags display u
 
 Surface critic and audience scores where you're browsing. Rating Tags show **TMDB** star ratings and **Rotten Tomatoes** critic scores (fresh/rotten icons), stacked vertically on the poster and color-coded by value.
 
+Rotten Tomatoes values use Jellyfin's direct **0–100 percentage** contract: a stored value of `7` displays as **7%**, not 70%. Finite numeric values from 0 through 100 are rounded for display; invalid, non-numeric, negative, or over-100 critic values are omitted. A Season or Episode inherits its Series ratings only when both of its own rating fields are missing, so valid zero and single-digit critic scores are preserved.
+
 Ratings can also appear **in the player**. **Show Rating in Video Player** displays the item's TMDB and Rotten Tomatoes ratings in the video-player OSD, shown before the "Ends at" time.
 
 | Setting | Scope | Default | What it does |
