@@ -105,6 +105,7 @@
   "PauseScreenEnabled": true,
   "PeopleTagsEnabled": false,
   "PluginIconsEnabled": false,
+  "PreferredAudioLanguage": "",
   "QualityTagsEnabled": false,
   "QualityTagsPosition": "top-left",
   "RandomButtonEnabled": true,

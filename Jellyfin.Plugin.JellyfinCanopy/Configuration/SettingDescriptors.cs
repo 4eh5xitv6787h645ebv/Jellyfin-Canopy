@@ -187,6 +187,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("ShowSpecialFormatTag", c => c.ShowSpecialFormatTag, nameof(UserSettings.ShowSpecialFormatTag)),
                 PublicUser("ShowVideoCodecTag", c => c.ShowVideoCodecTag, nameof(UserSettings.ShowVideoCodecTag)),
                 PublicUser("ShowAudioInfoTag", c => c.ShowAudioInfoTag, nameof(UserSettings.ShowAudioInfoTag)),
+                PublicUser("PreferredAudioLanguage", c => c.PreferredAudioLanguage, nameof(UserSettings.PreferredAudioLanguage)),
                 // Admin defaults are int, per-user overrides are int? — pinned by the pairing test.
                 PublicUser("ResolutionTagOrder", c => c.ResolutionTagOrder, nameof(UserSettings.ResolutionTagOrder)),
                 PublicUser("SourceTagOrder", c => c.SourceTagOrder, nameof(UserSettings.SourceTagOrder)),

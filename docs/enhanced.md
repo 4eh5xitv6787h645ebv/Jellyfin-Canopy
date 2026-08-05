@@ -270,6 +270,20 @@ width alone, and the 480p/LOW-RES boundary remains short-edge based.
 
 Quality Tags break down into **six independently toggleable categories** — **Resolution** (4K/1080p…), **Source** (BluRay/DVD/HDTV…), **HDR** (HDR10+/Dolby Vision), **Special format** (IMAX/3D), **Video format** (HEVC/H264/AV1…), and **Sound** (Atmos/DTS/5.1/7.1…). Each category can be enabled, disabled, and reordered on its own. The config-page values are admin defaults; each user can override which categories show and in what order.
 
+For a title with multiple audio tracks, the **Preferred audio language** control
+under Quality Tags chooses which one supplies the Sound badge. A user can
+inherit the administrator's default, select **Automatic**, or enter a BCP-47
+language such as `pt-BR`. Canopy tries an exact language and region first, then
+the same base language, Jellyfin's default track, and finally a deterministic
+fallback. Selection is limited to the primary media version, and codec and
+channel layout always come from the same selected track—so a badge cannot mix
+the codec of one language with the channel count of another. Changing the
+preference rerenders visible tags immediately.
+
+| Setting | Scope | Default | What it does |
+| --- | --- | --- | --- |
+| **Preferred audio language** (`PreferredAudioLanguage`) | Per-user + admin default | **Automatic** | Selects the primary-version audio track used for the Sound badge. A per-user **Inherit administrator default** choice follows later admin changes dynamically; **Automatic** remains an explicit user override. |
+
 #### Genre Tags
 
 ![Genre tags on posters](images/genre-tags.png)

@@ -49,6 +49,16 @@ describe('loadSettings admin-default resolution (ENH-4)', () => {
         expect(loadWith({}, {}).peopleTagsEnabled).toBe(false);
     });
 
+    it('preserves preferred-audio inheritance instead of materializing the admin default', () => {
+        expect(loadWith({}, { PreferredAudioLanguage: 'fr-CA' }).preferredAudioLanguage).toBeNull();
+        expect(loadWith({ preferredAudioLanguage: null }, { PreferredAudioLanguage: 'fr-CA' }).preferredAudioLanguage).toBeNull();
+    });
+
+    it('keeps explicit Automatic and custom preferred-audio overrides distinct', () => {
+        expect(loadWith({ preferredAudioLanguage: '' }, { PreferredAudioLanguage: 'fr-CA' }).preferredAudioLanguage).toBe('');
+        expect(loadWith({ preferredAudioLanguage: 'pt-BR' }, { PreferredAudioLanguage: 'fr-CA' }).preferredAudioLanguage).toBe('pt-BR');
+    });
+
     it('CLASS GUARD: every generic hardcoded key resolves from a distinctive PascalCase admin default', () => {
         // Enumerate the hardcoded default set + its values from an empty load.
         const hardcoded = loadWith({}, {});

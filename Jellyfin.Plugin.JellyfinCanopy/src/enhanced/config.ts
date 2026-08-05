@@ -824,6 +824,7 @@ JC.loadSettings = (): UserSettings => {
         pauseScreenDelaySeconds: 5,
         qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
         showResolutionTag: true, showSourceTag: true, showDynamicRangeTag: true, showSpecialFormatTag: true, showVideoCodecTag: true, showAudioInfoTag: true,
+        preferredAudioLanguage: null,
         resolutionTagOrder: 1, sourceTagOrder: 2, dynamicRangeTagOrder: 3, specialFormatTagOrder: 4, videoCodecTagOrder: 5, audioInfoTagOrder: 6,
         qualityTagsPosition: 'top-left', genreTagsPosition: 'top-right', languageTagsPosition: 'bottom-left', ratingTagsPosition: 'bottom-right',
         showRatingInPlayer: true,
@@ -869,6 +870,12 @@ JC.loadSettings = (): UserSettings => {
     mergedSettings.displayLanguage = Object.prototype.hasOwnProperty.call(userSettings, 'displayLanguage')
         ? userSettings.displayLanguage
         : (pluginDefaults.DefaultLanguage || '');
+    // Preserve the tri-state rather than collapsing null into the admin value:
+    // null inherits dynamically, while empty is explicit Automatic.
+    mergedSettings.preferredAudioLanguage = Object.prototype.hasOwnProperty.call(
+        userSettings,
+        'preferredAudioLanguage',
+    ) ? userSettings.preferredAudioLanguage : null;
     mergedSettings.lastOpenedTab = userSettings.lastOpenedTab || 'shortcuts';
 
     // Ensure isAdmin is always present (even if undefined) so it can be set later

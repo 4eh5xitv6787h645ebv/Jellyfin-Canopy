@@ -47,6 +47,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ShowSpecialFormatTag { get; set; } = true;
         public bool ShowVideoCodecTag { get; set; } = true;
         public bool ShowAudioInfoTag { get; set; } = true;
+        // null inherits the administrator default dynamically; empty is the
+        // explicit Automatic mode; otherwise this is canonical BCP-47.
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public string? PreferredAudioLanguage { get; set; }
         public int? ResolutionTagOrder { get; set; }
         public int? SourceTagOrder { get; set; }
         public int? DynamicRangeTagOrder { get; set; }

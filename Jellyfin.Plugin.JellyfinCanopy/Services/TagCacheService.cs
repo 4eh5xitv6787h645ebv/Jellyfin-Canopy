@@ -199,8 +199,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // v4 added stream Width so cropped DCI 8K is distinguishable from 4K
         // (#681). v5 additionally invalidates rows produced by the former
         // CommunityRating-only inheritance check, which could overwrite a
-        // child's valid CriticRating of 0 or 7 (#682).
-        private const int CurrentCacheSchemaVersion = 5;
+        // child's valid CriticRating of 0 or 7 (#682). v6 projects audio
+        // default/index/source identity for deterministic live/cache parity
+        // when selecting one preferred-language quality track (#664).
+        private const int CurrentCacheSchemaVersion = 6;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -2447,6 +2449,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         ChannelLayout = st.ChannelLayout,
                         VideoRangeType = st.VideoRangeType,
                         DisplayTitle = null,
+                        IsDefault = st.IsDefault,
+                        Index = st.Index,
+                        SourceIndex = st.SourceIndex,
                     }).ToList(),
                     Sources = sd.Sources?.Select(_ => new TagMediaSource
                     {
@@ -3122,8 +3127,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             try
             {
                 var mediaSources = item.GetMediaSources(false);
-                foreach (var source in mediaSources)
+                for (var sourceIndex = 0; sourceIndex < mediaSources.Count; sourceIndex++)
                 {
+                    var source = mediaSources[sourceIndex];
                     sources.Add(new TagMediaSource
                     {
                         Path = string.IsNullOrEmpty(source.Path) ? null : Path.GetFileName(source.Path),
@@ -3148,7 +3154,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             Channels = s.Channels,
                             ChannelLayout = s.ChannelLayout,
                             VideoRangeType = s.VideoRangeType.ToString(),
-                            DisplayTitle = s.DisplayTitle
+                            DisplayTitle = s.DisplayTitle,
+                            IsDefault = s.IsDefault,
+                            Index = s.Index,
+                            SourceIndex = sourceIndex
                         });
 
                         if (s.Type == MediaStreamType.Audio && !string.IsNullOrEmpty(s.Language))

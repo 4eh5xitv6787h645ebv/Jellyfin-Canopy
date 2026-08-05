@@ -2647,6 +2647,23 @@
                     return isNaN(v) || v < 5 ? 40 : Math.min(v, 100);
                 }
             },
+            PreferredAudioLanguage: {
+                load: function (el, v) {
+                    el.value = v || '';
+                },
+                save: function (el) {
+                    const value = el.value.trim();
+                    if (!value) return '';
+                    try {
+                        const canonical = Intl.getCanonicalLocales(value)[0];
+                        if (!canonical || /^(?:und|root)$/i.test(canonical)) throw new Error('unsupported language');
+                        el.value = canonical;
+                        return canonical;
+                    } catch (_) {
+                        throw new Error('Preferred audio language must be a valid BCP-47 tag (for example, en-US).');
+                    }
+                }
+            },
         };
 
         function configBoundFields() {

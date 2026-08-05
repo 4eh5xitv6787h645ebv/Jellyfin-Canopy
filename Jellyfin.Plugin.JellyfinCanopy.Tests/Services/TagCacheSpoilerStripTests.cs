@@ -358,6 +358,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         [InlineData(2)]
         [InlineData(3)]
         [InlineData(4)]
+        [InlineData(5)]
         public void LoadFromDisk_OldSchema_DiscardsEntries(int schemaVersion)
         {
             var dir = Path.Combine(Path.GetTempPath(), "jc-tagcache-" + Guid.NewGuid().ToString("N"));
@@ -379,7 +380,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 // v1 lacks SeriesId; v2 lacks SeasonId/StreamSourceId; v3 lacks
                 // Width and would preserve incorrect cropped/8K classifications;
                 // v3-v4 may also contain ratings overwritten by the retired
-                // CommunityRating-only inheritance rule.
+                // CommunityRating-only inheritance rule; v5 lacks audio
+                // default/index/source identity required by selection parity.
                 Assert.Equal(0, svc.Count);
             }
             finally
@@ -396,7 +398,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             {
                 var key = Guid.NewGuid().ToString("N");
                 var seriesN = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 5, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
+                WriteCache(dir, schemaVersion: 6, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();

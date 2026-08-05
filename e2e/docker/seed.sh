@@ -267,6 +267,9 @@ AUTOSKIP_CONTAINER_PATH="/media/${AUTOSKIP_RELATIVE_PATH}"
 REGIONAL_LANGUAGE_NAME="Delta Horizon"
 REGIONAL_LANGUAGE_RELATIVE_PATH="Movies/Delta Horizon (2024).mkv"
 REGIONAL_LANGUAGE_CONTAINER_PATH="/media/${REGIONAL_LANGUAGE_RELATIVE_PATH}"
+MULTILINGUAL_AUDIO_NAME="Echo Meridian"
+MULTILINGUAL_AUDIO_RELATIVE_PATH="Movies/Echo Meridian (2025).mkv"
+MULTILINGUAL_AUDIO_CONTAINER_PATH="/media/${MULTILINGUAL_AUDIO_RELATIVE_PATH}"
 
 # ── 1. clean state + plugin install ─────────────────────────────────────────
 log "resetting project ${E2E_PROJECT} state under ${STATE_DIR} (config/cache/media/mock)"
@@ -348,6 +351,22 @@ make_clip() { # <relative-path> <tone-hz> [duration-seconds] [audio-language]
         -metadata:s:a:0 language="${audio_language}" -y "$1"
 }
 
+make_multilingual_clip() { # <relative-path>
+    # The non-default Portuguese track has the recognizable E-AC-3 codec but
+    # only stereo; the default English track is AAC 5.1. This deliberately
+    # catches both language-selection failures and impossible mixed badges.
+    run_ffmpeg \
+        -f lavfi -i "testsrc2=duration=5:size=640x360:rate=24" \
+        -f lavfi -i "sine=frequency=770:duration=5" \
+        -f lavfi -i "sine=frequency=880:duration=5" \
+        -map 0:v -map 1:a -map 2:a \
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+        -c:a:0 eac3 -ac:a:0 2 -c:a:1 aac -ac:a:1 6 \
+        -metadata:s:a:0 language="pt-BR" -disposition:a:0 0 \
+        -metadata:s:a:1 language="en-US" -disposition:a:1 default \
+        -shortest -threads "${JF_FFMPEG_THREADS}" -y "$1"
+}
+
 log "generating test movies"
 make_clip "Movies/Alpha Adventure (2021).mp4" 440
 make_clip "Movies/Beta Voyage (2022).mp4" 550
@@ -355,6 +374,7 @@ make_clip "Movies/Gamma Quest (2023).mp4" 660
 # Matroska retains full BCP-47 LanguageIETF tags; the scan gate below proves
 # the pinned Jellyfin 12 image exposes the regional tag before Playwright runs.
 make_clip "${REGIONAL_LANGUAGE_RELATIVE_PATH}" 770 5 pt-BR
+make_multilingual_clip "${MULTILINGUAL_AUDIO_RELATIVE_PATH}"
 log "generating dedicated Auto-Skip movie (${AUTOSKIP_DURATION}s, seed ${SEED_NONCE})"
 mkdir -p "${MEDIA_DIR}/${AUTOSKIP_RELATIVE_DIR}"
 make_clip "${AUTOSKIP_RELATIVE_PATH}" 880 "${AUTOSKIP_DURATION}"
@@ -664,6 +684,8 @@ AUTOSKIP_SCAN_TICKS=0
 AUTOSKIP_SCAN_SOURCE_COUNT=0
 REGIONAL_LANGUAGE_MATCH_COUNT=0
 REGIONAL_LANGUAGE_TAGS='[]'
+MULTILINGUAL_AUDIO_MATCH_COUNT=0
+MULTILINGUAL_AUDIO_TRACKS='[]'
 for _ in $(seq 1 60); do
     AUTOSKIP_SCAN_JSON="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Fields=Path,MediaSources,MediaStreams")"
     MOVIES="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r '.TotalRecordCount // 0')"
@@ -689,17 +711,36 @@ for _ in $(seq 1 60); do
           | select(.Type == "Audio")
           | (.Language // "" | ascii_downcase)
           | select(length > 0)] | unique | sort')"
-    if [ "${MOVIES}" -ge 5 ] 2>/dev/null \
+    MULTILINGUAL_AUDIO_MATCH_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
+        --arg path "${MULTILINGUAL_AUDIO_CONTAINER_PATH}" \
+        '[.Items[]? | select(.Path == $path)] | length')"
+    MULTILINGUAL_AUDIO_TRACKS="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -c \
+        --arg path "${MULTILINGUAL_AUDIO_CONTAINER_PATH}" \
+        '[first(.Items[]? | select(.Path == $path)) as $item
+          | (($item.MediaStreams // [])
+             + (($item.MediaSources // []) | map(.MediaStreams // []) | add // []))[]?
+          | select(.Type == "Audio")
+          | {
+              language: (.Language // "" | ascii_downcase),
+              codec: (.Codec // "" | ascii_downcase),
+              channels: (.Channels // 0),
+              isDefault: (.IsDefault == true)
+            }]
+         | unique_by(.language, .codec, .channels, .isDefault)
+         | sort_by(.language)')"
+    if [ "${MOVIES}" -ge 6 ] 2>/dev/null \
         && [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null \
         && [ "${REGIONAL_LANGUAGE_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
-        && [ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ]; then
+        && [ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ] \
+        && [ "${MULTILINGUAL_AUDIO_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
+        && [ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ]; then
         break
     fi
     sleep 5
 done
-[ "${MOVIES}" -ge 5 ] || fail "library scan indexed only ${MOVIES} movies (expected at least 5)"
+[ "${MOVIES}" -ge 6 ] || fail "library scan indexed only ${MOVIES} movies (expected at least 6)"
 [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] \
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' (ID <missing>, duration <missing>) was not indexed at ${AUTOSKIP_CONTAINER_PATH}"
 [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
@@ -711,6 +752,11 @@ done
 [ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ] \
     || fail "regional-language fixture exposed ${REGIONAL_LANGUAGE_TAGS}; expected [\"pt-br\"]"
 log "verified regional-language fixture tags: ${REGIONAL_LANGUAGE_TAGS}"
+[ "${MULTILINGUAL_AUDIO_MATCH_COUNT}" -eq 1 ] \
+    || fail "multilingual-audio fixture '${MULTILINGUAL_AUDIO_NAME}' was not indexed at ${MULTILINGUAL_AUDIO_CONTAINER_PATH}"
+[ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ] \
+    || fail "multilingual-audio fixture exposed ${MULTILINGUAL_AUDIO_TRACKS}; expected the pinned en-US default AAC 5.1 and pt-BR E-AC-3 stereo tracks"
+log "verified multilingual-audio fixture tracks: ${MULTILINGUAL_AUDIO_TRACKS}"
 
 log "waiting for the explicit library scan to complete before metadata writes"
 LIBRARY_SCAN_STATE=""
@@ -779,6 +825,31 @@ done
 [ "${REGIONAL_TAG_CACHE_TAGS}" = '["pt-br"]' ] \
     || fail "regional-language tag cache exposed ${REGIONAL_TAG_CACHE_TAGS}; expected [\"pt-br\"]"
 log "verified regional-language server-cache tags: ${REGIONAL_TAG_CACHE_TAGS}"
+
+MULTILINGUAL_AUDIO_ID="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -er \
+    --arg path "${MULTILINGUAL_AUDIO_CONTAINER_PATH}" \
+    'first(.Items[]? | select(.Path == $path) | .Id) // empty')"
+MULTILINGUAL_CACHE_TRACKS='[]'
+for _ in $(seq 1 60); do
+    MULTILINGUAL_CACHE_TRACKS="$(api GET "/JellyfinCanopy/tag-cache/${ADMIN_ID}" | jq -c \
+        --arg id "${MULTILINGUAL_AUDIO_ID}" \
+        '[.items[$id].StreamData.Streams[]?
+          | select(.Type == "Audio")
+          | {
+              language: (.Language // "" | ascii_downcase),
+              codec: (.Codec // "" | ascii_downcase),
+              channels: (.Channels // 0),
+              isDefault: (.IsDefault == true),
+              sourceIndex: .SourceIndex
+            }]
+         | unique_by(.language, .codec, .channels, .isDefault, .sourceIndex)
+         | sort_by(.language)')"
+    [ "${MULTILINGUAL_CACHE_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true,"sourceIndex":0},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false,"sourceIndex":0}]' ] && break
+    sleep 1
+done
+[ "${MULTILINGUAL_CACHE_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true,"sourceIndex":0},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false,"sourceIndex":0}]' ] \
+    || fail "multilingual-audio tag cache exposed ${MULTILINGUAL_CACHE_TRACKS}; expected the pinned tracks with primary-source identity"
+log "verified multilingual-audio server-cache tracks: ${MULTILINGUAL_CACHE_TRACKS}"
 
 # Resolve by the physical path owned by this seed, validate the media metadata,
 # then apply the stable logical name used by the spec. Re-read after the update
