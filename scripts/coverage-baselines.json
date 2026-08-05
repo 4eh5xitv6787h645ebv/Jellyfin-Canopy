@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43644,
-        "totalLines": 53344
+        "coveredLines": 44215,
+        "totalLines": 53973
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 43633,
-        "maximumCoveredLines": 43644
+        "cleanRuns": 1,
+        "minimumCoveredLines": 44215,
+        "maximumCoveredLines": 44215
       },
       "tolerance": {
         "missingCoveredLines": 11,
-        "rationale": "The advanced per-category Spoiler Guard reveals (SpoilerNextUnwatchedService with its fail-closed background boundary fill, the CategoryReveal mask in SpoilerFieldStripFilter, and seven admin config keys) settle the instrumented scope at 53,344 lines (from 53,174 on main). Four clean Release coverage runs on this exact tree observed 43,633-43,644 covered lines (81.796%-81.816%). The eleven-line envelope combines the pre-existing timing-dependent async paths documented for this branch's earlier scopes (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter — proven by cobertura diffs) with the new background-fill worker's disposal/no-op branches, whose coverage depends on cross-test scheduling. The floor 43,633/53,344 = 81.796% exceeds the previous required floor 43,470/53,174 = 81.750%, so the ratchet moves upward; 0.021pp is far inside the 0.15pp policy bound."
+        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. One clean Release run on the merged tree observed 44,215 covered lines (81.921%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
       }
     }
   }
