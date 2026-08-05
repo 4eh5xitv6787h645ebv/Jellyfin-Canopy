@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2798,
+        "coveredLines": 2805,
         "totalLines": 3191
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 2798,
-        "maximumCoveredLines": 2798
+        "minimumCoveredLines": 2805,
+        "maximumCoveredLines": 2805
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The modern-layout-only change removes ten fully covered legacy-layout lines from the instrumented client/core scope. Three clean Node/V8 runs on 2026-08-04 each passed all 2,038 tests across 244 files with zero unhandled errors and reproduced exactly 2,798/3,191 (87.684%). The numeric percentage is not directly comparable with the prior 2,808/3,201 scope because the removed lines were all covered; no surviving line lost coverage. The exact observed envelope needs no instrumentation tolerance, so the reviewed floor and high-water for this smaller scope are 2,798/3,191. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "The #683 playback action-sheet lifecycle tests exercise the canonical core action-sheet close path while keeping the instrumented client/core scope fixed. Three clean Node/V8 runs on 2026-08-05 each passed all 2,052 tests across 245 files with zero unhandled errors and reproduced exactly 2,805/3,191 (87.903%). This advances the prior same-scope 2,798/3,191 high-water by seven covered lines without adding or removing an instrumented line. The exact observed envelope needs no instrumentation tolerance, so the reviewed floor and high-water are both 2,805/3,191. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
