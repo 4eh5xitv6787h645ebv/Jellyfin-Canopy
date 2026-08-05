@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 42798,
-        "totalLines": 52592
+        "coveredLines": 42809,
+        "totalLines": 52615
       },
       "observations": {
-        "cleanRuns": 7,
-        "minimumCoveredLines": 42786,
-        "maximumCoveredLines": 42798
+        "cleanRuns": 5,
+        "minimumCoveredLines": 42802,
+        "maximumCoveredLines": 42809
       },
       "tolerance": {
-        "missingCoveredLines": 12,
-        "rationale": "The modern-layout-only change adds configuration normalization for the retired layout values and ten focused configuration tests. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-04 against the identical final 52,592-line production source and 4,104-test scope measured 42,786, 42,788 and 42,792 covered lines after every test passed; four clean GitHub Actions runs on the same source and scope measured 42,793, 42,795, 42,796 and 42,798 after all 4,104 tests passed. The reviewed observed high-water is therefore 42,798/52,592 (81.377%) and the exact observed floor is 42,786/52,592 (81.355%); the twelve-line schedule-dependent instrumentation spread is bounded to 0.023 percentage points. Relative to the prior 42,783/52,590 floor (81.352%), the new floor adds three covered and two instrumented lines while slightly increasing the enforced percentage. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 7,
+        "rationale": "The warning-only maintenance-mode change adds explicit action validation, durable none-state handling, structured controller failure handling, and six focused server tests. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-05 against the identical final 52,615-line production source and 4,110-test scope measured 42,802, 42,805 and 42,806 covered lines after every test passed; two hosted GitHub Actions runs on the same source and scope also passed all 4,110 tests and measured 42,807 and 42,809. The reviewed observed high-water is therefore 42,809/52,615 (81.363%) and the exact observed floor is 42,802/52,615 (81.349%); the seven-line schedule-dependent instrumentation spread is bounded to 0.013 percentage points. Relative to the prior 42,798/52,592 high-water, the new high-water adds eleven covered and twenty-three instrumented lines, so the covered-line high-water does not decrease; the percentage shift reflects the reviewed production scope growth. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

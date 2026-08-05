@@ -2540,7 +2540,10 @@
             });
         }
 
+        var _maintenanceActionLoadError = null;
+
         function loadConfig() {
+            _maintenanceActionLoadError = null;
             Dashboard.showLoadingMsg();
             checkInstalledPlugins();
             ApiClient.getPluginConfiguration(pluginId).then((config) => {
@@ -2559,9 +2562,16 @@
                 applyConfigToBoundFields(config);
 
                 // Restore action checkboxes
-                const savedAction = config.MaintenanceModeAction || 'disable_accounts';
-                document.getElementById('mmAction_accounts').checked = savedAction === 'disable_accounts' || savedAction === 'both';
-                document.getElementById('mmAction_remote').checked   = savedAction === 'disable_remote'   || savedAction === 'both';
+                let savedAction;
+                try {
+                    savedAction = maintenanceSelectionsFromAction(config.MaintenanceModeAction);
+                    _maintenanceActionLoadError = null;
+                } catch (actionError) {
+                    _maintenanceActionLoadError = actionError.message;
+                    throw actionError;
+                }
+                document.getElementById('mmAction_accounts').checked = savedAction.accounts;
+                document.getElementById('mmAction_remote').checked = savedAction.remote;
                 // Restore user selection radio + checkboxes
                 const savedUsers = config.MaintenanceModeAffectedUsers || 'all';
                 if (savedUsers === 'all') {
@@ -2658,11 +2668,41 @@
                 updateRequestsRequirementsBanner();
 
                 Dashboard.hideLoadingMsg();
+            }).catch(function(loadError) {
+                Dashboard.hideLoadingMsg();
+                console.error('[JC] Configuration load failed:', loadError);
+                Dashboard.alert({
+                    title: 'Configuration load failed',
+                    message: _maintenanceActionLoadError
+                        ? 'The saved maintenance action is invalid. Correct the server configuration before saving this page.'
+                        : 'Could not load Jellyfin Canopy settings. Check the browser console and server logs.'
+                });
             });
+        }
+
+        function maintenanceActionFromSelections(accounts, remote) {
+            if (accounts && remote) return 'both';
+            if (accounts) return 'disable_accounts';
+            if (remote) return 'disable_remote';
+            return 'none';
+        }
+
+        function maintenanceSelectionsFromAction(action) {
+            const savedAction = action || 'disable_accounts';
+            if (!['none', 'disable_accounts', 'disable_remote', 'both'].includes(savedAction)) {
+                throw new Error('Unknown maintenance action: ' + savedAction);
+            }
+            return {
+                accounts: savedAction === 'disable_accounts' || savedAction === 'both',
+                remote: savedAction === 'disable_remote' || savedAction === 'both'
+            };
         }
 
         async function buildConfigFromForm() {
             const config = await ApiClient.getPluginConfiguration(pluginId);
+            if (_maintenanceActionLoadError) {
+                throw new Error('Cannot save while the persisted maintenance action is invalid.');
+            }
             const finalShortcuts = [...defaultShortcuts];
             shortcutOverrides.forEach(override => {
                 const index = finalShortcuts.findIndex(s => s.Name === override.Name);
@@ -2679,9 +2719,7 @@
 
             const mmAccounts = document.getElementById('mmAction_accounts').checked;
             const mmRemote   = document.getElementById('mmAction_remote').checked;
-            config.MaintenanceModeAction = (mmAccounts && mmRemote) ? 'both'
-                                         : mmRemote                 ? 'disable_remote'
-                                         :                            'disable_accounts';
+            config.MaintenanceModeAction = maintenanceActionFromSelections(mmAccounts, mmRemote);
             const mmUsersMode = (document.querySelector('input[name="maintenanceModeUsers"]:checked') || {}).value || 'all';
             if (mmUsersMode === 'all') {
                 config.MaintenanceModeAffectedUsers = 'all';
@@ -2868,6 +2906,78 @@
         // between-save form changes. Treat saves as serial.
         var _jeSaveInFlight = false;
 
+        function getMaintenanceStatus() {
+            return ApiClient.ajax({
+                type: 'GET',
+                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Status'),
+                dataType: 'json'
+            });
+        }
+
+        async function enableMaintenanceFromConfig(config, broadcast) {
+            const affectedIds = config.MaintenanceModeAffectedUsers === 'all'
+                ? []
+                : JSON.parse(config.MaintenanceModeAffectedUsers || '[]');
+            await ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Enable'),
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    message: config.MaintenanceModeMessage || '',
+                    durationMinutes: 0,
+                    action: config.MaintenanceModeAction || 'disable_accounts',
+                    affectedUserIds: affectedIds
+                })
+            });
+
+            if (!broadcast) return;
+            const mmMsg = (config.MaintenanceModeNotificationMessage || '').trim()
+                || (config.MaintenanceModeMessage || '').trim()
+                || 'Server maintenance is starting. Please finish up and try again later.';
+            try {
+                await ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Broadcast'),
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        header: 'Server Maintenance',
+                        text: mmMsg,
+                        timeoutMs: 30000
+                    })
+                });
+            } catch (bcErr) {
+                console.warn('[JC] Maintenance broadcast failed (no active sessions?):', bcErr);
+            }
+        }
+
+        async function persistConfigurationAndMaintenance(config, broadcast) {
+            const status = await getMaintenanceStatus();
+            if (config.MaintenanceModeEnabled) {
+                if (status.IsActive && status.Phase !== 'Active') {
+                    throw new Error('Maintenance recovery must be completed before saving enabled maintenance settings.');
+                }
+                if (status.IsActive && status.Action !== config.MaintenanceModeAction) {
+                    throw new Error('Disable active maintenance before changing its action.');
+                }
+
+                // Persist the warning/restriction intent before applying account policy. If the
+                // configuration request fails or its response is lost, no new restriction is
+                // authorized and a retry can converge from the authoritative status endpoint.
+                const result = await ApiClient.updatePluginConfiguration(pluginId, config);
+                await enableMaintenanceFromConfig(config, broadcast);
+                return result;
+            }
+
+            // Restore account access before removing the persisted warning intent. A failed
+            // recovery therefore leaves the banner/configuration enabled instead of hiding an
+            // unresolved restriction. No browser-side compensation guesses whether a write landed.
+            await ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Disable')
+            });
+            return ApiClient.updatePluginConfiguration(pluginId, config);
+        }
+
         async function saveConfig(e) {
             e.preventDefault();
             if (_jeSaveInFlight) return false;
@@ -2880,53 +2990,7 @@
                 const config = await buildConfigFromForm();
                 // Everything mutated up to this snapshot is in `config`.
                 const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
-                const result = await ApiClient.updatePluginConfiguration(pluginId, config);
-
-                // Apply maintenance mode: enable/disable users to match the toggle
-                try {
-                    if (config.MaintenanceModeEnabled) {
-                        const affectedIds = config.MaintenanceModeAffectedUsers === 'all'
-                            ? []
-                            : JSON.parse(config.MaintenanceModeAffectedUsers || '[]');
-                        await ApiClient.ajax({
-                            type: 'POST',
-                            url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Enable'),
-                            contentType: 'application/json',
-                            data: JSON.stringify({
-                                message: config.MaintenanceModeMessage || '',
-                                durationMinutes: 0,
-                                action: config.MaintenanceModeAction || 'disable_accounts',
-                                affectedUserIds: affectedIds
-                            })
-                        });
-                        // Broadcast a native Jellyfin message to all active sessions
-                        // (reaches non-web clients like TV apps too — works regardless of Active Streams setting)
-                        const mmMsg = (config.MaintenanceModeNotificationMessage || '').trim()
-                            || (config.MaintenanceModeMessage || '').trim()
-                            || 'Server maintenance is starting. Please finish up and try again later.';
-                        try {
-                            await ApiClient.ajax({
-                                type: 'POST',
-                                url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Broadcast'),
-                                contentType: 'application/json',
-                                data: JSON.stringify({
-                                    header: 'Server Maintenance',
-                                    text: mmMsg,
-                                    timeoutMs: 30000
-                                })
-                            });
-                        } catch (bcErr) {
-                            console.warn('[JC] Maintenance broadcast failed (no active sessions?):', bcErr);
-                        }
-                    } else {
-                        await ApiClient.ajax({
-                            type: 'POST',
-                            url: ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Disable')
-                        });
-                    }
-                } catch (mmErr) {
-                    console.warn('[JC] Maintenance mode apply failed:', mmErr);
-                }
+                const result = await persistConfigurationAndMaintenance(config, true);
 
                 Dashboard.processPluginConfigurationUpdateResult(result);
                 // Clean only if nothing was edited while the save was in flight.
@@ -2937,7 +3001,7 @@
                 try {
                     Dashboard.alert({
                         title: 'Save failed',
-                        message: 'Could not save Jellyfin Canopy settings. Check the browser console and server logs, then try again.'
+                        message: 'Could not fully apply Jellyfin Canopy settings. Reload to inspect the current configuration and maintenance status, then try again.'
                     });
                 } catch (alertErr) { console.warn('[JC] Dashboard.alert threw:', alertErr); }
             } finally {
@@ -2954,7 +3018,7 @@
                 try {
                     // First, save the current configuration
                     const config = await buildConfigFromForm();
-                    await ApiClient.updatePluginConfiguration(pluginId, config);
+                    await persistConfigurationAndMaintenance(config, false);
 
                     // Then reset all user settings to match the saved config
                     await ApiClient.ajax({

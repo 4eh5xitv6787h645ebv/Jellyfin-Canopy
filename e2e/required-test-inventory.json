@@ -157,6 +157,7 @@
     "e2e/settings-persist.spec.ts › per-user settings persistence › a committed settings write survives response loss and resolves from exact server evidence",
     "e2e/settings-persist.spec.ts › per-user settings persistence › a per-user setting persists across reload (write → persist → reload → re-read)",
     "e2e/settings-persist.spec.ts › per-user settings persistence › a rejected settings write restores exact state and reports typed failure without success",
+    "e2e/settings-persist.spec.ts › per-user settings persistence › clearing both maintenance actions persists and reloads warning-only mode",
     "e2e/settings-persist.spec.ts › per-user settings persistence › the admin config page exposes a control bound to the pause-screen delay default (XCUT-6)",
     "e2e/settings-persist.spec.ts › per-user settings persistence › the pause-screen delay panel input persists across reload",
     "e2e/spoiler-guard.spec.ts › Spoiler Guard › disabling shows the confirm dialog and restores the episode title",

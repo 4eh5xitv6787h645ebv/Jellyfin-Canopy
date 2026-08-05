@@ -4,6 +4,7 @@ global using JSortOrder = Jellyfin.Database.Implementations.Enums.SortOrder;
 
 using System.Globalization;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
@@ -228,6 +229,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         {
             if (configuration is PluginConfiguration config)
             {
+                config.MaintenanceModeAction = string.IsNullOrEmpty(config.MaintenanceModeAction)
+                    ? MaintenanceActions.DisableAccounts
+                    : config.MaintenanceModeAction;
+                if (!MaintenanceActions.IsSupported(config.MaintenanceModeAction))
+                {
+                    throw new ArgumentException(
+                        "MaintenanceModeAction must be none, disable_accounts, disable_remote, or both.",
+                        nameof(configuration));
+                }
+
                 SanitizeExternalUrlFields(config);
             }
 
