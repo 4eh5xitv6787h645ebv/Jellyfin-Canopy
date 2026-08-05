@@ -28,6 +28,12 @@ export interface SpoilerUserPrefs {
     HideTaglines?: boolean | null;
     HideTags?: boolean | null;
     HideReviews?: boolean | null;
+    /**
+     * Advanced per-category reveals (admin default: SpoilerAdvancedMode).
+     * Unlike the opt-outs above, false here is the STRICTER choice: it
+     * restores the uniform full strip for this user.
+     */
+    UseAdvancedCategories?: boolean | null;
     /** Direct boolean: true = skip the disable-confirm dialog. */
     SkipDisableConfirm?: boolean;
     [key: string]: boolean | number | null | undefined;

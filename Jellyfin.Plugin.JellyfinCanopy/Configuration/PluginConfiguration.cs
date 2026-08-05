@@ -369,6 +369,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             SpoilerKeepMoviePosters = true;
             SpoilerIdentityTags = true;
             SpoilerOverviewPlaceholder = "Spoiler Guard activated";
+
+            // Advanced per-category reveals. Off by default so existing
+            // installs keep today's uniform strip. Category strip toggles
+            // default to the strictest posture except the next-episode
+            // title — the whole point of advanced mode (you should be able
+            // to see WHAT you're about to watch, and nothing more).
+            SpoilerAdvancedMode = false;
+            SpoilerNextEpisodeStripTitle = false;
+            SpoilerNextEpisodeStripOverview = true;
+            SpoilerNextEpisodeStripRatings = true;
+            SpoilerCurrentSeasonStripTitle = true;
+            SpoilerCurrentSeasonStripOverview = true;
+            SpoilerCurrentSeasonStripRatings = true;
         }
 
         // Maintenance Mode
@@ -975,6 +988,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // are usually curated marketing art, while chapter scene-thumbs (and
         // synopsis/cast) are the real spoiler vector. Off = hide posters too.
         public bool SpoilerKeepMoviePosters { get; set; } = true;
+        // Advanced per-category reveals (upstream JE feature request: granular
+        // spoiler guard). When on, the user's NEXT unwatched regular episode
+        // and the rest of its season get their own strip masks below instead
+        // of the uniform full strip; every other unwatched episode (later
+        // seasons, skipped earlier seasons, specials) keeps the full strip.
+        // Category resolution failure of any kind falls back to full strip.
+        public bool SpoilerAdvancedMode { get; set; } = false;
+        // Per-category field masks, same "true = strip" polarity as the base
+        // toggles above. A category mask can only RELAX a base strip that is
+        // already on — it never strips a field whose base toggle (or the
+        // user's per-field opt-out) has disabled stripping.
+        public bool SpoilerNextEpisodeStripTitle { get; set; } = false;
+        public bool SpoilerNextEpisodeStripOverview { get; set; } = true;
+        public bool SpoilerNextEpisodeStripRatings { get; set; } = true;
+        public bool SpoilerCurrentSeasonStripTitle { get; set; } = true;
+        public bool SpoilerCurrentSeasonStripOverview { get; set; } = true;
+        public bool SpoilerCurrentSeasonStripRatings { get; set; } = true;
         // Per-user identity markers appended to image tags in item DTO
         // responses ("-jeu{12hex}") so anonymous image requests can be
         // attributed to the requesting user via the echoed `?tag=` value

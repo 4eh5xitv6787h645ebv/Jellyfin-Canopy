@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 44047,
-        "totalLines": 53803
+        "coveredLines": 44215,
+        "totalLines": 53973
       },
       "observations": {
-        "cleanRuns": 5,
-        "minimumCoveredLines": 44038,
-        "maximumCoveredLines": 44047
+        "cleanRuns": 2,
+        "minimumCoveredLines": 44212,
+        "maximumCoveredLines": 44215
       },
       "tolerance": {
-        "missingCoveredLines": 9,
-        "rationale": "Issue #664 adds authoritative preferred-audio-language normalization and server-cache audio-track projection with focused regressions. Five clean full-suite runs on this exact 53,803-line source and 4,199-test scope passed every test and measured 44,038, 44,043, 44,039, hosted 44,046, and the hosted observed high-water 44,047 covered lines. The reviewed high-water is therefore 44,047/53,803 (81.867%) and the exact observed floor is 44,038/53,803 (81.850%); the nine-line timing-dependent instrumentation spread is 0.017 percentage points, far inside the 0.15pp policy bound. Three intervening local full-coverage attempts are excluded because unrelated timing/cache-concurrency tests failed (one or two failures out of 4,199), so they are not clean evidence. The first two hosted Unit jobs also passed all 4,199 tests and correctly rejected only the prior 44,043 and 44,046 high-waters before contributing their clean 44,046 and 44,047 observations. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 11,
+        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. Two clean Release runs on the merged tree observed 44,215 and 44,212 covered lines (81.916%-81.921%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
       }
     }
   }

@@ -287,6 +287,7 @@
   "SourceTagOrder": 2,
   "SpecialFormatTagOrder": 4,
   "SplashScreenImageUrl": "/web/assets/img/banner-light.png",
+  "SpoilerAdvancedMode": false,
   "SpoilerBlurEnabled": false,
   "SpoilerBlurStrictRefresh": false,
   "SpoilerReplaceTitle": true,

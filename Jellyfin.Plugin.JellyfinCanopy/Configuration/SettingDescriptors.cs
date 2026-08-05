@@ -414,6 +414,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("SpoilerStripCast", c => c.SpoilerStripCast),
                 Public("SpoilerStripReviews", c => c.SpoilerStripReviews),
                 Public("SpoilerBlurStrictRefresh", c => c.SpoilerBlurStrictRefresh),
+                // Advanced category reveals: clients only need the master flag
+                // (to gate the per-user opt-out row in the settings panel);
+                // the six per-category strip toggles are server-only strip
+                // policy and deliberately get no descriptor.
+                Public("SpoilerAdvancedMode", c => c.SpoilerAdvancedMode),
 
                 // Maintenance Mode
                 Public("MaintenanceModeEnabled", c => c.MaintenanceModeEnabled),

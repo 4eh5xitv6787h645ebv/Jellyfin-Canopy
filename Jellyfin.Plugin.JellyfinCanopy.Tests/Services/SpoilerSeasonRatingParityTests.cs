@@ -62,8 +62,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             // DTO item-counts make these tests independent of live library queries.
             var resolver = new SpoilerUserResolver(
                 userConfigManager: null!, lib, NullLogger<SpoilerUserResolver>.Instance, identity);
+            var userData = new StubUserDataManager();
+            var nextUnwatched = new SpoilerNextUnwatchedService(
+                lib, users, userData, NullLogger<SpoilerNextUnwatchedService>.Instance);
             return new SpoilerFieldStripFilter(
-                resolver, lib, users, new StubUserDataManager(), new FakePluginConfigProvider(cfg));
+                resolver, lib, users, userData, new FakePluginConfigProvider(cfg), nextUnwatched);
         }
 
         private static BaseItemDto SeasonDto(Guid seriesId, int seasonNumber, bool anyWatched)

@@ -971,6 +971,35 @@
                             </details>
 
                             <details class="jc-details-section" data-gated-by="spoilerBlurEnabled">
+                                <summary>Advanced per-category reveals</summary>
+                                <div class="jc-details-body">
+                                    <div class="checkboxContainer"><label><input id="spoilerAdvancedMode" data-config-key="SpoilerAdvancedMode" is="emby-checkbox" type="checkbox"/><span>Enable advanced per-category reveals</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="spoilerAdvancedMode">
+                                        <div class="fieldDescription">Instead of one uniform strip for every unwatched episode, the user's <strong>next</strong> unwatched episode and the rest of its season get the reveal settings below. Later seasons, skipped earlier seasons and specials always keep the full strip. A reveal only relaxes a strip that is enabled above — categories whose strip is off show everywhere already. Each user can opt back into the uniform full strip from their settings panel.</div>
+                                    </div>
+
+                                    <div class="jc-info-banner-inline-center" style="margin-bottom: 15px;" data-gated-by="spoilerAdvancedMode">
+                                        <div class="jc-info-banner-row">
+                                            <i class="material-icons jc-info-icon">visibility</i>
+                                            <div>Checked = still hidden for that category. Unchecked = revealed. The next-episode title starts revealed — that's the point of advanced mode: see <em>what</em> you're about to watch, and nothing more.</div>
+                                        </div>
+                                    </div>
+
+                                    <div data-gated-by="spoilerAdvancedMode">
+                                        <div class="checkboxContainer"><label><input id="spoilerNextEpisodeStripTitle" data-config-key="SpoilerNextEpisodeStripTitle" is="emby-checkbox" type="checkbox"/><span>Next episode: keep title hidden</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="spoilerNextEpisodeStripOverview" data-config-key="SpoilerNextEpisodeStripOverview" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Next episode: keep description hidden</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="spoilerNextEpisodeStripRatings" data-config-key="SpoilerNextEpisodeStripRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Next episode: keep ratings hidden</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="spoilerCurrentSeasonStripTitle" data-config-key="SpoilerCurrentSeasonStripTitle" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Current season: keep titles hidden</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="spoilerCurrentSeasonStripOverview" data-config-key="SpoilerCurrentSeasonStripOverview" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Current season: keep descriptions hidden</span></label></div>
+                                        <div class="checkboxContainer"><label><input id="spoilerCurrentSeasonStripRatings" data-config-key="SpoilerCurrentSeasonStripRatings" data-config-default="true" is="emby-checkbox" type="checkbox"/><span>Current season: keep ratings hidden</span></label></div>
+                                        <div class="jc-setting-description" data-desc-for="spoilerCurrentSeasonStripRatings">
+                                            <div class="fieldDescription">"Current season" is the season containing the next unwatched episode. Card rating overlays and search results stay fully protected regardless of these reveals; only the episode metadata itself (lists and detail pages) is revealed.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="jc-details-section" data-gated-by="spoilerBlurEnabled">
                                 <summary>Automatic opt-in &amp; behaviour</summary>
                                 <div class="jc-details-body">
                                     <div class="checkboxContainer"><label><input id="spoilerAutoEnableOnFirstPlay" data-config-key="SpoilerAutoEnableOnFirstPlay" is="emby-checkbox" type="checkbox"/><span>Auto-enable on first play of a series' S1E1</span></label></div>
