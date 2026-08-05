@@ -722,18 +722,19 @@ const TRACK_COMMAND_MEMORY_MS = 10_000;
 const OFF_STREAM_INDEX = -1;
 
 interface LastCommandedTrack {
-    kind: TrackSheetKind;
     sessionId: string;
     itemId: string;
     index: number;
     at: number;
 }
 
-let _lastCommandedTrack: LastCommandedTrack | null = null;
+// Per kind: audio and subtitle memories are independent — an intervening
+// subtitle command must not evict the remembered audio index (or vice versa).
+let _lastCommandedTrack: Partial<Record<TrackSheetKind, LastCommandedTrack>> = {};
 
 function rememberedTrackIndex(kind: TrackSheetKind, sessionId: string, itemId: string): number | null {
-    const last = _lastCommandedTrack;
-    if (!last || last.kind !== kind || last.sessionId !== sessionId || last.itemId !== itemId) return null;
+    const last = _lastCommandedTrack[kind];
+    if (!last || last.sessionId !== sessionId || last.itemId !== itemId) return null;
     if (performance.now() - last.at > TRACK_COMMAND_MEMORY_MS) return null;
     return last.index;
 }
@@ -798,7 +799,7 @@ async function cycleTrackViaApi(kind: TrackSheetKind, context: IdentityContext):
         return false;
     }
     if (!JC.identity.isCurrent(context)) return true;
-    _lastCommandedTrack = { kind, sessionId, itemId, index: next, at: performance.now() };
+    _lastCommandedTrack[kind] = { sessionId, itemId, index: next, at: performance.now() };
     const nextStream = next === OFF_STREAM_INDEX ? undefined : streams.find((s) => s.Index === next);
     const name = JC.escapeHtml(trackDisplayName(nextStream));
     toast(kind === 'subtitle'
@@ -806,6 +807,15 @@ async function cycleTrackViaApi(kind: TrackSheetKind, context: IdentityContext):
         : JC.t!('toast_audio', { audio: name }));
     return true;
 }
+
+// Per-kind press serialization: a rapid second press must observe the first
+// press's commanded index (the probe/POST are asynchronous, so unserialized
+// presses would compute the same "next" from stale PlayState). A settled chain
+// costs one microtask; there are no timers and one writer per kind.
+const _trackCycleChains: Record<TrackSheetKind, Promise<void>> = {
+    subtitle: Promise.resolve(),
+    audio: Promise.resolve(),
+};
 
 function cycleTrack(kind: TrackSheetKind): void {
     const context = JC.identity.capture();
@@ -818,16 +828,18 @@ function cycleTrack(kind: TrackSheetKind): void {
         return;
     }
     const expectedGeneration = playbackGeneration;
-    void cycleTrackViaApi(kind, context)
-        .catch((err) => {
+    _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
+        if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
+        let handled = false;
+        try {
+            handled = await cycleTrackViaApi(kind, context);
+        } catch (err) {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
-            return false;
-        })
-        .then((handled) => {
-            if (handled) return;
-            if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
-            startTrackCycle(kind);
-        });
+        }
+        if (handled) return;
+        if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
+        startTrackCycle(kind);
+    });
 }
 
 const cycleSubtitleTrack = (): void => cycleTrack('subtitle');
@@ -1455,7 +1467,9 @@ function resetPlaybackState(): void {
     _autoSkipEngine = null;
     _autoSkipContext = null;
 
-    _lastCommandedTrack = null;
+    _lastCommandedTrack = {};
+    _trackCycleChains.subtitle = Promise.resolve();
+    _trackCycleChains.audio = Promise.resolve();
     destroyPlaybackInfoOverlay();
 
     document.querySelectorAll('[data-jc-frame-overlay="true"], [data-speed-overlay="true"], [data-jc-playback-info="true"]')

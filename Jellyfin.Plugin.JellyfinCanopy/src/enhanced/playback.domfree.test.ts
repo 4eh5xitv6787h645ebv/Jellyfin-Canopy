@@ -123,6 +123,47 @@ describe('DOM-free player shortcuts', () => {
             expect(commands[2].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '2' } });
         });
 
+        it('serializes truly concurrent presses: two unflushed presses advance two tracks', async () => {
+            mountVideo();
+            const commands: Array<Record<string, unknown>> = [];
+            const pendingCommands: Array<(v: unknown) => void> = [];
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([ownSession()]);
+                commands.push({ path, ...options });
+                return new Promise((resolve) => { pendingCommands.push(resolve); });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            // Two presses with NO flush between them — probes and POSTs overlap.
+            JC.cycleSubtitleTrack!();
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            expect(commands).toHaveLength(1); // second press waits for the first command
+            expect(commands[0].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '3' } });
+
+            pendingCommands.shift()!({});
+            await flushPromises();
+            await flushPromises(); // chain hop + probe + POST of the queued press
+            expect(commands).toHaveLength(2);
+            expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
+        });
+
+        it('keeps independent audio and subtitle memories (audio → subtitle → audio)', async () => {
+            mountVideo();
+            const { commands } = installApi([ownSession()]);
+
+            JC.cycleAudioTrack!(); // audio [1,4], PlayState 1 → 4
+            await flushPromises();
+            JC.cycleSubtitleTrack!(); // subtitle [-1,2,3], PlayState 2 → 3
+            await flushPromises();
+            JC.cycleAudioTrack!(); // must continue from remembered 4 → 1, not repeat 4
+            await flushPromises();
+
+            expect(commands.map((c) => (c.body as { Arguments: { Index: string } }).Arguments.Index))
+                .toEqual(['4', '3', '1']);
+            expect((commands[2].body as { Name: string }).Name).toBe('SetAudioStreamIndex');
+        });
+
         it('forgets the remembered index after the memory window (PlayState is authoritative again)', async () => {
             mountVideo();
             const { commands } = installApi([ownSession()]);
@@ -208,6 +249,9 @@ describe('DOM-free player shortcuts', () => {
             document.body.appendChild(trigger);
 
             JC.cycleAudioTrack!();
+            await Promise.resolve(); // let the serialized press start its probe
+            await Promise.resolve();
+            expect(jf).toHaveBeenCalledTimes(1); // probe in flight
             JC.identity.transition('df-server-b', 'df-user-b', 'domfree-test');
             resolveSessions([ownSession()]);
             await flushPromises();
