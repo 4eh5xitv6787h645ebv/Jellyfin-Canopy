@@ -70,7 +70,7 @@ These features make the player itself better — faster to drive from the keyboa
 
 ### Advanced keyboard shortcuts
 
-Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback, and every shortcut is remappable per user.
+Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback. Ordinary shortcuts can be remapped or individually disabled per user; the `0`–`9` percentage-seek group can be enabled or disabled as one policy.
 
 ![Canopy User Settings — Shortcuts tab](images/enhanced-panel-shortcuts.png)
 
@@ -112,8 +112,9 @@ menu is opening, and leaving playback cancels the pending action.
 
 1. Press `?` to open Canopy User Settings.
 2. Go to the **Shortcuts** tab.
-3. Click any key to set a custom binding.
-4. Changes save automatically, per user.
+3. Click any ordinary key to set a custom binding, or use **Disable** beside an action to turn only that action off.
+4. Use **Reset to defaults** to remove your override and reveal the administrator's current value. The percentage-seek row is a fixed `0`–`9` group with Enable/Disable and Reset controls rather than a rebindable single key.
+5. Changes save automatically, per user and follow that Jellyfin account across browsers.
 
 Modifier combinations work in any pressed order and are displayed consistently
 as `Meta+Ctrl+Alt+Shift+Key` (only the modifiers you use are shown). On macOS,
@@ -121,6 +122,10 @@ the Command key is stored as `Meta`; existing `Cmd`, `Command`, and differently
 ordered legacy bindings are normalized automatically without changing what the
 physical shortcut does. The editor rejects another binding with the same
 semantic key combination, even when its stored spelling or order differs.
+Bare number keys are reserved while the percentage-seek group is enabled;
+modified number combinations such as `Ctrl+5` remain available as ordinary
+bindings. Disabling the group also prevents Jellyfin's native player listener
+from seeking behind Canopy's setting.
 
 !!! note "Admin: disabling shortcuts server-wide"
 
@@ -128,6 +133,12 @@ semantic key combination, even when its stored spelling or order differs.
     the **Disable Keyboard Shortcuts** toggle in **Dashboard** → **Plugins** →
     **Jellyfin Canopy** → **Keyboard** tab. When enabled, the shortcuts stop
     working and the **Shortcuts** tab is removed from Canopy User Settings.
+
+    The same Keyboard tab lists every compiled shortcut. **Disable** stores an
+    explicit server-wide disabled value for that action, while **Reset** restores
+    the compiled product default. A user's own override still has the final say:
+    user Reset reveals the administrator value, including an administrator-disabled
+    action, and a deliberate user binding can re-enable an action for that user.
 
 ### Customizable subtitles
 

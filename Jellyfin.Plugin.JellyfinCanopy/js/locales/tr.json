@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Etkin",
   "status_disabled": "Devre Dışı",
+  "shortcut_enable": "Etkinleştir",
+  "shortcut_disable": "Devre dışı bırak",
   "feature_auto_pause": "{{icon:pause}} Otomatik Duraklat",
   "feature_auto_resume": "{{icon:play}} Otomatik Devam Et",
   "feature_auto_pip": "{{icon:pip}} Otomatik PiP",

@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Povoleno",
   "status_disabled": "Zakázáno",
+  "shortcut_enable": "Povolit",
+  "shortcut_disable": "Zakázat",
   "feature_auto_pause": "{{icon:pause}} Automatické pozastavení",
   "feature_auto_resume": "{{icon:play}} Automatické pokračování",
   "feature_auto_pip": "{{icon:pip}} Auto Obraz v obraze",

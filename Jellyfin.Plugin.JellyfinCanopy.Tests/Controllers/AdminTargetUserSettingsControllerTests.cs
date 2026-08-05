@@ -218,7 +218,7 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         var shortcutEntry = new Shortcut
         {
             Name = "Pause",
-            Key = "Space",
+            Key = string.Empty,
             Label = "Pause",
             Category = "Playback"
         };
@@ -239,6 +239,7 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             TargetId,
             "shortcuts.json");
         Assert.Single(storedShortcuts.Shortcuts);
+        Assert.Equal(string.Empty, Assert.Single(storedShortcuts.Shortcuts).Key);
         Assert.True(
             storedShortcuts.ExtensionData["FutureShortcutSetting"]
                 .GetProperty("preserved")
@@ -252,6 +253,7 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
 
         var roundTrip = AssertResponse<UserShortcuts>(
             Controller().GetAdminTargetUserShortcuts(TargetId));
+        Assert.Equal(string.Empty, Assert.Single(roundTrip.Data!.Shortcuts).Key);
         Assert.Equal(
             3,
             Assert.Single(roundTrip.Data!.Shortcuts)

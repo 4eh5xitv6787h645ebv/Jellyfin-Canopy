@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "مفعل",
   "status_disabled": "معطل",
+  "shortcut_enable": "تمكين",
+  "shortcut_disable": "تعطيل",
   "feature_auto_pause": "{{icon:pause}} إيقاف مؤقت تلقائي",
   "feature_auto_resume": "{{icon:play}} استئناف تلقائي",
   "feature_auto_pip": "{{icon:pip}} صورة في صورة (PiP) تلقائي",

@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Engedélyezve",
   "status_disabled": "Letiltva",
+  "shortcut_enable": "Engedélyezés",
+  "shortcut_disable": "Letiltás",
   "feature_auto_pause": "{{icon:pause}} Automatikus szüneteltetés",
   "feature_auto_resume": "{{icon:play}} Automatikus folytatás",
   "feature_auto_pip": "{{icon:pip}} Automatikus kép a képben",

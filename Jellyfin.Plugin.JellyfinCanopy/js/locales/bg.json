@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature}: {status}",
   "status_enabled": "Активирано",
   "status_disabled": "Деактивирано",
+  "shortcut_enable": "Активиране",
+  "shortcut_disable": "Деактивиране",
   "feature_auto_pause": "{{icon:pause}} Автоматична пауза",
   "feature_auto_resume": "{{icon:play}} Автоматично възобновяване",
   "feature_auto_pip": "{{icon:pip}} Автоматична PiP",

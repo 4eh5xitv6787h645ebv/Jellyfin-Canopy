@@ -255,6 +255,12 @@
       "Key": "Z",
       "Label": "Jump to Last Position",
       "Name": "JumpToLastPosition"
+    },
+    {
+      "Category": "Player",
+      "Key": "0-9",
+      "Label": "Jump to Percentage",
+      "Name": "JumpToPercentage"
     }
   ],
   "ShowArrLinksAsText": false,

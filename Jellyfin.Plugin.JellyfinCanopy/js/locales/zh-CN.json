@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "已启用",
   "status_disabled": "已停用",
+  "shortcut_enable": "启用",
+  "shortcut_disable": "禁用",
   "feature_auto_pause": "{{icon:pause}} 自动暂停",
   "feature_auto_resume": "{{icon:play}} 自动继续播放",
   "feature_auto_pip": "{{icon:pip}} 自动画中画",

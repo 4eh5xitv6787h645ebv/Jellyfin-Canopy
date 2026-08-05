@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Включено",
   "status_disabled": "Отключено",
+  "shortcut_enable": "Включить",
+  "shortcut_disable": "Отключить",
   "feature_auto_pause": "{{icon:pause}} Автопауза",
   "feature_auto_resume": "{{icon:play}} Автовозобновление",
   "feature_auto_pip": "{{icon:pip}} Автоматический PiP",
