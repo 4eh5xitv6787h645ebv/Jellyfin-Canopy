@@ -257,6 +257,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Null(dto.Path);
         }
 
+        [Theory]
+        [InlineData(true, false)]  // season present, episode index missing
+        [InlineData(false, true)]  // episode present, season index missing
+        [InlineData(false, false)] // both missing
+        public void BoundaryIdMatch_WithMissingIndexes_KeepsFullStrip_EvenWithAllRevealsOn(
+            bool hasSeason, bool hasEpisode)
+        {
+            var cfg = AdvancedCfg();
+            cfg.SpoilerNextEpisodeStripTitle = false;
+            cfg.SpoilerNextEpisodeStripOverview = false;
+            cfg.SpoilerNextEpisodeStripRatings = false;
+            var filter = NewFilter(cfg, DefaultBoundary());
+            var dto = EpisodeDto(2, 5, BoundaryEpisodeId);
+            dto.ParentIndexNumber = hasSeason ? 2 : null;
+            dto.IndexNumber = hasEpisode ? 5 : null;
+
+            filter.StripItemForTest(dto, GuardedState(), cfg, TestUserId);
+
+            Assert.NotEqual("Someone dies.", dto.Overview);
+            Assert.Null(dto.CommunityRating);
+            Assert.Null(dto.CriticRating);
+        }
+
+        [Fact]
+        public void BoundaryIdMatch_InSeasonZero_KeepsFullStrip()
+        {
+            var filter = NewFilter(AdvancedCfg(), DefaultBoundary());
+            var dto = EpisodeDto(0, 5, BoundaryEpisodeId);
+
+            filter.StripItemForTest(dto, GuardedState(), AdvancedCfg(), TestUserId);
+
+            Assert.Equal("Season 0, Episode 5", dto.Name);
+            Assert.Equal("Spoiler Guard activated", dto.Overview);
+            Assert.Null(dto.CommunityRating);
+        }
+
+        [Fact]
+        public void DifferentEpisodeWithBoundaryCoordinates_GetsSeasonMaskNotNextMask()
+        {
+            var cfg = AdvancedCfg();
+            cfg.SpoilerCurrentSeasonStripRatings = false;
+            var filter = NewFilter(cfg, DefaultBoundary());
+            var dto = EpisodeDto(2, 5); // boundary coordinates, different id
+
+            filter.StripItemForTest(dto, GuardedState(), cfg, TestUserId);
+
+            // CurrentSeason mask: ratings revealed by the relaxed toggle, but
+            // the title stays stripped — never the NextEpisode title reveal.
+            Assert.Equal("Season 2, Episode 5", dto.Name);
+            Assert.Equal(9.8f, dto.CommunityRating);
+        }
+
         [Fact]
         public void WatchedEpisode_StaysUntouched_RegardlessOfCategory()
         {

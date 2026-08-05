@@ -126,9 +126,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         }
 
         /// <summary>
-        /// Pure categorization of an episode DTO against a boundary. Missing
-        /// index numbers, season 0 (specials), or a null boundary all resolve to
-        /// <see cref="SpoilerEpisodeCategory.Other"/> (full strip).
+        /// Pure categorization of an episode DTO against a boundary. Validation
+        /// runs before any identity match: missing index numbers, season 0
+        /// (specials), or a null boundary all resolve to
+        /// <see cref="SpoilerEpisodeCategory.Other"/> (full strip) even when the
+        /// DTO id equals the boundary episode — a DTO that cannot prove it is a
+        /// well-formed regular episode never earns a reveal. NextEpisode is
+        /// granted only by the authoritative episode id; a different episode
+        /// that merely shares the boundary's season/episode numbers (duplicate
+        /// numbering, alternate versions) gets at most the CurrentSeason mask.
         /// </summary>
         public static SpoilerEpisodeCategory Categorize(
             NextUnwatchedBoundary? boundary,
@@ -137,13 +143,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             int? indexNumber)
         {
             if (boundary is not { } b) return SpoilerEpisodeCategory.Other;
-            if (episodeId != Guid.Empty && episodeId == b.EpisodeId) return SpoilerEpisodeCategory.NextEpisode;
             if (parentIndexNumber is not int season || season <= 0) return SpoilerEpisodeCategory.Other;
-            if (indexNumber is not int episode) return SpoilerEpisodeCategory.Other;
-            if (season != b.SeasonNumber) return SpoilerEpisodeCategory.Other;
-            return episode == b.EpisodeNumber
-                ? SpoilerEpisodeCategory.NextEpisode
-                : SpoilerEpisodeCategory.CurrentSeason;
+            if (indexNumber is not int) return SpoilerEpisodeCategory.Other;
+            if (episodeId != Guid.Empty && episodeId == b.EpisodeId) return SpoilerEpisodeCategory.NextEpisode;
+            return season == b.SeasonNumber
+                ? SpoilerEpisodeCategory.CurrentSeason
+                : SpoilerEpisodeCategory.Other;
         }
 
         private NextUnwatchedBoundary? ComputeBoundary(Guid userId, Guid seriesId)

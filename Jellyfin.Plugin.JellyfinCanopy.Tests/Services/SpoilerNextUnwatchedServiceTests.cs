@@ -40,19 +40,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public void Categorize_MatchingEpisodeId_IsNextEpisode_EvenWithoutIndexNumbers()
+        public void Categorize_MatchingEpisodeId_WithValidIndexes_IsNextEpisode()
         {
             var id = Guid.NewGuid();
             Assert.Equal(
                 SpoilerEpisodeCategory.NextEpisode,
-                SpoilerNextUnwatchedService.Categorize(Boundary(id), id, null, null));
+                SpoilerNextUnwatchedService.Categorize(Boundary(id, season: 2, episode: 5), id, 2, 5));
+        }
+
+        [Theory]
+        [InlineData(null, null)] // both indexes missing
+        [InlineData(null, 5)]    // season missing
+        [InlineData(2, null)]    // episode missing
+        [InlineData(0, 5)]       // season 0 (stale boundary after a metadata move)
+        public void Categorize_MatchingEpisodeId_WithoutValidIndexes_FailsClosedToOther(int? season, int? episode)
+        {
+            // A DTO that cannot prove it is a well-formed regular episode never
+            // earns a reveal, even when its id equals the cached boundary.
+            var id = Guid.NewGuid();
+            Assert.Equal(
+                SpoilerEpisodeCategory.Other,
+                SpoilerNextUnwatchedService.Categorize(Boundary(id), id, season, episode));
         }
 
         [Fact]
-        public void Categorize_MatchingSeasonAndEpisodeNumbers_IsNextEpisode()
+        public void Categorize_DifferentIdWithBoundaryCoordinates_IsOnlyCurrentSeason()
         {
+            // Duplicate season/episode numbering (alternate versions) must not
+            // inherit the NextEpisode mask — identity comes from the id alone.
             Assert.Equal(
-                SpoilerEpisodeCategory.NextEpisode,
+                SpoilerEpisodeCategory.CurrentSeason,
                 SpoilerNextUnwatchedService.Categorize(Boundary(season: 2, episode: 5), Guid.NewGuid(), 2, 5));
         }
 
