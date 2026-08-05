@@ -50,6 +50,121 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public async Task WarningOnlyAction_RoundTripsAcrossRestart_WithoutPolicyMutation()
+        {
+            var user = NewUser("warning-only");
+            var users = new StateMachineUserManager(user);
+            using (var service = CreateService(users))
+            {
+                await service.EnableAsync("maintenance", 0, MaintenanceActions.None, null);
+
+                var active = service.GetStatus();
+                Assert.Equal(MaintenancePhases.Active, active.Phase);
+                Assert.Equal(MaintenanceActions.None, active.Action);
+                Assert.Empty(active.AccountDisabledUserIds);
+                Assert.Empty(active.RemoteDisabledUserIds);
+            }
+
+            Assert.Equal(0, users.PolicyUpdateCalls);
+            Assert.False(users.Policy(user.Id).IsDisabled);
+            Assert.True(users.Policy(user.Id).EnableRemoteAccess);
+            Assert.Equal(MaintenanceActions.None, ReadState(_stateFilePath).Action);
+
+            using var restarted = CreateService(users);
+            Assert.Equal(MaintenanceActions.None, restarted.GetStatus().Action);
+            await restarted.DisableAsync();
+
+            Assert.Equal(0, users.PolicyUpdateCalls);
+            Assert.Equal(MaintenancePhases.Inactive, restarted.GetStatus().Phase);
+        }
+
+        [Fact]
+        public async Task UnknownAction_IsRejectedBeforeStateOrPolicyMutation()
+        {
+            var user = NewUser("unknown-action");
+            var users = new StateMachineUserManager(user);
+            using var service = CreateService(users);
+
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                service.EnableAsync("maintenance", 0, "unexpected", null));
+
+            Assert.Equal(0, users.PolicyUpdateCalls);
+            Assert.Equal(MaintenancePhases.Inactive, service.GetStatus().Phase);
+            Assert.False(File.Exists(_stateFilePath));
+        }
+
+        [Fact]
+        public async Task ActiveWarningOnly_RejectsActionChangeWithoutPolicyMutation()
+        {
+            var user = NewUser("active-action-change");
+            var users = new StateMachineUserManager(user);
+            using var service = CreateService(users);
+            await service.EnableAsync("maintenance", 0, MaintenanceActions.None, null);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.EnableAsync("replacement", 0, MaintenanceActions.Both, null));
+
+            Assert.Contains("Disable it before changing", error.Message, StringComparison.Ordinal);
+            Assert.Equal(MaintenanceActions.None, service.GetStatus().Action);
+            Assert.Equal("maintenance", service.GetStatus().Message);
+            Assert.Equal(0, users.PolicyUpdateCalls);
+        }
+
+        [Fact]
+        public async Task LegacyStateWithoutAction_DefaultsToDisableAccountsAndRemainsRecoverable()
+        {
+            var user = NewUser("legacy-action");
+            var users = new StateMachineUserManager(user);
+            users.Policy(user.Id).IsDisabled = true;
+            Directory.CreateDirectory(Path.GetDirectoryName(_stateFilePath)!);
+            var legacyJson = JsonSerializer.Serialize(new
+            {
+                IsActive = true,
+                Message = "legacy maintenance",
+                StartedAt = DateTime.UtcNow,
+                EndsAt = (DateTime?)null,
+                AccountDisabledUserIds = new[] { user.Id.ToString() },
+                RemoteDisabledUserIds = Array.Empty<string>()
+            });
+            AtomicFile.WriteAllText(_stateFilePath, legacyJson);
+            AtomicFile.WriteAllText(_recoveryFilePath, legacyJson);
+
+            using var service = CreateService(users);
+            Assert.Equal(MaintenanceActions.DisableAccounts, service.GetStatus().Action);
+            Assert.Equal(MaintenancePhases.Active, service.GetStatus().Phase);
+
+            await service.DisableAsync();
+
+            Assert.False(users.Policy(user.Id).IsDisabled);
+            Assert.Equal(MaintenancePhases.Inactive, service.GetStatus().Phase);
+        }
+
+        [Fact]
+        public async Task WarningOnlyStateWithRecoveryRecords_FaultsWithoutPolicyMutation()
+        {
+            var user = NewUser("invalid-warning-ledger");
+            var users = new StateMachineUserManager(user);
+            users.Policy(user.Id).IsDisabled = true;
+            SeedState(new MaintenanceState
+            {
+                Phase = MaintenancePhases.Active,
+                IsActive = true,
+                Message = "invalid warning-only state",
+                Action = MaintenanceActions.None,
+                StartedAt = DateTime.UtcNow,
+                AccountDisabledUserIds = new List<string> { user.Id.ToString() },
+                RecoveryAvailable = true
+            });
+
+            using var service = CreateService(users);
+            Assert.Equal(MaintenancePhases.Faulted, service.GetStatus().Phase);
+            Assert.False(service.GetStatus().RecoveryAvailable);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.DisableAsync());
+            Assert.True(users.Policy(user.Id).IsDisabled);
+            Assert.Equal(0, users.PolicyUpdateCalls);
+        }
+
+        [Fact]
         public async Task CorruptPrimary_ReportsFaulted_AndRestoresFromRecoveryLedger()
         {
             var user = NewUser("recoverable");
@@ -368,6 +483,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             public bool BlockRestores { get; set; }
             public int RestoreCalls { get; private set; }
+            public int PolicyUpdateCalls { get; private set; }
             public HashSet<Guid> FailRestoreFor { get; } = new();
             public HashSet<Guid> ReturnNullFromLookupFor { get; } = new();
             public HashSet<Guid> ReturnNullPolicyFor { get; } = new();
@@ -398,6 +514,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
             public async Task UpdatePolicyAsync(Guid userId, UserPolicy policy)
             {
+                PolicyUpdateCalls++;
                 bool restoring = !policy.IsDisabled && _policies[userId].IsDisabled;
                 if (restoring)
                 {

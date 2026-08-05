@@ -228,14 +228,14 @@ The remaining controls are administrator-only and act on the whole server at onc
 
 *Admin tab → Maintenance Mode*
 
-Maintenance Mode temporarily locks users out while you work on the server, and shows them a banner explaining why. When you enable it, the selected action is applied to the affected users immediately on save, and a banner appears on the Jellyfin login page. Administrators are **never** affected. Disabling Maintenance Mode restores all affected users automatically.
+Maintenance Mode shows users a banner while you work on the server and can optionally restrict access. When you enable it, the selected actions are applied to affected users immediately on save, and a banner appears on the Jellyfin login page. Administrators are **never** affected. Clearing both actions creates warning-only maintenance: the banner and notification remain available, but no account or remote-access policy changes. Disable active maintenance before changing its action. Disabling Maintenance Mode restores any affected users automatically.
 
 | Setting | Default | What it does |
 |---|---|---|
 | **Enable Maintenance Mode** | Off | Turns Maintenance Mode on. The selected action is applied to affected users as soon as you save. |
 | **Login Page Banner Message** | `This server is currently undergoing maintenance. Please try again.` | Plain-text message shown as a red banner at the top of every page (login and home). |
 | **Active Session Notification** | `Server undergoing maintenance.` | Sent as a native Jellyfin popup to anyone currently watching, reaching all clients (web, mobile, TV apps). |
-| **Action** | Disable user accounts | What happens to affected users. *Disable user accounts* prevents them from logging in at all; *Disable remote connections* blocks connections from outside the local network while LAN access still works. |
+| **Action** | Disable user accounts | What happens to affected users. *Disable user accounts* prevents them from logging in at all; *Disable remote connections* blocks connections from outside the local network while LAN access still works. Clear both actions for warning-only maintenance with no user-policy changes. |
 | **Affected Users** | All non-admin users | Scopes the lockout. Choose *All non-admin users*, or *Select specific users* to pick individual accounts. An empty targeted-user list is treated as all users. |
 
 ### Smart Client Refresh

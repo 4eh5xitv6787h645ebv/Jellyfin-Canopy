@@ -103,6 +103,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     request.AffectedUserIds).ConfigureAwait(false);
                 return Ok(new { success = true });
             }
+            catch (ArgumentException ex)
+            {
+                return MaintenanceFailure(StatusCodes.Status400BadRequest, ex.Message);
+            }
             catch (InvalidOperationException ex)
             {
                 return MaintenanceFailure(StatusCodes.Status409Conflict, ex.Message);
@@ -222,7 +226,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         public string? Message { get; set; }
         public int DurationMinutes { get; set; }
-        /// <summary>"disable_accounts" | "disable_remote" | "both"</summary>
+        /// <summary>"none" | "disable_accounts" | "disable_remote" | "both"</summary>
         public string Action { get; set; } = "disable_accounts";
         /// <summary>Specific user IDs to affect. Null or empty = all non-admin users.</summary>
         public List<string>? AffectedUserIds { get; set; }

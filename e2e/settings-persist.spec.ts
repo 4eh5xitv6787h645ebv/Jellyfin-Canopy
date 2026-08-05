@@ -10,6 +10,7 @@ import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const CONFIG_HASH = '#/configurationpage?name=Jellyfin%20Canopy';
+const PLUGIN_ID = '9ffa12bc-f4b5-406c-ab1d-d575acbeea7b';
 
 /** Wait for the plugin to re-boot after a reload with settings loaded. */
 async function waitReady(page: any): Promise<void> {
@@ -322,5 +323,161 @@ test.describe('per-user settings persistence', () => {
         expect(serverErrors, 'no 5xx responses on the admin config page').toEqual([]);
         expect(pluginErrors, 'no plugin console errors on the admin config page').toEqual([]);
         expect(plugin4xx, 'no plugin 4xx responses on the admin config page').toEqual([]);
+    });
+
+    test('clearing both maintenance actions persists and reloads warning-only mode', async ({ page, consoleErrors }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        const original = await page.evaluate(
+            async (pluginId) => (window as any).ApiClient.getPluginConfiguration(pluginId),
+            PLUGIN_ID
+        );
+        expect(original, 'plugin configuration must be readable').toBeTruthy();
+        const originalStatus = await page.evaluate(
+            async () => (window as any).ApiClient.ajax({
+                type: 'GET',
+                url: (window as any).ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Status'),
+                dataType: 'json',
+            })
+        );
+        expect(
+            original.MaintenanceModeEnabled,
+            'the disposable fixture must begin outside maintenance mode'
+        ).toBe(false);
+        expect(originalStatus.IsActive, 'the durable maintenance state must begin inactive').toBe(false);
+
+        try {
+            await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
+            await page.waitForSelector('#JellyfinCanopyPage #JellyfinCanopyForm', {
+                state: 'attached',
+                timeout: 60_000,
+            });
+            await page.waitForSelector('.jc-group-btn[data-group="governance"]', { timeout: 60_000 });
+            await page.click('.jc-group-btn[data-group="governance"]');
+            await page.waitForSelector('#mmAction_accounts', { state: 'visible', timeout: 60_000 });
+
+            await page.evaluate(() => {
+                const selections: Array<[string, boolean]> = [
+                    ['maintenanceModeEnabled', true],
+                    ['mmAction_accounts', false],
+                    ['mmAction_remote', false],
+                ];
+                for (const [id, checked] of selections) {
+                    const input = document.getElementById(id) as HTMLInputElement | null;
+                    if (!input) throw new Error(`missing maintenance input #${id}`);
+                    input.checked = checked;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+            await expect(page.locator('#maintenanceModeEnabled')).toBeChecked();
+            await expect(page.locator('#mmAction_accounts')).not.toBeChecked();
+            await expect(page.locator('#mmAction_remote')).not.toBeChecked();
+            await page.locator('#JellyfinCanopyForm').evaluate((form: HTMLFormElement) => form.requestSubmit());
+
+            const saveButton = page.locator('.jc-save-dock-btn').first();
+            await expect(saveButton).toBeDisabled({ timeout: 10_000 });
+            await expect(saveButton).toBeEnabled({ timeout: 30_000 });
+
+            await expect.poll(
+                () => page.evaluate(
+                    async (pluginId) => {
+                        const config = await (window as any).ApiClient.getPluginConfiguration(pluginId);
+                        return config.MaintenanceModeAction;
+                    },
+                    PLUGIN_ID
+                ),
+                { timeout: 30_000, message: 'both unchecked must persist as explicit none' }
+            ).toBe('none');
+            await expect.poll(
+                () => page.evaluate(
+                    async () => (window as any).ApiClient.ajax({
+                        type: 'GET',
+                        url: (window as any).ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Status'),
+                        dataType: 'json',
+                    })
+                ),
+                { timeout: 30_000, message: 'warning-only must become durable active state' }
+            ).toMatchObject({
+                Phase: 'Active',
+                IsActive: true,
+                Action: 'none',
+                AccountDisabledCount: 0,
+                RemoteDisabledCount: 0,
+            });
+
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.evaluate((hash) => { window.location.hash = hash; }, CONFIG_HASH);
+            await page.waitForSelector('#JellyfinCanopyPage #JellyfinCanopyForm', {
+                state: 'attached',
+                timeout: 60_000,
+            });
+            await page.click('.jc-group-btn[data-group="governance"]');
+            await page.waitForSelector('#mmAction_accounts', { state: 'visible', timeout: 60_000 });
+
+            await expect(page.locator('#mmAction_accounts')).not.toBeChecked();
+            await expect(page.locator('#mmAction_remote')).not.toBeChecked();
+            await expect(page.locator('#maintenanceModeEnabled')).toBeChecked();
+        } finally {
+            const cleanupErrors: unknown[] = [];
+            try {
+                await page.evaluate(
+                    async () => (window as any).ApiClient.ajax({
+                        type: 'POST',
+                        url: (window as any).ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Disable'),
+                    })
+                );
+            } catch (error) {
+                cleanupErrors.push(error);
+            }
+            try {
+                await page.evaluate(
+                    async ({ pluginId, config }) =>
+                        (window as any).ApiClient.updatePluginConfiguration(pluginId, config),
+                    { pluginId: PLUGIN_ID, config: original }
+                );
+            } catch (error) {
+                cleanupErrors.push(error);
+            }
+            try {
+                await expect.poll(
+                    () => page.evaluate(
+                        async () => (window as any).ApiClient.ajax({
+                            type: 'GET',
+                            url: (window as any).ApiClient.getUrl('/JellyfinCanopy/MaintenanceMode/Status'),
+                            dataType: 'json',
+                        })
+                    ),
+                    { timeout: 30_000, message: 'maintenance cleanup must restore inactive state' }
+                ).toMatchObject({ Phase: 'Inactive', IsActive: false });
+            } catch (error) {
+                cleanupErrors.push(error);
+            }
+            try {
+                await expect.poll(
+                    () => page.evaluate(
+                        async (pluginId) => (window as any).ApiClient.getPluginConfiguration(pluginId),
+                        PLUGIN_ID
+                    ),
+                    { timeout: 30_000, message: 'maintenance cleanup must restore the exact plugin configuration' }
+                ).toEqual(original);
+            } catch (error) {
+                cleanupErrors.push(error);
+            }
+            if (cleanupErrors.length > 0) {
+                throw new Error(`maintenance cleanup failed (${cleanupErrors.length} error(s)): ${cleanupErrors.map(String).join(' | ')}`);
+            }
+        }
+
+        const DASHBOARD_CHROME =
+            /\/Users\/[^/]+\/Images\/Primary|\/JellyfinCanopy\/BrandingImage/i;
+        expect(consoleErrors.unexpected5xx(), 'no 5xx responses during round-trip').toEqual([]);
+        expect(
+            consoleErrors.real().filter((text) => !DASHBOARD_CHROME.test(text)),
+            'no plugin console errors during round-trip'
+        ).toEqual([]);
+        expect(
+            consoleErrors.unexpected4xx().filter((response) => !DASHBOARD_CHROME.test(response.url)),
+            'no plugin 4xx responses during round-trip'
+        ).toEqual([]);
     });
 });
