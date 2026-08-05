@@ -165,7 +165,11 @@ function bUserFilePayload(
     const accountSwitchOwnerSentinel = bPayloadSentinel(segment, file);
     switch (file) {
         case 'shortcuts.json':
-            return { Revision: 0, Shortcuts: [], accountSwitchOwnerSentinel };
+            return {
+                Revision: 0,
+                Shortcuts: [{ Name: 'OpenSearch', Key: '' }],
+                accountSwitchOwnerSentinel,
+            };
         case 'bookmark.json':
             return { Revision: 0, Bookmarks: {}, accountSwitchOwnerSentinel };
         case 'settings.json':
@@ -689,6 +693,7 @@ async function assertOwnerState(
                 || JC.userConfig?.settings?.accountSwitchRaceSentinel === 'from-held-a-fetch',
             staleCache: JC.core.api.manager.getCached('jc-e2e-account-switch-a-only'),
             oldPanelConnected: !!(window as any).__jcASettingsPanel?.isConnected,
+            openSearchBinding: JC.state?.activeShortcuts?.OpenSearch,
         };
     }, expectedUserId);
 
@@ -716,6 +721,10 @@ async function assertOwnerState(
     expect(state.staleFetchPublished, 'late A fetch data cannot publish into B').toBe(false);
     expect(state.staleCache, 'identity reset clears the A-only core cache entry').toBeUndefined();
     expect(state.oldPanelConnected, 'the prior-user settings panel is detached').toBe(false);
+    expect(
+        state.openSearchBinding,
+        `${expectedSegment}: B's intentional empty shortcut replaces every A binding`
+    ).toBe('');
 }
 
 function expectFiveFilesOnce(

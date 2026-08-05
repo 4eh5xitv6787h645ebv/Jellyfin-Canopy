@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Hoisted",
   "status_disabled": "Furled",
+  "shortcut_enable": "Hoist",
+  "shortcut_disable": "Furl",
   "feature_auto_pause": "{{icon:pause}} Auto Drop Anchor",
   "feature_auto_resume": "{{icon:play}} Auto Weigh Anchor",
   "feature_auto_pip": "{{icon:pip}} Auto Spyglass",

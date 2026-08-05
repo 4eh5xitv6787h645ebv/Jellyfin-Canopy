@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43935,
-        "totalLines": 53701
+        "coveredLines": 43981,
+        "totalLines": 53733
       },
       "observations": {
-        "cleanRuns": 2,
-        "minimumCoveredLines": 43927,
-        "maximumCoveredLines": 43935
+        "cleanRuns": 5,
+        "minimumCoveredLines": 43966,
+        "maximumCoveredLines": 43981
       },
       "tolerance": {
-        "missingCoveredLines": 13,
-        "rationale": "The issue-682 fix preserves direct critic percentages through every live and full-cache rating-inheritance path and bumps the cache schema to v5. After merging main at b0626553 (post #689/#692/#696), the instrumented scope is 53,701 lines: the #696 Calendar requester scope of 53,696 plus this branch's five critic-rating lines. Two post-merge full-suite runs on this exact source, tests and scope measured 43,927 and 43,929 covered plugin lines; the only local test failures were wall-clock budget asserts that execute their full plugin path before asserting elapsed time, so they do not reduce plugin-assembly coverage. The high-water is pinned to 43,935 to absorb the +4-to-+6 hosted-CI offset repeatedly observed on the two previous envelopes (local 43,905-43,914 vs CI 43,918; local 43,475-43,484 vs CI 43,485), with the floor held at 43,922 below both local observations. The spread is 0.024 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 15,
+        "rationale": "Issue #685 adds explicit disabled-shortcut normalization and server regressions, finally rebased onto merged issues #663 and #682 at main 05b8eddb. Five clean full-suite runs on this exact 53,733-line source and 4,185-test scope passed every test: two owner-side local runs measured 43,972 and 43,966, two coordinator local runs measured 43,974 and 43,976, and the hosted PR run measured the observed high-water 43,981. The reviewed observed high-water is therefore 43,981/53,733 (81.851%) and the exact observed floor is 43,966/53,733 (81.823%); the fifteen-line timing-dependent instrumentation spread is 0.028 percentage points, far inside the 0.15pp policy bound. This clean new-scope envelope also supersedes main's issue-682 metadata record, whose 43,935 high-water was predicted rather than observed; the hosted issue-682 run actually measured 43,928/53,701. One intervening coordinator full-coverage attempt failed two unnamed tests and is not counted as clean evidence; the repository wrapper emitted no TRX for that failed attempt. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

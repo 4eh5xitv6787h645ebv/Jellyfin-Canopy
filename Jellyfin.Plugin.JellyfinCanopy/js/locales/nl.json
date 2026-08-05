@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Ingeschakeld",
   "status_disabled": "Uitgeschakeld",
+  "shortcut_enable": "Inschakelen",
+  "shortcut_disable": "Uitschakelen",
   "feature_auto_pause": "{{icon:pause}} Automatisch pauzeren",
   "feature_auto_resume": "{{icon:play}} Automatisch hervatten",
   "feature_auto_pip": "{{icon:pip}} Automatisch PiP",

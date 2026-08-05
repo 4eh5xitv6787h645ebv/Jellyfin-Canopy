@@ -11,7 +11,15 @@ import { toast } from '../core/ui-kit';
 import { stampLayoutClass } from '../core/layout';
 import { migrateLegacyClientStorage } from './legacy-storage-migration';
 import type { IdentityContext } from '../types/jc';
-import { canonicalizeShortcut, shortcutFromEvent, shortcutsEqual } from './shortcut-codec';
+import {
+    canonicalizeShortcut,
+    hasShortcutModifiers,
+    isPercentageShortcutBinding,
+    physicalDigitFromEvent,
+    PERCENTAGE_SHORTCUT_NAME,
+    shortcutFromEvent,
+    shortcutsEqual,
+} from './shortcut-codec';
 
 interface EventOwner {
     isCurrent(): boolean;
@@ -25,6 +33,18 @@ function callOptional(name: string, ...args: unknown[]): unknown {
 
 function isVideoPage(): boolean {
     return callOptional('isVideoPage') === true;
+}
+
+/** True when a keyboard event belongs to a form or contenteditable owner. */
+function isEditableShortcutTarget(event: KeyboardEvent): boolean {
+    const candidates = [event.target, document.activeElement];
+    return candidates.some(candidate => {
+        if (!(candidate instanceof Element)) return false;
+        const editable = candidate.closest('input, textarea, select, [contenteditable]');
+        if (!editable) return false;
+        return editable.matches('input, textarea, select')
+            || editable.getAttribute('contenteditable') !== 'false';
+    });
 }
 
 /**
@@ -44,7 +64,9 @@ function panelKeyListener(e: KeyboardEvent, owner: EventOwner): void {
 
     if (e.key === '?') {
         e.preventDefault();
-        e.stopPropagation();
+        // This always-active owner is registered before the ordinary bubble
+        // listener. Keep a user-bound `?` from also dispatching underneath it.
+        e.stopImmediatePropagation();
         callOptional('showEnhancedPanel');
     }
 }
@@ -53,7 +75,9 @@ function panelKeyListener(e: KeyboardEvent, owner: EventOwner): void {
  * The main key listener for all other shortcuts.
  * @param e The keyboard event.
  */
-function keyListener(e: KeyboardEvent, owner: EventOwner): void {
+function keyListener(e: KeyboardEvent, owner: EventOwner, videoPage = isVideoPage()): void {
+    const physicalDigit = physicalDigitFromEvent(e);
+
     const context = JC.identity.capture();
     if (!owner.isCurrent() || !context
         || JC.pluginConfig?.DisableAllShortcuts
@@ -61,7 +85,7 @@ function keyListener(e: KeyboardEvent, owner: EventOwner): void {
     // INT-1: suppress every global shortcut while any JC modal is open so a
     // configured key can't fire through the dialog and navigate the SPA away.
     if (isAnyModalOpen() || document.body.classList.contains('jc-modal-open')) return;
-    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '')) return;
+    if (isEditableShortcutTarget(e)) return;
 
     const combo = shortcutFromEvent(e);
     if (!combo) return;
@@ -96,8 +120,12 @@ function keyListener(e: KeyboardEvent, owner: EventOwner): void {
         document.getElementById('randomItemButton')?.click();
     }
 
+    // Legacy collisions are deterministic: the first exact named action owns
+    // the event, and the grouped percentage policy never runs after it.
+    if (e.defaultPrevented) return;
+
     // --- Player-Only Shortcuts ---
-    if (!isVideoPage() || !video) return;
+    if (!videoPage || !video) return;
 
     switch (combo) {
         case canonicalizeShortcut(activeShortcuts.BookmarkCurrentTime):
@@ -224,9 +252,32 @@ function keyListener(e: KeyboardEvent, owner: EventOwner): void {
             break;
     }
 
-    if (e.key.match(/^[0-9]$/)) {
-        callOptional('jumpToPercentage', parseInt(e.key) * 10);
+    if (!e.defaultPrevented
+        && physicalDigit !== null
+        && !hasShortcutModifiers(e)
+        && isPercentageShortcutBinding(activeShortcuts[PERCENTAGE_SHORTCUT_NAME])) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        callOptional('jumpToPercentage', physicalDigit * 10);
     }
+}
+
+/**
+ * Jellyfin 12 owns bare physical digits in a document-bubble listener and
+ * ignores defaultPrevented (including shifted Digit/Numpad keys). Capture only
+ * that native surface; modified digits remain ordinary shortcuts/events.
+ */
+function nativeDigitCaptureListener(e: KeyboardEvent, owner: EventOwner): void {
+    if (physicalDigitFromEvent(e) === null
+        || e.ctrlKey
+        || e.altKey
+        || e.metaKey
+        || !isVideoPage()) {
+        return;
+    }
+
+    e.stopImmediatePropagation();
+    keyListener(e, owner, true);
 }
 
 /**
@@ -377,6 +428,7 @@ class EnhancedEventsActivation implements EventOwner {
         this.addContextMenuListener();
 
         this.listen(document, 'keydown', (event) => panelKeyListener(event as KeyboardEvent, this));
+        this.listen(document, 'keydown', (event) => nativeDigitCaptureListener(event as KeyboardEvent, this), true);
         this.listen(document, 'keydown', stableEvents.facade.keyListener as EventListener);
 
         const videoPageCheck = (handlerName: string) => (e: Event): void => {

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     canonicalizeShortcut,
     formatShortcut,
+    hasShortcutModifiers,
+    isPercentageShortcutBinding,
     normalizeShortcutEntries,
+    physicalDigitFromEvent,
+    shortcutBindingsConflict,
     shortcutFromEvent,
     shortcutsEqual,
 } from './shortcut-codec';
@@ -114,5 +118,24 @@ describe('canonical shortcut codec', () => {
         expect(shortcutsEqual('Ctrl+Shift+K', 'shift+ctrl+k')).toBe(true);
         expect(shortcutsEqual('Ctrl+K', 'Ctrl+Shift+K')).toBe(false);
         expect(shortcutsEqual('', '')).toBe(false);
+    });
+
+    it('owns bare digits as one static percentage group without reserving modified digits', () => {
+        expect(isPercentageShortcutBinding('0-9')).toBe(true);
+        expect(formatShortcut('0-9')).toBe('0–9');
+        expect(shortcutBindingsConflict('0-9', '5')).toBe(true);
+        expect(shortcutBindingsConflict('5', '0-9')).toBe(true);
+        expect(shortcutBindingsConflict('0-9', 'Ctrl+5')).toBe(false);
+        expect(shortcutBindingsConflict('', '0-9')).toBe(false);
+        expect(shortcutBindingsConflict('Alt+5', 'Ctrl+5')).toBe(false);
+    });
+
+    it('derives top-row and numpad digits from code while keeping modifiers explicit', () => {
+        expect(physicalDigitFromEvent({ key: '%', code: 'Digit5' })).toBe(5);
+        expect(physicalDigitFromEvent({ key: '5', code: 'Numpad5' })).toBe(5);
+        expect(physicalDigitFromEvent({ key: '7' })).toBe(7);
+        expect(physicalDigitFromEvent({ key: '&', code: 'KeyA' })).toBeNull();
+        expect(hasShortcutModifiers({ metaKey: false, ctrlKey: false, altKey: false, shiftKey: false })).toBe(false);
+        expect(hasShortcutModifiers({ metaKey: false, ctrlKey: true, altKey: false, shiftKey: false })).toBe(true);
     });
 });

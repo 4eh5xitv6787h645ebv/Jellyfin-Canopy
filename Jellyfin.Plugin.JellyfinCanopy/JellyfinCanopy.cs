@@ -379,40 +379,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 config.Shortcuts ??= new List<Shortcut>();
                 originalShortcuts = config.Shortcuts;
 
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                var dedupedReversed = new List<Shortcut>(originalShortcuts.Count);
-                var emptyKeyNames = new HashSet<string>(StringComparer.Ordinal);
-                for (int i = originalShortcuts.Count - 1; i >= 0; i--)
-                {
-                    var s = originalShortcuts[i];
-                    var name = s?.Name ?? string.Empty;
-                    if (string.IsNullOrEmpty(name)) continue;
-                    if (string.IsNullOrEmpty(s?.Key))
-                    {
-                        emptyKeyNames.Add(name);
-                        continue;
-                    }
-                    if (seen.Add(name)) dedupedReversed.Add(s!);
-                }
-                var deduped = new List<Shortcut>(dedupedReversed.Count);
-                for (int i = dedupedReversed.Count - 1; i >= 0; i--) deduped.Add(dedupedReversed[i]);
-                var malformed = emptyKeyNames.Where(n => !seen.Contains(n)).ToList();
-                int duplicatesDropped = originalShortcuts.Count - deduped.Count - malformed.Count;
-
                 var defaults = new PluginConfiguration().Shortcuts ?? new List<Shortcut>();
-                var missing = defaults.Where(d => !seen.Contains(d.Name ?? string.Empty)).ToList();
-                deduped.AddRange(missing);
+                var result = ShortcutConfigurationNormalizer.Normalize(originalShortcuts, defaults);
+                if (!result.Changed) return;
 
-                if (duplicatesDropped == 0 && missing.Count == 0 && malformed.Count == 0) return;
-
-                config.Shortcuts = deduped;
+                config.Shortcuts = result.Shortcuts;
                 SaveConfiguration();
                 _logger.LogInformation(
-                    $"Normalized shortcut list: dropped {duplicatesDropped} duplicate(s), " +
-                    $"{malformed.Count} malformed entry/entries" +
-                    (malformed.Count > 0 ? $" [{string.Join(", ", malformed)}]" : "") +
-                    $", added {missing.Count} missing default(s)" +
-                    (missing.Count > 0 ? $" [{string.Join(", ", missing.Select(s => s.Name))}]" : ""));
+                    $"Normalized shortcut list: dropped {result.DuplicatesDropped} duplicate(s), " +
+                    $"{result.MalformedDropped} malformed entry/entries, " +
+                    $"normalized {result.NullKeysNormalized} null key(s), " +
+                    $"added {result.MissingDefaults.Count} missing default(s)" +
+                    (result.MissingDefaults.Count > 0
+                        ? $" [{string.Join(", ", result.MissingDefaults.Select(s => s.Name))}]"
+                        : string.Empty));
             }
             catch (IOException ex)
             {

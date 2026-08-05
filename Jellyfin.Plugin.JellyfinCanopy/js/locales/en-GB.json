@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Enabled",
   "status_disabled": "Disabled",
+  "shortcut_enable": "Enable",
+  "shortcut_disable": "Disable",
   "feature_auto_pause": "{{icon:pause}} Auto-Pause",
   "feature_auto_resume": "{{icon:play}} Auto-Resume",
   "feature_auto_pip": "{{icon:pip}} Auto PiP",

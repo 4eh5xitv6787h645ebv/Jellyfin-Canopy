@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Aktivert",
   "status_disabled": "Deaktivert",
+  "shortcut_enable": "Aktiver",
+  "shortcut_disable": "Deaktiver",
   "feature_auto_pause": "{{icon:pause}} Automatisk pause",
   "feature_auto_resume": "{{icon:play}} Automatisk gjenoppta",
   "feature_auto_pip": "{{icon:pip}} Automatisk 'Bilde i bilde' (PiP)",

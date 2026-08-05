@@ -452,11 +452,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var shortcuts = Controller(2).SaveUserSettingsShortcuts(UserId, new UserShortcuts
             {
                 Revision = 2,
-                Shortcuts = new List<Shortcut> { new Shortcut { Name = "Open", Key = "O" } }
+                Shortcuts = new List<Shortcut> { new Shortcut { Name = "Open", Key = string.Empty } }
             });
             var shortcutsAck = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserShortcuts>>(
                 Assert.IsType<OkObjectResult>(shortcuts).Value);
             Assert.Equal(3, shortcutsAck.Revision);
+            Assert.Equal(string.Empty, Assert.Single(shortcutsAck.Data!.Shortcuts).Key);
+            Assert.Equal(
+                string.Empty,
+                Assert.Single(_manager.GetUserConfigurationStrict<UserShortcuts>(UserId, "shortcuts.json").Shortcuts).Key);
 
             var elsewhere = Controller(4).SaveUserSettingsElsewhere(UserId, new ElsewhereSettings
             {

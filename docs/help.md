@@ -20,7 +20,7 @@ It does **not** work on Android TV or other native TV apps, because those client
 
 #### Can I customize the keyboard shortcuts?
 
-Yes. Open Canopy User Settings — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click any key to set a custom shortcut. Changes save automatically. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
+Yes. Open Canopy User Settings — click its item in the sidebar or press `?` — then go to the **Shortcuts** tab. Click an ordinary key to rebind it, use **Disable** to turn off one action, or use **Reset to defaults** to reveal the administrator's current value. The fixed `0`–`9` percentage-seek group has Enable/Disable and Reset controls. Changes save automatically to that Jellyfin account. See [The Enhanced Experience](enhanced.md) for the full shortcut list.
 
 #### How do I change the plugin's language?
 

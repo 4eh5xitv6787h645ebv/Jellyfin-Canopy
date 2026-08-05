@@ -24,6 +24,8 @@
   "toast_feature_status": "{feature} {status}",
   "status_enabled": "Aktiverad",
   "status_disabled": "Inaktiverad",
+  "shortcut_enable": "Aktivera",
+  "shortcut_disable": "Inaktivera",
   "feature_auto_pause": "{{icon:pause}} Auto-paus",
   "feature_auto_resume": "{{icon:play}} Auto-återuppta",
   "feature_auto_pip": "{{icon:pip}} Auto-PiP",
