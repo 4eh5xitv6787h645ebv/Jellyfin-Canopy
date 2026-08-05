@@ -75,8 +75,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // 100-episode page produces at most one computation per series, and
         // _computeGate bounds background library concurrency at 2 so a cold
         // cache never becomes a query storm against a scan-saturated DB.
-        private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), byte> _inFlight = new();
+        //
+        // The value is a per-fill generation token: UserDataSaved invalidates
+        // an active fill by removing its token, and a worker only publishes
+        // while its own token is still current — a fill that read played-state
+        // before a watched-state change can never pin a stale boundary for
+        // the TTL (it is discarded and the next request schedules a fresh one).
+        private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), long> _inFlight = new();
         private readonly SemaphoreSlim _computeGate = new(2, 2);
+        private long _fillGeneration;
 
         // Test seams: substitute the boundary computation (runs synchronously,
         // bypassing the background fill), observe scheduled background fills,
@@ -84,6 +91,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal Func<Guid, Guid, NextUnwatchedBoundary?>? BoundaryComputerForTest { get; set; }
 
         internal Action<Task>? BackgroundFillObserverForTest { get; set; }
+
+        internal Action? BeforePublishForTest { get; set; }
 
         internal Func<long>? ClockTicksForTest { get; set; }
 
@@ -159,7 +168,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private void ScheduleBackgroundFill((Guid UserId, Guid SeriesId) key)
         {
             if (_disposed) return;
-            if (!_inFlight.TryAdd(key, 0)) return;
+            var token = Interlocked.Increment(ref _fillGeneration);
+            if (!_inFlight.TryAdd(key, token)) return;
             var task = Task.Run(async () =>
             {
                 await _computeGate.WaitAsync().ConfigureAwait(false);
@@ -167,13 +177,27 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 {
                     if (_disposed) return;
                     var boundary = ComputeBoundary(key.UserId, key.SeriesId);
+                    BeforePublishForTest?.Invoke();
+                    // Publish only while this fill's token is still current: a
+                    // UserDataSaved invalidation removes the token, discarding
+                    // a computation that read pre-change played state.
+                    if (!_inFlight.TryGetValue(key, out var current) || current != token) return;
                     var now = ClockTicksForTest?.Invoke() ?? DateTime.UtcNow.Ticks;
                     Publish(key, boundary, now);
+                    // An invalidation between the token check and Publish would
+                    // otherwise be lost — re-check and withdraw the stale entry
+                    // (conservative direction: the next request just refills).
+                    if (!_inFlight.TryGetValue(key, out current) || current != token)
+                    {
+                        _cache.TryRemove(key, out _);
+                    }
                 }
                 finally
                 {
                     _computeGate.Release();
-                    _inFlight.TryRemove(key, out _);
+                    // Conditional removal: never clobber a successor fill's token.
+                    ((ICollection<KeyValuePair<(Guid, Guid), long>>)_inFlight)
+                        .Remove(new KeyValuePair<(Guid, Guid), long>(key, token));
                 }
             });
             BackgroundFillObserverForTest?.Invoke(task);
@@ -260,17 +284,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // PERF(S7): fires on every user-data save (playback ticks included).
         // O(1) in-memory eviction only — no DB lookup, no I/O. SeriesId is an
         // in-memory property on the Episode entity carried by the event args.
+        // Removing the in-flight token invalidates any fill that started before
+        // this change, so it cannot publish a boundary computed from stale
+        // played state.
         private void OnUserDataSaved(object? sender, UserDataSaveEventArgs e)
         {
             if (e == null || e.UserId == Guid.Empty) return;
             if (e.Item is Episode episode && episode.SeriesId != Guid.Empty)
             {
-                _cache.TryRemove((e.UserId, episode.SeriesId), out _);
+                Invalidate((e.UserId, episode.SeriesId));
             }
             else if (e.Item is Series series)
             {
-                _cache.TryRemove((e.UserId, series.Id), out _);
+                Invalidate((e.UserId, series.Id));
             }
+        }
+
+        private void Invalidate((Guid UserId, Guid SeriesId) key)
+        {
+            _cache.TryRemove(key, out _);
+            _inFlight.TryRemove(key, out _);
         }
     }
 }

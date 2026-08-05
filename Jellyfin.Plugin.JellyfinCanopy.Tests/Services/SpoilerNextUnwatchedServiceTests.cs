@@ -198,14 +198,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         // ─── ComputeBoundary (the real bounded query path, no seam) ──────────
 
         private static SpoilerNextUnwatchedService NewLiveService(
-            CountingLibraryManager lib, out StubUserManager users)
+            CountingLibraryManager lib, out StubUserManager users, StubUserDataManager? userData = null)
         {
             users = new StubUserManager
             {
                 GetUserByIdHook = _ => new User("boundary-user", "provider", "password-provider"),
             };
             return new SpoilerNextUnwatchedService(
-                lib, users, new StubUserDataManager(),
+                lib, users, userData ?? new StubUserDataManager(),
                 NullLogger<SpoilerNextUnwatchedService>.Instance);
         }
 
@@ -329,6 +329,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Null(service.GetBoundary(user, series));
             Assert.Equal(1, calls);
             _ = Assert.Single(fills);
+        }
+
+        [Fact]
+        public async Task InvalidationDuringActiveFill_DiscardsTheStaleBoundary()
+        {
+            // A fill that read played-state BEFORE a watched-state change must
+            // not publish after the change evicts the key — otherwise a stale
+            // NextEpisode mask could pin the wrong reveal for the full TTL.
+            var seriesId = Guid.NewGuid();
+            var user = Guid.NewGuid();
+            var staleEpisode = new Episode { Id = Guid.NewGuid(), SeriesId = seriesId, ParentIndexNumber = 2, IndexNumber = 5 };
+            var userData = new StubUserDataManager();
+            var lib = new CountingLibraryManager
+            {
+                GetItemListHook = _ => new List<BaseItem> { staleEpisode },
+            };
+            using var service = NewLiveService(lib, out _, userData);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            // The user marks an episode of this series watched exactly between
+            // the worker's library read and its publish step.
+            service.BeforePublishForTest = () =>
+                userData.RaiseUserDataSaved(user, staleEpisode, UserDataSaveReason.TogglePlayed);
+
+            Assert.Null(service.GetBoundary(user, seriesId));
+            await Task.WhenAll(fills);
+
+            // The stale computation was discarded; the key is a fresh miss that
+            // schedules a new fill rather than serving the pre-change answer.
+            service.BeforePublishForTest = null;
+            Assert.Null(service.GetBoundary(user, seriesId));
+            Assert.Equal(2, fills.Count);
+            await Task.WhenAll(fills);
+            Assert.NotNull(service.GetBoundary(user, seriesId));
         }
 
         [Fact]
