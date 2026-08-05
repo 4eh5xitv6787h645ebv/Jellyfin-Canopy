@@ -196,6 +196,8 @@ A few rules keep this from becoming a way around admin policy:
 - Unchecking a box writes an opt-out (`false`) into the `Prefs` of your own `spoilerblur.json`. It applies only to your account; everyone else keeps the admin default.
 - **Images always stay protected.** Image replacement is not user-overridable — how unwatched cards look is admin policy.
 
+When your admin has [Advanced per-category reveals](#advanced-per-category-reveals) enabled, one more checkbox appears here: **Advanced per-category reveals**. This one works in the opposite direction from the rest — unchecking it makes things *stricter* for you, restoring the uniform full strip (including hiding the next episode's title again) instead of the category reveals the admin configured.
+
 The same panel section holds a per-user **"Don't ask me to confirm when turning Spoiler Guard off"** checkbox. Unlike the dialog's own 15-minute snooze, this one never expires.
 
 These policy overrides are distinct from the administrator's **Persistent title overrides** manager described above. The former changes what metadata your guarded titles reveal; the latter deliberately changes which Series, Movies, Collections, or pending requests are on your guarded list.
@@ -250,6 +252,28 @@ The master switch is the only setting that requires explicit admin opt-in. Every
 | **Hide cast** | On | Strips the cast on unwatched episodes **and on the guarded series' own cast rail**. See **Cast strip mode** below. |
 | **Cast strip mode** | Guest stars only | `Guest stars only (keep regular cast)` removes only `Type=GuestStar` entries (regular cast appears every episode anyway). `All cast & crew` removes every People entry. When **Replace episode titles** *or* **Hide descriptions** is on, the character `Role` is also stripped from surviving People regardless of mode. |
 | **Hide the Reviews panel on guarded series** | On | Suppresses the JC Reviews panel on guarded series **and movie** detail pages (a movie guarded directly or via an opted-in collection) until watched. This one is applied **in the web client**, since the panel only exists there. |
+
+### Advanced per-category reveals
+
+By default every unwatched episode of a guarded series gets the same uniform strip. **Advanced per-category reveals** (an admin section under Spoiler Guard, off by default) splits unwatched episodes into three categories and gives the first two their own reveal masks:
+
+- **Next episode** — the user's first unwatched regular episode, in season/episode order (specials in Season 0 never count). By default this is the only thing advanced mode changes: its **real title shows** while everything else stays hidden — you can see *what* you're about to watch, and nothing more.
+- **Current season** — the other unwatched episodes in the same season as the next episode. Fully stripped by default, with optional per-field reveals.
+- **Everything else** — later seasons, skipped earlier seasons, and specials always keep the full uniform strip. So do search results, card rating overlays, images, and every other protected surface: the reveals apply to the episode metadata itself (episode lists, Next Up, detail pages), never to the stricter surfaces.
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Enable advanced per-category reveals** | Off | Master switch for the category logic. Off = today's uniform strip, byte for byte. |
+| **Next episode: keep title hidden** | Off | Unchecked means the next episode's real title shows instead of "Season X, Episode Y". |
+| **Next episode: keep description hidden** | On | Untick to also show the next episode's synopsis. |
+| **Next episode: keep ratings hidden** | On | Untick to show community/critic ratings on the next episode. |
+| **Current season: keep titles hidden** | On | Untick to show real titles across the current season. |
+| **Current season: keep descriptions hidden** | On | Untick to show synopses across the current season. |
+| **Current season: keep ratings hidden** | On | Untick to show ratings across the current season — useful when you want to know which episodes of the season you're in are fan favourites without reading anything about them. |
+
+A reveal can only *relax* a strip that's enabled above it — if you turned off **Replace episode titles** globally, titles already show everywhere and the category toggles for titles have nothing to do. The boundary follows each user's watched-state (marking the next episode watched promotes the following one within a few minutes at most — immediately on the next request in the common case), and every ambiguous situation — an episode with no season/episode numbers, a fully-watched series, a resolver fault — falls back to the full strip, never a reveal.
+
+Each user can opt back out of advanced mode entirely: the **Advanced per-category reveals** checkbox in their own Spoiler Guard settings (see [Making it yours](#making-it-yours-per-user-policy-overrides)) restores the uniform full strip for that account only.
 
 ### Fail-closed behavior
 

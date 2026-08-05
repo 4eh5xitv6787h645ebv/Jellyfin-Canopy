@@ -21,7 +21,7 @@
 // Every test asserts a clean console/net and restores ALL state it changes
 // (guard to its prior value, prefs back) in a finally block, even on failure.
 import { test, expect, loginAs, assertNoRuntimeErrors } from './fixtures/auth';
-import { authenticate, api, type Session } from './fixtures/api';
+import { authenticate, api, PLUGIN_ID, type Session } from './fixtures/api';
 import type { Page } from 'playwright/test';
 import { createGuardRestorePlan } from '../scripts/e2e/spoiler-guard-restore';
 import {
@@ -447,6 +447,92 @@ test.describe('Spoiler Guard', () => {
             await api(BASE, '/JellyfinCanopy/spoiler-blur/user-prefs', user.token, {
                 method: 'POST',
                 body: JSON.stringify(restored),
+            });
+        }
+    });
+
+    test('advanced per-category reveals: the next unwatched episode keeps its real title', async () => {
+        test.skip(!enabled, 'SpoilerBlurEnabled is off on the target server');
+        test.skip(!target, 'no series with an unwatched episode available on the target server');
+        const t = target!;
+
+        // Full per-episode context (index numbers + the user's played state)
+        // from the USER's pre-guard view, so names are the real values.
+        interface FullEpisode {
+            id: string;
+            name: string;
+            overview: string;
+            played: boolean;
+            season: number | null;
+            episode: number | null;
+        }
+        const listFull = async (): Promise<FullEpisode[]> => {
+            const res = (await api(
+                BASE,
+                `/Shows/${t.seriesId}/Episodes?userId=${user.userId}&fields=Overview`,
+                user.token
+            )) as { Items?: any[] } | null;
+            return (res?.Items ?? []).map((e) => ({
+                id: e.Id as string,
+                name: (e.Name ?? '') as string,
+                overview: (e.Overview ?? '') as string,
+                played: e.UserData?.Played === true,
+                season: typeof e.ParentIndexNumber === 'number' ? e.ParentIndexNumber : null,
+                episode: typeof e.IndexNumber === 'number' ? e.IndexNumber : null,
+            }));
+        };
+
+        const before = await listFull();
+        // Mirror the server's boundary definition: first unwatched regular
+        // episode in (season, episode) order, specials (season 0) excluded.
+        const regulars = before
+            .filter((e) => e.season !== null && e.season > 0 && e.episode !== null)
+            .sort((a, b) => a.season! - b.season! || a.episode! - b.episode!);
+        const expectedNext = regulars.find((e) => !e.played) ?? null;
+        const laterUnwatched = regulars.find((e) => !e.played && e.id !== expectedNext?.id) ?? null;
+        test.skip(!expectedNext || !laterUnwatched,
+            'need at least two unwatched regular episodes to exercise the category boundary');
+
+        const configPath = `/Plugins/${PLUGIN_ID}/Configuration`;
+        const originalConfig = (await api(BASE, configPath, admin.token)) as Record<string, unknown>;
+        const plan = createGuardRestorePlan(await getSpoilerState(BASE, user), t.seriesId, true);
+        try {
+            // Category defaults apply (next-episode title revealed, all else
+            // stripped); only the advanced master switch is flipped for the test.
+            await api(BASE, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify({ ...originalConfig, SpoilerAdvancedMode: true }),
+            });
+            await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
+
+            const after = await listFull();
+            const nextNow = after.find((e) => e.id === expectedNext!.id)!;
+            const laterNow = after.find((e) => e.id === laterUnwatched!.id)!;
+
+            expect(nextNow.name, 'the next unwatched episode keeps its real title').toBe(expectedNext!.name);
+            expect(nextNow.name, 'the revealed title is not the synthesized shape').not.toMatch(STRIPPED_NAME);
+            if (expectedNext!.overview) {
+                expect(nextNow.overview, 'the next episode description stays stripped by default')
+                    .toBe(OVERVIEW_PLACEHOLDER);
+            }
+            expect(laterNow.name, 'a later unwatched episode stays fully stripped').toMatch(STRIPPED_NAME);
+
+            // Flipping advanced mode back off restores the uniform strip for the
+            // boundary episode within the same session (per-request gate, no cache).
+            await api(BASE, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify({ ...originalConfig, SpoilerAdvancedMode: false }),
+            });
+            const uniform = await listFull();
+            expect(
+                uniform.find((e) => e.id === expectedNext!.id)!.name,
+                'advanced mode off restores the synthesized title on the boundary episode'
+            ).toMatch(STRIPPED_NAME);
+        } finally {
+            await restoreSeriesGuard(BASE, user, plan);
+            await api(BASE, configPath, admin.token, {
+                method: 'POST',
+                body: JSON.stringify(originalConfig),
             });
         }
     });

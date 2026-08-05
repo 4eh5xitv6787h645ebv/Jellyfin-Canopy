@@ -279,6 +279,7 @@
   "SourceTagOrder": 1235,
   "SpecialFormatTagOrder": 1236,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
+  "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
   "SpoilerBlurStrictRefresh": true,
   "SpoilerReplaceTitle": false,
@@ -292,11 +293,11 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1262,
+  "TagsCacheTtlDays": 1269,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1265,
+  "ToastDuration": 1272,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1268
+  "VideoCodecTagOrder": 1275
 }
