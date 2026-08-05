@@ -1204,6 +1204,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                     Codec = s.Codec,
                                     CodecTag = s.CodecTag,
                                     Profile = s.Profile,
+                                    Width = s.Width,
                                     Height = s.Height,
                                     Channels = s.Channels,
                                     ChannelLayout = s.ChannelLayout,
@@ -1211,8 +1212,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                     // DisplayTitle's getter prepends the raw Title field,
                                     // which on user-muxed mkvs commonly carries the episode
                                     // name — under SpoilerReplaceTitle that leaks. Null it;
-                                    // qualitytags.js recomputes overlay text from Codec /
-                                    // Height / VideoRangeType / Profile, not Title.
+                                    // Quality Tags recomputes overlay text from Codec /
+                                    // Width / Height / VideoRangeType / Profile, not Title.
                                     DisplayTitle = (string?)null,
                                 })
                                 .ToList();
@@ -1309,6 +1310,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                                     Codec = s.Codec,
                                     CodecTag = s.CodecTag,
                                     Profile = s.Profile,
+                                    Width = s.Width,
                                     Height = s.Height,
                                     Channels = s.Channels,
                                     ChannelLayout = s.ChannelLayout,
@@ -1429,6 +1431,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             Codec = s.Codec,
                             CodecTag = s.CodecTag,
                             Profile = s.Profile,
+                            Width = s.Width,
                             Height = s.Height,
                             Channels = s.Channels,
                             ChannelLayout = s.ChannelLayout,

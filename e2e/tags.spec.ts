@@ -17,6 +17,87 @@ const FAMILIES = [
 ] as const;
 
 test.describe('tags', () => {
+    test('8K dimensions render from a title-sanitized server-cache projection', async ({ page, consoleErrors }) => {
+        let injectedEntries = 0;
+        const cacheRoute = '**/JellyfinCanopy/tag-cache/**';
+        await page.route(cacheRoute, async (route) => {
+            if (route.request().method() !== 'GET') {
+                await route.continue();
+                return;
+            }
+
+            const response = await route.fetch();
+            const body = await response.json() as Record<string, any>;
+            const items = body.items ?? body.Items;
+            if (items && typeof items === 'object') {
+                for (const entry of Object.values(items) as any[]) {
+                    if (!entry || typeof entry !== 'object') continue;
+                    entry.StreamData = {
+                        ...(entry.StreamData || {}),
+                        Streams: [{
+                            Type: 'Video',
+                            Codec: 'hevc',
+                            Width: 8192,
+                            Height: 4096,
+                            DisplayTitle: null,
+                        }],
+                        Sources: [],
+                    };
+                    injectedEntries++;
+                }
+            }
+            await route.fulfill({ response, json: body });
+        });
+
+        await loginAs(page, 'admin', consoleErrors);
+        const original = await page.evaluate(() => {
+            const settings = (window as any).JellyfinCanopy.currentSettings;
+            return {
+                hasEnabled: Object.prototype.hasOwnProperty.call(settings, 'qualityTagsEnabled'),
+                enabled: settings.qualityTagsEnabled,
+                hasResolution: Object.prototype.hasOwnProperty.call(settings, 'showResolutionTag'),
+                resolution: settings.showResolutionTag,
+            };
+        });
+
+        try {
+            await page.evaluate(async () => {
+                const jc = (window as any).JellyfinCanopy;
+                jc.currentSettings.qualityTagsEnabled = true;
+                jc.currentSettings.showResolutionTag = true;
+                await jc.saveUserSettings('settings.json', jc.currentSettings);
+            });
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            consoleErrors.reset();
+            await page.waitForFunction(
+                () => (window as any).JellyfinCanopy?.initialized === true
+                    && (window as any).JellyfinCanopy?.currentSettings?.qualityTagsEnabled === true,
+                undefined,
+                { timeout: 60_000 },
+            );
+            await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
+
+            const tag = page.locator('.quality-overlay-label[data-quality="8K"]').first();
+            await expect(tag).toBeVisible({ timeout: 60_000 });
+            await expect(tag).toHaveText('8K');
+            expect(injectedEntries, 'the real per-user tag-cache response was dimension-injected')
+                .toBeGreaterThan(0);
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
+            expect(consoleErrors.real()).toEqual([]);
+        } finally {
+            await page.evaluate(async (snapshot) => {
+                const jc = (window as any).JellyfinCanopy;
+                const settings = jc.currentSettings;
+                if (snapshot.hasEnabled) settings.qualityTagsEnabled = snapshot.enabled;
+                else delete settings.qualityTagsEnabled;
+                if (snapshot.hasResolution) settings.showResolutionTag = snapshot.resolution;
+                else delete settings.showResolutionTag;
+                await jc.saveUserSettings('settings.json', settings);
+            }, original);
+            await page.unroute(cacheRoute);
+        }
+    });
+
     test('home library cards get data-jc-*-tagged markers per enabled family', async ({ page, consoleErrors }) => {
         await loginAs(page, 'admin', consoleErrors);
 

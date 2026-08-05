@@ -114,7 +114,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 {
                     ItemName = "The Death of X",
                     ItemPath = "S05E14 - The Death of X.mkv",
-                    Streams = new List<TagMediaStream> { new() { DisplayTitle = "The Death of X", Codec = "hevc", Height = 1080 } },
+                    Streams = new List<TagMediaStream> { new() { DisplayTitle = "The Death of X", Codec = "hevc", Width = 1920, Height = 1080 } },
                     Sources = new List<TagMediaSource> { new() { Path = "leaky.mkv", Name = "leaky" } },
                 },
             };
@@ -128,6 +128,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Null(served.StreamData.ItemPath);
             Assert.Null(served.StreamData.Streams![0].DisplayTitle);
             Assert.Equal("hevc", served.StreamData.Streams[0].Codec); // quality-bearing fields survive
+            Assert.Equal(1920, served.StreamData.Streams[0].Width);
             Assert.Equal(1080, served.StreamData.Streams[0].Height);
             Assert.Null(served.StreamData.Sources![0].Path);
             Assert.Null(served.StreamData.Sources[0].Name);
@@ -355,6 +356,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         [Theory]
         [InlineData(1)]
         [InlineData(2)]
+        [InlineData(3)]
         public void LoadFromDisk_OldSchema_DiscardsEntries(int schemaVersion)
         {
             var dir = Path.Combine(Path.GetTempPath(), "jc-tagcache-" + Guid.NewGuid().ToString("N"));
@@ -366,7 +368,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();
 
-                // v1 lacks SeriesId; v2 lacks SeasonId/StreamSourceId. Both are discarded.
+                // v1 lacks SeriesId; v2 lacks SeasonId/StreamSourceId; v3 lacks
+                // Width and would preserve incorrect cropped/8K classifications.
                 Assert.Equal(0, svc.Count);
             }
             finally
@@ -383,7 +386,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             {
                 var key = Guid.NewGuid().ToString("N");
                 var seriesN = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 3, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
+                WriteCache(dir, schemaVersion: 4, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();

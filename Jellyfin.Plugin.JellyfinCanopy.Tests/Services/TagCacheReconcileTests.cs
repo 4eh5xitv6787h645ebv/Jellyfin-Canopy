@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Episode = MediaBrowser.Controller.Entities.TV.Episode;
@@ -178,6 +179,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Assert.Equal(9.0f, entry!.CommunityRating);        // rebuilt with new content
                 Assert.True(svc.LastModified >= lastModAfterFirst); // delta advanced
                 Assert.Equal(versionAfterFirst, svc.Version);       // still no removal
+            }
+            finally { TryDelete(dir); }
+        }
+
+        [Fact]
+        public void Reconcile_CapturesBothDimensionsForQualityResolution()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var movie = new ResolutionMovie
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "8K fixture",
+                    DateLastSaved = T0,
+                };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => new List<BaseItem> { movie },
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+
+                var stream = Assert.Single(svc.GetEntryForTest(Key(movie.Id))!.StreamData!.Streams!);
+                Assert.Equal(8192, stream.Width);
+                Assert.Equal(4096, stream.Height);
             }
             finally { TryDelete(dir); }
         }
@@ -425,6 +453,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 if (ThrowOnProbe) throw new InvalidOperationException("transient probe failure");
                 return Array.Empty<MediaSourceInfo>();
             }
+        }
+
+        private sealed class ResolutionMovie : Movie
+        {
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
+                => new[]
+                {
+                    new MediaSourceInfo
+                    {
+                        MediaStreams = new[]
+                        {
+                            new MediaStream
+                            {
+                                Type = MediaStreamType.Video,
+                                Width = 8192,
+                                Height = 4096,
+                            },
+                        },
+                    },
+                };
         }
     }
 }

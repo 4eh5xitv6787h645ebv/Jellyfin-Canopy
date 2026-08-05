@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 42809,
-        "totalLines": 52615
+        "coveredLines": 42932,
+        "totalLines": 52621
       },
       "observations": {
-        "cleanRuns": 5,
-        "minimumCoveredLines": 42802,
-        "maximumCoveredLines": 42809
+        "cleanRuns": 2,
+        "minimumCoveredLines": 42930,
+        "maximumCoveredLines": 42932
       },
       "tolerance": {
-        "missingCoveredLines": 7,
-        "rationale": "The warning-only maintenance-mode change adds explicit action validation, durable none-state handling, structured controller failure handling, and six focused server tests. Three clean local .NET 10.0.9 Coverlet runs on 2026-08-05 against the identical final 52,615-line production source and 4,110-test scope measured 42,802, 42,805 and 42,806 covered lines after every test passed; two hosted GitHub Actions runs on the same source and scope also passed all 4,110 tests and measured 42,807 and 42,809. The reviewed observed high-water is therefore 42,809/52,615 (81.363%) and the exact observed floor is 42,802/52,615 (81.349%); the seven-line schedule-dependent instrumentation spread is bounded to 0.013 percentage points. Relative to the prior 42,798/52,592 high-water, the new high-water adds eleven covered and twenty-three instrumented lines, so the covered-line high-water does not decrease; the percentage shift reflects the reviewed production scope growth. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 2,
+        "rationale": "The issue-681 fix detects 8K/4320p quality tags in the tag-cache projection and adds regression coverage for the quality mapping and reconcile paths. Rebased onto main's reviewed baseline of 42,809/52,615 (81.363%), two clean CI coverage runs on the identical rebased source and 52,621-line scope observed 42,930 and 42,932 covered lines; the two-line envelope is timing-dependent branch coverage in the tag-cache monitor's asynchronous paths, not a source or test difference. The high-water is 42,932/52,621 (81.587%) and the enforced floor 42,930/52,621 (81.583%), above main's 81.349% floor. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
