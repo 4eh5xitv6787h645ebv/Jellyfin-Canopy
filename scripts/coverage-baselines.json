@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43918,
-        "totalLines": 53696
+        "coveredLines": 43926,
+        "totalLines": 53701
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 43905,
-        "maximumCoveredLines": 43918
+        "cleanRuns": 2,
+        "minimumCoveredLines": 43920,
+        "maximumCoveredLines": 43926
       },
       "tolerance": {
-        "missingCoveredLines": 13,
-        "rationale": "Issue #663 adds the default-off Calendar requester-tag resolver, controller integration, configuration contract, and focused server coverage, rebased onto merged PR #689 at main 6447d638. Four clean full-suite runs on this exact 53,696-line source and test scope passed all 4,178 tests and observed 43,914, 43,905, 43,912 and the official hosted CI result of 43,918 covered lines. The thirteen-line envelope is timing-dependent branch coverage in existing asynchronous monitor paths, not a source or test difference; the spread is 0.024 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 6,
+        "rationale": "Issue #682 preserves direct critic percentages through every full-cache rating-inheritance path and adds focused cache-only regressions, rebased onto merged issue #663 at main b0626553. Two clean full-suite runs on this exact 53,701-line source and 4,181-test scope passed every test and observed 43,926 and 43,920 covered lines. The reviewed observed high-water is 43,926/53,701 (81.797%) and the exact observed floor is 43,920/53,701 (81.786%); the six-line timing-dependent instrumentation spread is 0.011 percentage points, far inside the 0.15pp policy bound. The initial validation attempts that failed unrelated timing or allocation assertions are not counted as clean evidence. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

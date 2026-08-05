@@ -262,7 +262,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             long lastUpdated,
             out TagCacheEntry? refreshed)
         {
-            var ratingChanged = episode.CommunityRating == null
+            var inheritsRatings = TagCacheRatingInheritance.ShouldInherit(
+                episode.CommunityRating,
+                episode.CriticRating);
+            var ratingChanged = inheritsRatings
                 && (existing.CommunityRating != series.CommunityRating
                     || existing.CriticRating != series.CriticRating);
             var tmdbChanged = !string.Equals(
@@ -277,7 +280,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             refreshed = existing.Clone();
             refreshed.SeriesTmdbId = series.TmdbId;
-            if (episode.CommunityRating == null)
+            if (inheritsRatings)
             {
                 refreshed.CommunityRating = series.CommunityRating;
                 refreshed.CriticRating = series.CriticRating;
@@ -298,7 +301,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             refreshed.SeasonId = episode.SeasonId == Guid.Empty ? null : episode.SeasonId.ToString("N");
             refreshed.SeasonNumber = episode.ParentIndexNumber;
             refreshed.SeriesTmdbId = series?.TmdbId;
-            if (episode.CommunityRating == null)
+            if (TagCacheRatingInheritance.ShouldInherit(
+                episode.CommunityRating,
+                episode.CriticRating))
             {
                 refreshed.CommunityRating = series?.CommunityRating;
                 refreshed.CriticRating = series?.CriticRating;
