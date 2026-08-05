@@ -11,6 +11,7 @@ import { JC as JEBase } from '../globals';
 import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
+import { resolveQualityResolution } from './quality-resolution';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -262,49 +263,9 @@ function getEnhancedQuality(mediaStreams: any, mediaSources: any, itemData: any 
     }
 
     // --- VIDEO RESOLUTION LOGIC ---
-    let resolutionTag: string | null = null;
-
     if (primaryVideoStream) {
-        // Priority 1: DisplayTitle Scan for resolution keywords
-        const displayTitle = primaryVideoStream.DisplayTitle || '';
-        const resolutionRegex = /\b(4k|2160p|1440p|1080p|720p|480p|360p|404p|384p|520p)\b/i;
-        const resolutionMatch = displayTitle.match(resolutionRegex);
-
-        if (resolutionMatch) {
-            const found = resolutionMatch[1].toLowerCase();
-            if (found === '4k' || found === '2160p') {
-                resolutionTag = '4K';
-            } else if (found === '1440p') {
-                resolutionTag = '1440p';
-            } else if (found === '1080p') {
-                resolutionTag = '1080p';
-            } else if (found === '720p') {
-                resolutionTag = '720p';
-            } else if (found === '480p') {
-                resolutionTag = '480p';
-            } else if (['360p', '404p', '384p', '520p'].includes(found)) {
-                // Generic low-res tag for anything below 480p
-                resolutionTag = 'LOW-RES';
-            }
-            qualities.add(resolutionTag!);
-        } else {
-            // Priority 2: Dimension Fallback
-            const height = primaryVideoStream.Height || 0;
-            if (height >= 1000) {
-                resolutionTag = '1080p';
-            } else if (height >= 700) {
-                resolutionTag = '720p';
-            } else if (height >= 400) {
-                resolutionTag = '480p';
-            } else if (height > 0) {
-                // Any height below 400px gets the generic low-res tag
-                resolutionTag = 'LOW-RES';
-            }
-
-            if (resolutionTag) {
-                qualities.add(resolutionTag);
-            }
-        }
+        const resolutionTag = resolveQualityResolution(primaryVideoStream);
+        if (resolutionTag) qualities.add(resolutionTag);
     }
 
     // --- VIDEO CODEC LOGIC ---

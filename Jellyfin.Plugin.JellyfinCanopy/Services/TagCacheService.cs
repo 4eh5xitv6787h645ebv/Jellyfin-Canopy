@@ -164,7 +164,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // starts empty (client falls back to the live/per-batch strip) until rebuild.
         // v3 adds persisted Episode SeasonId and stream-source identity. Both are
         // correctness-critical dependency metadata, so older entries are rebuilt.
-        private const int CurrentCacheSchemaVersion = 3;
+        // v4 adds stream Width. Height alone cannot distinguish cropped DCI 8K
+        // from 4K, so retaining v3 entries would keep quality labels incorrect.
+        private const int CurrentCacheSchemaVersion = 4;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -2200,9 +2202,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
             // When StreamData wasn't already wiped by the tag-strip but title
             // replacement / overview strip is on, sanitize its title-bearing fields.
-            // Clone StreamData (same cross-user-mutation hazard). qualitytags.js
-            // recomputes overlay text from Codec/Height/VideoRangeType, so dropping
-            // DisplayTitle/ItemName/paths is acceptable.
+            // Clone StreamData (same cross-user-mutation hazard). Quality Tags
+            // recomputes overlay text from Codec/Width/Height/VideoRangeType, so
+            // dropping DisplayTitle/ItemName/paths is acceptable.
             if (sanitizeTitleStreams && stripped.StreamData != null && !stripGenres)
             {
                 var sd = stripped.StreamData;
@@ -2217,6 +2219,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         Codec = st.Codec,
                         CodecTag = st.CodecTag,
                         Profile = st.Profile,
+                        Width = st.Width,
                         Height = st.Height,
                         Channels = st.Channels,
                         ChannelLayout = st.ChannelLayout,
@@ -2671,6 +2674,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             Codec = s.Codec,
                             CodecTag = s.CodecTag,
                             Profile = s.Profile,
+                            Width = s.Width,
                             Height = s.Height,
                             Channels = s.Channels,
                             ChannelLayout = s.ChannelLayout,

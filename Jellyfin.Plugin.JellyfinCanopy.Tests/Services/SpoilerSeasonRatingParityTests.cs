@@ -13,6 +13,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -257,16 +258,72 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.False(item.GetProperty("RatingSuppressed").GetBoolean());
         }
 
+        [Fact]
+        public void GetTagData_RegularLiveProjection_PreservesVideoWidth()
+        {
+            var movie = new StreamMovie(width: 8192, height: 4096)
+            {
+                Id = Guid.NewGuid(),
+                Name = "Resolution fixture",
+            };
+
+            var item = GetItemTagData(new PluginConfiguration(), new UserSpoilerBlur(), movie);
+
+            Assert.Equal(8192, item.GetProperty("MediaStreams")[0].GetProperty("Width").GetInt32());
+            Assert.Equal(4096, item.GetProperty("MediaStreams")[0].GetProperty("Height").GetInt32());
+        }
+
+        [Fact]
+        public void GetTagData_GuardedMovieQualityProjection_PreservesVideoWidth()
+        {
+            var movie = new StreamMovie(width: 8192, height: 4096)
+            {
+                Id = Guid.NewGuid(),
+                Name = "Guarded resolution fixture",
+            };
+            var state = new UserSpoilerBlur();
+            var movieId = movie.Id.ToString("N");
+            state.Movies[movieId] = new SpoilerBlurMovieEntry { MovieId = movieId };
+
+            var item = GetItemTagData(QualityRetainingSpoilerConfig(), state, movie);
+
+            Assert.Equal(8192, item.GetProperty("MediaStreams")[0].GetProperty("Width").GetInt32());
+            Assert.Equal(4096, item.GetProperty("MediaStreams")[0].GetProperty("Height").GetInt32());
+        }
+
+        [Fact]
+        public void GetTagData_GuardedEpisodeQualityProjection_PreservesVideoWidth()
+        {
+            var seriesId = Guid.NewGuid();
+            var episode = new StreamEpisode(width: 7680, height: 4320)
+            {
+                Id = Guid.NewGuid(),
+                SeriesId = seriesId,
+                Name = "Guarded episode resolution fixture",
+            };
+
+            var item = GetItemTagData(
+                QualityRetainingSpoilerConfig(),
+                GuardedState(seriesId),
+                episode);
+
+            Assert.Equal(7680, item.GetProperty("MediaStreams")[0].GetProperty("Width").GetInt32());
+            Assert.Equal(4320, item.GetProperty("MediaStreams")[0].GetProperty("Height").GetInt32());
+        }
+
+        private static PluginConfiguration QualityRetainingSpoilerConfig() => new()
+        {
+            SpoilerBlurEnabled = true,
+            SpoilerStripRatings = true,
+            SpoilerStripTags = false,
+        };
+
         private static JsonElement GetSeasonTagData(
             PluginConfiguration cfg,
             bool? hideRatings,
             int seasonNumber,
             bool useEmptyRouteUserId = false)
         {
-            var dir = Path.Combine(Path.GetTempPath(), "jc-season-rating-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(dir);
-
-            var user = new User("season-rating", "Prov", "PwProv");
             var seriesId = Guid.NewGuid();
             var season = new StubSeason
             {
@@ -280,17 +337,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 CriticRating = 97f,
             };
 
+            return GetItemTagData(
+                cfg,
+                GuardedState(seriesId, hideRatings),
+                season,
+                useEmptyRouteUserId);
+        }
+
+        private static JsonElement GetItemTagData(
+            PluginConfiguration cfg,
+            UserSpoilerBlur state,
+            BaseItem item,
+            bool useEmptyRouteUserId = false)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "jc-tag-data-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var user = new User("tag-data", "Prov", "PwProv");
+
             var userIdN = user.Id.ToString("N");
             try
             {
                 var appPaths = new StubAppPaths(dir);
                 var manager = new UserConfigurationManager(appPaths, NullLogger<UserConfigurationManager>.Instance);
-                manager.SaveUserConfiguration(userIdN, SpoilerFile, GuardedState(seriesId, hideRatings));
+                manager.SaveUserConfiguration(userIdN, SpoilerFile, state);
                 SpoilerUserResolver.InvalidateUser(userIdN);
 
                 var library = new CountingLibraryManager
                 {
-                    GetItemByIdUserHook = (id, _) => id == season.Id ? season : null,
+                    GetItemByIdUserHook = (id, _) => id == item.Id ? item : null,
                     GetItemListHook = _ => Array.Empty<BaseItem>(),
                 };
                 var users = new StubUserManager(user);
@@ -328,7 +402,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 var ok = Assert.IsType<OkObjectResult>(
                     controller.GetTagData(
                         useEmptyRouteUserId ? Guid.Empty : user.Id,
-                        new[] { season.Id.ToString("N") }));
+                        new[] { item.Id.ToString("N") }));
                 using var json = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
                 return json.RootElement.GetProperty("Items")[0].Clone();
             }
@@ -338,5 +412,53 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
             }
         }
+
+        private sealed class StreamMovie : MediaBrowser.Controller.Entities.Movies.Movie
+        {
+            private readonly IReadOnlyList<MediaSourceInfo> _sources;
+
+            public StreamMovie(int width, int height)
+            {
+                _sources = Sources(width, height);
+            }
+
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
+                => _sources;
+        }
+
+        private sealed class StreamEpisode : MediaBrowser.Controller.Entities.TV.Episode
+        {
+            private readonly IReadOnlyList<MediaSourceInfo> _sources;
+
+            public StreamEpisode(int width, int height)
+            {
+                _sources = Sources(width, height);
+            }
+
+            public override string GetClientTypeName() => "Episode";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
+                => _sources;
+        }
+
+        private static IReadOnlyList<MediaSourceInfo> Sources(int width, int height)
+            => new[]
+            {
+                new MediaSourceInfo
+                {
+                    MediaStreams = new[]
+                    {
+                        new MediaStream
+                        {
+                            Type = MediaStreamType.Video,
+                            Codec = "hevc",
+                            Width = width,
+                            Height = height,
+                        },
+                    },
+                },
+            };
     }
 }

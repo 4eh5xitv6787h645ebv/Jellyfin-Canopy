@@ -102,6 +102,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         public string? Codec { get; set; }
         public string? CodecTag { get; set; }
         public string? Profile { get; set; }
+        public int? Width { get; set; }
         public int? Height { get; set; }
         public int? Channels { get; set; }
         public string? ChannelLayout { get; set; }

@@ -251,6 +251,12 @@ Show quality information right on the poster: `4K`, `HDR`, `ATMOS`, and more.
 - **Audio:** ATMOS, DTS-X, TRUEHD, DTS, Dolby Digital+, 7.1, 5.1
 - **Media stubs:** BluRay, HD DVD, DVD, VHS, HDTV, Physical (for physical-media files)
 
+Resolution detection recognizes both display tokens (including `8K` and
+`4320p`) and Jellyfin's width/height metadata. Standard and normally cropped
+8K, 4K, 1440p, 1080p, and 720p sources retain their source tier. Extreme
+ultrawide media falls back to its short-edge tier instead of being promoted by
+width alone, and the 480p/LOW-RES boundary remains short-edge based.
+
 Quality Tags break down into **six independently toggleable categories** — **Resolution** (4K/1080p…), **Source** (BluRay/DVD/HDTV…), **HDR** (HDR10+/Dolby Vision), **Special format** (IMAX/3D), **Video format** (HEVC/H264/AV1…), and **Sound** (Atmos/DTS/5.1/7.1…). Each category can be enabled, disabled, and reordered on its own. The config-page values are admin defaults; each user can override which categories show and in what order.
 
 #### Genre Tags
