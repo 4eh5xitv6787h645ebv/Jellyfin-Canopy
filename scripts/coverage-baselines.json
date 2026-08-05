@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 44215,
+        "coveredLines": 44223,
         "totalLines": 53973
       },
       "observations": {
-        "cleanRuns": 2,
+        "cleanRuns": 3,
         "minimumCoveredLines": 44212,
-        "maximumCoveredLines": 44215
+        "maximumCoveredLines": 44223
       },
       "tolerance": {
         "missingCoveredLines": 11,
-        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. Two clean Release runs on the merged tree observed 44,215 and 44,212 covered lines (81.916%-81.921%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
+        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. Three clean runs on this tree observed 44,212 and 44,215 locally and 44,223 on the CI runner (81.916%-81.935%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
       }
     }
   }
