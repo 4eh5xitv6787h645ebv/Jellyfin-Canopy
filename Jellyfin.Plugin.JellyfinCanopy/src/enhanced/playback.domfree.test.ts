@@ -18,8 +18,6 @@ function mountVideo(): HTMLVideoElement {
     return video;
 }
 
-interface JfMock { (path: string, options?: Record<string, unknown>): Promise<unknown> }
-
 function ownSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         Id: 'sess-1',
@@ -48,7 +46,7 @@ function installApi(sessions: unknown[]): { jf: ReturnType<typeof vi.fn>; comman
             return Promise.resolve({});
         }
         return Promise.resolve({});
-    }) as JfMock);
+    }));
     JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
     return { jf, commands };
 }
@@ -185,7 +183,7 @@ describe('DOM-free player shortcuts', () => {
             const jf = vi.fn(((path: string) => {
                 if (path.startsWith('/Sessions?')) return Promise.resolve([ownSession()]);
                 return Promise.reject(new Error('503'));
-            }) as JfMock);
+            }));
             JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
             const trigger = document.createElement('button');
             trigger.className = 'btnSubtitles';
@@ -202,7 +200,7 @@ describe('DOM-free player shortcuts', () => {
         it('an identity change while the probe is in flight swallows the press entirely', async () => {
             mountVideo();
             let resolveSessions!: (v: unknown) => void;
-            const jf = vi.fn((() => new Promise((r) => { resolveSessions = r; })) as JfMock);
+            const jf = vi.fn((() => new Promise((r) => { resolveSessions = r; })));
             JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
             const trigger = document.createElement('button');
             trigger.className = 'btnAudio';
