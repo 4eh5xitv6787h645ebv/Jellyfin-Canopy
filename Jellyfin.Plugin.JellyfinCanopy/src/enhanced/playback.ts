@@ -807,9 +807,12 @@ async function cycleTrackViaApi(
             body: { Name: commandName, Arguments: { Index: String(next) } }
         });
     } catch (err) {
-        if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) {
-            return true; // stale press — no fallback either
-        }
+        // A REJECTED command cannot explain an element/source change, so the
+        // strict press snapshot applies here: any staleness (including a
+        // timeout whose server side actually applied and restarted the
+        // stream) swallows the press instead of driving the menu fallback
+        // against a different playback surface.
+        if (pressIsStale()) return true;
         console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }

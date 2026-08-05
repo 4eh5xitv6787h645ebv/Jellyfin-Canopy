@@ -344,6 +344,35 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
+    describe('failed POST with a stale surface (final-confirmation regression 2)', () => {
+        it('a source change during a FAILED command swallows the press instead of menu fallback', async () => {
+            const video = document.createElement('video');
+            let src = 'http://jf.test/Videos/item-1/stream?MediaSourceId=1';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            let rejectCommand!: (e: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([ownSession()]);
+                return new Promise((_r, reject) => { rejectCommand = reject; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await flushPromises();
+            // Next episode swaps the source while the POST is pending, then it fails.
+            src = 'http://jf.test/Videos/item-2/stream?MediaSourceId=1';
+            rejectCommand(new Error('504'));
+            await flushPromises();
+            await flushPromises();
+
+            expect(triggerClick).not.toHaveBeenCalled(); // no menu fallback on a stale surface
+        });
+    });
+
     describe('aspect ratio without panels', () => {
         it('cycles auto → cover → fill → auto via the native localStorage key and object-fit', () => {
             const video = mountVideo();
