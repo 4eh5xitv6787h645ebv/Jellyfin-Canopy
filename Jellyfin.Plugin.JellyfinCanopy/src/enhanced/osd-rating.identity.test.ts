@@ -79,6 +79,90 @@ describe('OSD rating identity lifecycle', () => {
         expect(container?.textContent).not.toContain('1.1');
     });
 
+    it('renders Jellyfin single-digit critic values as direct percentages', async () => {
+        mountPlayer('critic-direct-7');
+        const jf = vi.fn().mockResolvedValue({
+            Items: [{ Type: 'Movie', CommunityRating: null, CriticRating: 7 }],
+        });
+        JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+        JC.initializeOsdRating!();
+        await flushPromises();
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+
+        expect(jf).toHaveBeenCalledTimes(1);
+        expect(document.querySelector('#jc-osd-rating-container .critic .jc-text')?.textContent).toBe('7%');
+    });
+
+    it('preserves a child critic zero without fetching the parent Series', async () => {
+        mountPlayer('critic-child-zero');
+        const jf = vi.fn().mockResolvedValue({
+            Items: [{
+                Type: 'Season',
+                SeriesId: 'parent-series',
+                CommunityRating: null,
+                CriticRating: 0,
+            }],
+        });
+        JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+        JC.initializeOsdRating!();
+        await flushPromises();
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+
+        expect(jf).toHaveBeenCalledTimes(1);
+        expect(document.querySelector('#jc-osd-rating-container .critic .jc-text')?.textContent).toBe('0%');
+    });
+
+    it('fetches the parent Series only when both child rating fields are nullish', async () => {
+        mountPlayer('critic-child-missing');
+        const jf = vi.fn()
+            .mockResolvedValueOnce({
+                Items: [{
+                    Type: 'Episode',
+                    SeriesId: 'parent-series',
+                    CommunityRating: null,
+                    CriticRating: null,
+                }],
+            })
+            .mockResolvedValueOnce({
+                Items: [{ Type: 'Series', CommunityRating: null, CriticRating: 7 }],
+            });
+        JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+        JC.initializeOsdRating!();
+        await flushPromises();
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+        await flushPromises();
+
+        expect(jf).toHaveBeenCalledTimes(2);
+        expect(document.querySelector('#jc-osd-rating-container .critic .jc-text')?.textContent).toBe('7%');
+    });
+
+    it('omits invalid non-null critic data without falling back to the parent', async () => {
+        mountPlayer('critic-child-invalid');
+        const jf = vi.fn().mockResolvedValue({
+            Items: [{
+                Type: 'Episode',
+                SeriesId: 'parent-series',
+                CommunityRating: null,
+                CriticRating: -1,
+            }],
+        });
+        JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+        JC.initializeOsdRating!();
+        await flushPromises();
+        vi.advanceTimersByTime(200);
+        await flushPromises();
+
+        expect(jf).toHaveBeenCalledTimes(1);
+        expect(document.getElementById('jc-osd-rating-container')).toBeNull();
+    });
+
     it('cancels A player waits and keeps navigation subscriptions bounded', () => {
         const baseBodyCount = JC.core.dom!.getBodySubscriberCount();
         const baseNavCount = JC.core.navigation!.getNavCallbackCount();

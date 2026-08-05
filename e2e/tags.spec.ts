@@ -139,6 +139,89 @@ test.describe('tags', () => {
         expect(consoleErrors.real()).toEqual([]);
     });
 
+    test('single-digit Jellyfin critic values stay single-digit on real poster cards', async ({ page, consoleErrors }) => {
+        const routePattern = '**/JellyfinCanopy/tag-cache/**';
+        const injectedIds = new Set<string>();
+        await page.route(routePattern, async (route) => {
+            const response = await route.fetch();
+            const url = new URL(route.request().url());
+            const body = await response.json() as {
+                items?: Record<string, Record<string, unknown>>;
+                Items?: Record<string, Record<string, unknown>>;
+            };
+
+            // Modify only the full projected snapshot. Cursor validation/delta
+            // responses must remain byte-semantically honest or the pipeline
+            // will correctly discard the prefetch and request another snapshot.
+            const items = body.items ?? body.Items;
+            if (url.search === '' && items && typeof items === 'object') {
+                for (const [id, rawEntry] of Object.entries(items)) {
+                    if (!rawEntry || rawEntry.RatingSuppressed === true) continue;
+                    items[id] = {
+                        ...rawEntry,
+                        CommunityRating: null,
+                        CriticRating: 7,
+                    };
+                    injectedIds.add(id.replace(/-/g, '').toLowerCase());
+                }
+            }
+
+            await route.fulfill({ response, json: body });
+        });
+
+        try {
+            await loginAs(page, 'admin', consoleErrors);
+            expect(await page.evaluate(() => (
+                (window as any).JellyfinCanopy?.currentSettings?.ratingTagsEnabled
+            ))).toBe(true);
+            await expect.poll(() => injectedIds.size, { timeout: 60_000 }).toBeGreaterThan(0);
+            await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
+
+            const ids = [...injectedIds];
+            await page.waitForFunction((expectedIds) => {
+                const expected = new Set(expectedIds);
+                return [...document.querySelectorAll<HTMLElement>('#indexPage .cardImageContainer')]
+                    .some((image) => {
+                        const backgroundId = image.style.backgroundImage
+                            .match(/Items\/([a-f0-9]{32})\//i)?.[1];
+                        const owner = image.closest<HTMLElement>('[data-id], [data-itemid]');
+                        const rawId = backgroundId
+                            ?? owner?.getAttribute('data-id')
+                            ?? owner?.getAttribute('data-itemid');
+                        const id = rawId?.replace(/-/g, '').toLowerCase();
+                        return !!id
+                            && expected.has(id)
+                            && !!image.closest('.card')?.querySelector('.rating-tag-critic .rating-text');
+                    });
+            }, ids, { timeout: 60_000 });
+            const rendered = await page.evaluate((expectedIds) => {
+                const expected = new Set(expectedIds);
+                return [...document.querySelectorAll<HTMLElement>('#indexPage .cardImageContainer')]
+                    .flatMap((image) => {
+                        const backgroundId = image.style.backgroundImage
+                            .match(/Items\/([a-f0-9]{32})\//i)?.[1];
+                        const owner = image.closest<HTMLElement>('[data-id], [data-itemid]');
+                        const rawId = backgroundId
+                            ?? owner?.getAttribute('data-id')
+                            ?? owner?.getAttribute('data-itemid');
+                        const id = rawId?.replace(/-/g, '').toLowerCase();
+                        if (!id || !expected.has(id)) return [];
+                        const text = image.closest('.card')
+                            ?.querySelector<HTMLElement>('.rating-tag-critic .rating-text')
+                            ?.textContent;
+                        return text ? [text] : [];
+                    });
+            }, ids);
+            expect(rendered.length).toBeGreaterThan(0);
+            expect(rendered.every((text) => text === '7%')).toBe(true);
+
+            expect(consoleErrors.unexpected5xx(), 'unexpected 5xx responses').toEqual([]);
+            expect(consoleErrors.real()).toEqual([]);
+        } finally {
+            await page.unroute(routePattern);
+        }
+    });
+
     // Regression: "Hide Tags on Hover" must hide the tags on the detail-page
     // primary poster too. That poster is a `.card` with NO `.cardOverlayContainer`,
     // so its tags render straight into `.cardScalable` with no `.jc-tag-host`

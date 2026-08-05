@@ -1322,6 +1322,93 @@ describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
         }
     });
 
+    it('requests a rating parent only for descendants whose full rating pair is nullish', async () => {
+        document.body.innerHTML = '';
+        const ownId = '68200000000000000000000000000001';
+        const ownParentId = '68200000000000000000000000000002';
+        const missingId = '68200000000000000000000000000003';
+        const missingParentId = '68200000000000000000000000000004';
+        const missingParent = {
+            Id: missingParentId,
+            Type: 'Series',
+            CommunityRating: null,
+            CriticRating: 7,
+        };
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = {
+            ...oldConfig,
+            TagCacheServerMode: false,
+            SpoilerBlurEnabled: false,
+        };
+        JC.core.ui = {
+            injectCss: vi.fn(),
+            removeCss: vi.fn(),
+        } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userA);
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockImplementation((_userId, itemId) => {
+            if (itemId === missingParentId) return Promise.resolve(missingParent);
+            return Promise.reject(new Error(`unexpected parent lookup: ${itemId}`));
+        });
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockResolvedValue({
+            Items: [
+                {
+                    Id: ownId,
+                    Type: 'Episode',
+                    SeriesId: ownParentId,
+                    CommunityRating: null,
+                    CriticRating: 0,
+                },
+                {
+                    Id: missingId,
+                    Type: 'Episode',
+                    SeriesId: missingParentId,
+                    CommunityRating: null,
+                    CriticRating: null,
+                },
+            ],
+        });
+        const rendered = new Map<string, { ratingParentSeries: unknown }>();
+        JC.tagPipeline!.registerRenderer('critic-parent-contract-test', {
+            isEnabled: () => true,
+            render: (_target: HTMLElement, rawItem: unknown, rawExtras: unknown) => {
+                const item = rawItem as { Id: string };
+                const extras = rawExtras as { ratingParentSeries: unknown };
+                rendered.set(item.Id, { ratingParentSeries: extras.ratingParentSeries });
+            },
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            JC.tagPipeline!.initialize?.();
+            JC.tagPipeline!.clearProcessed?.();
+            for (const itemId of [ownId, missingId]) {
+                const image = gridCardImage();
+                const card = image.closest<HTMLElement>('.card')!;
+                card.dataset.id = itemId;
+                card.dataset.type = 'Episode';
+                document.body.appendChild(card);
+            }
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => expect(rendered.size).toBe(2));
+            expect(getItem).toHaveBeenCalledTimes(1);
+            expect(getItem).toHaveBeenCalledWith(userA, missingParentId);
+            expect(rendered.get(ownId)?.ratingParentSeries).toBeNull();
+            expect(rendered.get(missingId)?.ratingParentSeries).toBe(missingParent);
+        } finally {
+            history.pushState({}, '', `/critic-parent-contract-cleanup-${Date.now()}`);
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('critic-parent-contract-test');
+            ajax.mockRestore();
+            getItem.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
     it('skips stale Series supplemental work and renders base data when the episode lookup fails', async () => {
         document.body.innerHTML = '';
         const disconnectedId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3';

@@ -322,6 +322,74 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             finally { TryDelete(dir); }
         }
 
+        [Fact]
+        public void InitialBuild_PreservesCriticOnlyEpisodeAndSeasonRatings()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var seriesId = Guid.NewGuid();
+                var seasonId = Guid.NewGuid();
+                var episodeId = Guid.NewGuid();
+                var series = new StubSeries
+                {
+                    Id = seriesId,
+                    Name = "Series",
+                    DateLastSaved = T0,
+                    CommunityRating = 9.0f,
+                    CriticRating = 90,
+                    Genres = new[] { "Drama" },
+                };
+                var season = new StubSeason
+                {
+                    Id = seasonId,
+                    Name = "Season",
+                    DateLastSaved = T0,
+                    SeriesId = seriesId,
+                    CommunityRating = null,
+                    CriticRating = 7,
+                    Genres = Array.Empty<string>(),
+                };
+                var episode = new StubEpisode
+                {
+                    Id = episodeId,
+                    Name = "Episode",
+                    DateLastSaved = T0,
+                    SeriesId = seriesId,
+                    SeasonId = seasonId,
+                    CommunityRating = null,
+                    CriticRating = 0,
+                };
+                var scan = new List<BaseItem> { series, season, episode };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = q => q.ParentId == Guid.Empty ? scan : new List<BaseItem> { episode },
+                    GetItemByIdHook = id => id == seriesId
+                        ? series
+                        : id == seasonId
+                            ? season
+                            : id == episodeId
+                                ? episode
+                                : null,
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+
+                var seasonEntry = svc.GetEntryForTest(Key(seasonId));
+                Assert.NotNull(seasonEntry);
+                Assert.Null(seasonEntry!.CommunityRating);
+                Assert.Equal(7, seasonEntry.CriticRating);
+                Assert.Equal(new[] { "Drama" }, seasonEntry.Genres);
+
+                var episodeEntry = svc.GetEntryForTest(Key(episodeId));
+                Assert.NotNull(episodeEntry);
+                Assert.Null(episodeEntry!.CommunityRating);
+                Assert.Equal(0, episodeEntry.CriticRating);
+            }
+            finally { TryDelete(dir); }
+        }
+
         // ── Probe failure: keep probe-independent data + last-good streams, retry until recovery ──
 
         [Fact]

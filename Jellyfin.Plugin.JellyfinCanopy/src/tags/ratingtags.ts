@@ -6,6 +6,7 @@
 // markup, and the synthetic items handed to the user-review tag module.
 
 import { JC as JEBase } from '../globals';
+import { normalizeCriticPercent, ratingsAreMissing } from '../core/critic-rating';
 import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
@@ -54,18 +55,7 @@ function shouldSuppressRatingTag(item: SuppressionItem | null | undefined): bool
 const FRESH_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMyIgcj0iOCIgZmlsbD0iI2Y5MzIwOCIvPjxwYXRoIGQ9Ik0xMiA1YzEtMiAzLTMgNS0zLTEgMi0yIDMtNCA0eiIgZmlsbD0iIzVhYTAyYyIvPjwvc3ZnPg==';
 const ROTTEN_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDNjMiAzIDYgMyA2IDcgMCAzIDIgNCAxIDctMiA0LTggNC0xMSAxLTMtMy0yLTYtMS04IDEtMiAzLTMgNS03eiIgZmlsbD0iIzZiOGUyMyIvPjwvc3ZnPg==';
 
-/**
- * Normalize a raw critic rating to a 0-100 integer percentage.
- * @param raw - Raw critic rating value (may be on a 0-10 or 0-100 scale).
- * @returns Normalized percentage or null if invalid.
- */
-function normalizeCriticPercent(raw: unknown): number | null {
-    if (raw === null || raw === undefined) return null;
-    const num = Number(raw);
-    if (!Number.isFinite(num)) return null;
-    const percent = num <= 10 ? Math.round(num * 10) : Math.round(num);
-    return Math.max(0, Math.min(100, percent));
-}
+const RATING_CACHE_SCHEMA_VERSION = 2;
 
 /**
  * A cached rating entry as read back for the render paths. Carries the display
@@ -73,6 +63,8 @@ function normalizeCriticPercent(raw: unknown): number | null {
  * can re-evaluate suppression without the full item DTO.
  */
 interface RatingCacheEntry {
+    /** v2 stores Jellyfin critic values as direct 0–100 percentages. */
+    schemaVersion: number;
     tmdb: string | null;
     critic: number | null;
     /** Spoiler-Guard: the cached item's Type ('Series' | 'Season' | 'Episode' | 'Movie'). */
@@ -113,26 +105,25 @@ interface ServerCacheRatingEntry {
 function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEntry | null {
     const entry: unknown = ctx.getPersistent(itemId) ?? ctx.hot?.get(itemId);
     if (!entry) return null;
-    // Spoiler Guard: entries cached BEFORE the guard fields existed (legacy
-    // string/number shorthand, or objects without sgType) carry no suppression
-    // context, so renderFromCache could replay a rating for a newly guarded
-    // item. While the feature is enabled, treat them as cache misses — the
-    // re-fetch stores a fresh entry WITH sg fields. Feature off → identical
-    // legacy behavior.
+    // Pre-v2 rows may contain the former <=10 ×10 critic transformation. Reject
+    // every shorthand/unversioned row so the live path refetches and overwrites
+    // it; the same validation covers persistent and session-hot caches.
     const guardOn = JC.pluginConfig?.SpoilerBlurEnabled === true;
     if (typeof entry === 'string' || typeof entry === 'number') {
-        return guardOn ? null : { tmdb: String(entry), critic: null };
+        return null;
     }
     if (typeof entry === 'object') {
         const cached = entry as Partial<RatingCacheEntry>;
+        if (cached.schemaVersion !== RATING_CACHE_SCHEMA_VERSION) return null;
         if (guardOn && typeof cached.sgType !== 'string') return null;
         // Expose ratings, personal-review identity, PLUS the Spoiler-Guard fields
         // stashed by render(). Without them, renderFromCache's
         // suppression re-check saw Type=undefined and never suppressed, so a
         // rating cached BEFORE the show was guarded replayed forever.
         return {
+            schemaVersion: RATING_CACHE_SCHEMA_VERSION,
             tmdb: cached.tmdb ?? null,
-            critic: cached.critic ?? null,
+            critic: normalizeCriticPercent(cached.critic),
             sgType: cached.sgType,
             sgSeriesId: cached.sgSeriesId ?? null,
             sgPlayed: cached.sgPlayed === true,
@@ -153,9 +144,14 @@ function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEnt
  * @param itemId - Jellyfin item ID.
  * @param rating - Rating data to cache.
  */
-function setCachedEntry(ctx: TagRendererContext, itemId: string, rating: unknown): void {
-    ctx.setPersistent(itemId, rating);
-    ctx.hot?.set(itemId, rating);
+function setCachedEntry(
+    ctx: TagRendererContext,
+    itemId: string,
+    rating: Omit<RatingCacheEntry, 'schemaVersion'>,
+): void {
+    const versioned = { ...rating, schemaVersion: RATING_CACHE_SCHEMA_VERSION };
+    ctx.setPersistent(itemId, versioned);
+    ctx.hot?.set(itemId, versioned);
 }
 
 /** Keep the personal/user-review chip when public ratings are suppressed. */
@@ -384,7 +380,7 @@ const spec: TagSpec = {
 
             // Extract ratings from item, falling back to parent series for Season/Episode
             let sourceItem = item;
-            if (extras.ratingParentSeries && !item.CommunityRating && !item.CriticRating) {
+            if (extras?.ratingParentSeries && ratingsAreMissing(item)) {
                 sourceItem = extras.ratingParentSeries;
             }
 
