@@ -974,5 +974,21 @@
   "maintainerr_unavailable": "Maintainerr غير متاح",
   "maintainerr_version": "الإصدار {version}",
   "maintainerr_view_content": "عرض عناصر الوسائط",
-  "maintainerr_views": "طرق عرض Maintainerr"
+  "maintainerr_views": "طرق عرض Maintainerr",
+  "track_off": "إيقاف",
+  "aspect_ratio_auto": "تلقائي",
+  "aspect_ratio_cover": "تغطية",
+  "aspect_ratio_fill": "ملء",
+  "playback_info_title": "معلومات التشغيل",
+  "pi_resolution": "الدقة",
+  "pi_speed": "السرعة",
+  "pi_dropped_frames": "الإطارات المفقودة",
+  "pi_buffer": "مخزّن مؤقتًا",
+  "pi_play_method": "طريقة التشغيل",
+  "pi_transcoding": "تحويل الترميز",
+  "pi_bitrate": "معدل البت",
+  "pi_transcode_reason": "السبب",
+  "pi_container": "الحاوية",
+  "pi_audio": "الصوت",
+  "pi_subtitle": "الترجمات"
 }

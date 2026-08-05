@@ -974,5 +974,21 @@
   "maintainerr_unavailable": "Maintainerr is niet beschikbaar",
   "maintainerr_version": "Versie {version}",
   "maintainerr_view_content": "Media-items bekijken",
-  "maintainerr_views": "Maintainerr weergaven"
+  "maintainerr_views": "Maintainerr weergaven",
+  "track_off": "Uit",
+  "aspect_ratio_auto": "Automatisch",
+  "aspect_ratio_cover": "Bedekken",
+  "aspect_ratio_fill": "Vullen",
+  "playback_info_title": "Afspeelinfo",
+  "pi_resolution": "Resolutie",
+  "pi_speed": "Snelheid",
+  "pi_dropped_frames": "Verloren frames",
+  "pi_buffer": "Gebufferd",
+  "pi_play_method": "Afspeelmethode",
+  "pi_transcoding": "Transcodering",
+  "pi_bitrate": "Bitrate",
+  "pi_transcode_reason": "Reden",
+  "pi_container": "Container",
+  "pi_audio": "Audio",
+  "pi_subtitle": "Ondertitels"
 }

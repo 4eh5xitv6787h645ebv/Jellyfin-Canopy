@@ -974,5 +974,21 @@
   "maintainerr_unavailable": "Maintainerr ist nicht verfügbar",
   "maintainerr_version": "Version {version}",
   "maintainerr_view_content": "Medienelemente anzeigen",
-  "maintainerr_views": "Maintainerr Ansichten"
+  "maintainerr_views": "Maintainerr Ansichten",
+  "track_off": "Aus",
+  "aspect_ratio_auto": "Automatisch",
+  "aspect_ratio_cover": "Ausschnitt",
+  "aspect_ratio_fill": "Füllen",
+  "playback_info_title": "Wiedergabeinfo",
+  "pi_resolution": "Auflösung",
+  "pi_speed": "Geschwindigkeit",
+  "pi_dropped_frames": "Verworfene Frames",
+  "pi_buffer": "Gepuffert",
+  "pi_play_method": "Wiedergabemethode",
+  "pi_transcoding": "Transkodierung",
+  "pi_bitrate": "Bitrate",
+  "pi_transcode_reason": "Grund",
+  "pi_container": "Container",
+  "pi_audio": "Audio",
+  "pi_subtitle": "Untertitel"
 }

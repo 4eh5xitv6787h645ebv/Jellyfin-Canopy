@@ -974,5 +974,21 @@
   "maintainerr_unavailable": "Maintainerr är inte tillgänglig",
   "maintainerr_version": "Version {version}",
   "maintainerr_view_content": "Visa mediaobjekt",
-  "maintainerr_views": "Maintainerr visningar"
+  "maintainerr_views": "Maintainerr visningar",
+  "track_off": "Av",
+  "aspect_ratio_auto": "Auto",
+  "aspect_ratio_cover": "Täck",
+  "aspect_ratio_fill": "Fyll",
+  "playback_info_title": "Uppspelningsinfo",
+  "pi_resolution": "Upplösning",
+  "pi_speed": "Hastighet",
+  "pi_dropped_frames": "Tappade bildrutor",
+  "pi_buffer": "Buffrat",
+  "pi_play_method": "Uppspelningsmetod",
+  "pi_transcoding": "Omkodning",
+  "pi_bitrate": "Bithastighet",
+  "pi_transcode_reason": "Orsak",
+  "pi_container": "Behållare",
+  "pi_audio": "Ljud",
+  "pi_subtitle": "Undertexter"
 }
