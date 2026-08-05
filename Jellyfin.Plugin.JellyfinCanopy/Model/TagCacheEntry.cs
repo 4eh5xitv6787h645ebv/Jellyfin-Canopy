@@ -108,6 +108,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         public string? ChannelLayout { get; set; }
         public string? VideoRangeType { get; set; }
         public string? DisplayTitle { get; set; }
+        public bool IsDefault { get; set; }
+        public int? Index { get; set; }
+        public int SourceIndex { get; set; }
     }
 
     public class TagMediaSource

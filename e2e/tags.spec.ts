@@ -229,6 +229,116 @@ test.describe('tags', () => {
         }
     });
 
+    test('preferred audio language selects one real track and rerenders without a mixed badge', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        const settingKeys = [
+            'qualityTagsEnabled',
+            'showResolutionTag',
+            'showSourceTag',
+            'showDynamicRangeTag',
+            'showSpecialFormatTag',
+            'showVideoCodecTag',
+            'showAudioInfoTag',
+            'preferredAudioLanguage',
+        ];
+        const fixture = await page.evaluate(async (keys) => {
+            const api = (window as any).ApiClient;
+            const canopy = (window as any).JellyfinCanopy;
+            const userId = api.getCurrentUserId();
+            const result = await api.getItems(userId, {
+                IncludeItemTypes: 'Movie',
+                Recursive: true,
+                Fields: 'Path,MediaSources,MediaStreams',
+                Limit: 100,
+            });
+            const expectedPath = '/media/Movies/Echo Meridian (2025).mkv';
+            const matches = (result?.Items || []).filter((item: any) => item.Path === expectedPath);
+            const item = matches[0];
+            const snapshot: Record<string, { has: boolean; value: unknown }> = {};
+            for (const key of keys) {
+                snapshot[key] = {
+                    has: Object.prototype.hasOwnProperty.call(canopy.currentSettings, key),
+                    value: canopy.currentSettings[key],
+                };
+            }
+            const cache = item
+                ? await api.ajax({
+                    type: 'GET',
+                    url: api.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
+                    dataType: 'json',
+                })
+                : null;
+            const projected = (cache?.items?.[item?.Id]?.StreamData?.Streams || [])
+                .filter((stream: any) => stream?.Type === 'Audio')
+                .map((stream: any) => ({
+                    language: String(stream.Language || '').toLowerCase(),
+                    codec: String(stream.Codec || '').toLowerCase(),
+                    channels: stream.Channels,
+                    isDefault: stream.IsDefault === true,
+                    sourceIndex: stream.SourceIndex,
+                }))
+                .sort((a: any, b: any) => a.language.localeCompare(b.language));
+            return { matchCount: matches.length, itemId: item?.Id || '', projected, snapshot };
+        }, settingKeys);
+
+        expect(fixture.matchCount).toBe(1);
+        expect(fixture.itemId).not.toBe('');
+        expect(fixture.projected).toEqual([
+            { language: 'en-us', codec: 'aac', channels: 6, isDefault: true, sourceIndex: 0 },
+            { language: 'pt-br', codec: 'eac3', channels: 2, isDefault: false, sourceIndex: 0 },
+        ]);
+
+        const applyPreference = async (preference: string) => {
+            await page.evaluate(async ({ next }) => {
+                const canopy = (window as any).JellyfinCanopy;
+                Object.assign(canopy.currentSettings, {
+                    qualityTagsEnabled: true,
+                    showResolutionTag: false,
+                    showSourceTag: false,
+                    showDynamicRangeTag: false,
+                    showSpecialFormatTag: false,
+                    showVideoCodecTag: false,
+                    showAudioInfoTag: true,
+                    preferredAudioLanguage: next,
+                });
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeQualityTags();
+            }, { next: preference });
+        };
+
+        try {
+            await applyPreference('pt-BR');
+            await showRoute(page, `/details?id=${fixture.itemId}`);
+            await waitForHash(page, fixture.itemId);
+            const poster = page.locator(
+                '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+                + '#itemDetailPage:not(.hide) .detailImageContainer .card'
+            ).filter({ has: page.locator('.quality-overlay-container') }).first();
+            const soundBadge = poster.locator('.quality-overlay-label');
+            await expect(soundBadge).toHaveText(['Dolby Digital+ 2.0'], { timeout: 60_000 });
+
+            await applyPreference('');
+            await expect(soundBadge).toHaveText(['5.1'], { timeout: 60_000 });
+
+            await applyPreference('pt');
+            await expect(soundBadge).toHaveText(['Dolby Digital+ 2.0'], { timeout: 60_000 });
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            await page.evaluate(async ({ keys, snapshot }) => {
+                const canopy = (window as any).JellyfinCanopy;
+                for (const key of keys) {
+                    if (snapshot[key].has) canopy.currentSettings[key] = snapshot[key].value;
+                    else delete canopy.currentSettings[key];
+                }
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeQualityTags();
+            }, { keys: settingKeys, snapshot: fixture.snapshot });
+        }
+    });
+
     test('regional audio metadata renders the same explicit flag on poster and details', async ({
         page,
         consoleErrors,

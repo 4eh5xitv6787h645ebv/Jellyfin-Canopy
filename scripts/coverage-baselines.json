@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2918,
+        "coveredLines": 2919,
         "totalLines": 3304
       },
       "observations": {
-        "cleanRuns": 2,
-        "minimumCoveredLines": 2918,
-        "maximumCoveredLines": 2918
+        "cleanRuns": 3,
+        "minimumCoveredLines": 2919,
+        "maximumCoveredLines": 2919
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The issue-666 fix preserves explicit BCP-47 language regions (pt-BR, en-US, es-MX) in media language tags and adds the shared media-language core module with its regional-flag coverage. Rebased onto current main; the official CI client coverage gate measured 2,918/3,304 (88.317%) on this exact tree. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #664 adds preferred-audio-language selection on top of the shared BCP-47 resolver, including exact-region/base-language fallbacks, per-user inheritance, acknowledgement-safe whole-file persistence, and server-cache identity fencing. Two clean full client runs on this exact 3,304-line core scope and 2,314-test tree both passed every test and measured 2,919/3,304 (88.347%), advancing the prior 2,918-line high-water by one covered line with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,919/3,304 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43981,
-        "totalLines": 53733
+        "coveredLines": 44043,
+        "totalLines": 53803
       },
       "observations": {
-        "cleanRuns": 5,
-        "minimumCoveredLines": 43966,
-        "maximumCoveredLines": 43981
+        "cleanRuns": 2,
+        "minimumCoveredLines": 44038,
+        "maximumCoveredLines": 44043
       },
       "tolerance": {
-        "missingCoveredLines": 15,
-        "rationale": "Issue #685 adds explicit disabled-shortcut normalization and server regressions, finally rebased onto merged issues #663 and #682 at main 05b8eddb. Five clean full-suite runs on this exact 53,733-line source and 4,185-test scope passed every test: two owner-side local runs measured 43,972 and 43,966, two coordinator local runs measured 43,974 and 43,976, and the hosted PR run measured the observed high-water 43,981. The reviewed observed high-water is therefore 43,981/53,733 (81.851%) and the exact observed floor is 43,966/53,733 (81.823%); the fifteen-line timing-dependent instrumentation spread is 0.028 percentage points, far inside the 0.15pp policy bound. This clean new-scope envelope also supersedes main's issue-682 metadata record, whose 43,935 high-water was predicted rather than observed; the hosted issue-682 run actually measured 43,928/53,701. One intervening coordinator full-coverage attempt failed two unnamed tests and is not counted as clean evidence; the repository wrapper emitted no TRX for that failed attempt. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 5,
+        "rationale": "Issue #664 adds authoritative preferred-audio-language normalization and server-cache audio-track projection with focused regressions. Three clean full-suite runs on this exact 53,803-line source and 4,199-test scope passed every test and measured 44,038, the observed high-water 44,043, and 44,039 covered lines. The reviewed high-water is therefore 44,043/53,803 (81.860%) and the exact observed floor is 44,038/53,803 (81.850%); the five-line timing-dependent instrumentation spread is 0.009 percentage points, far inside the 0.15pp policy bound. Three intervening full-coverage attempts are excluded because unrelated timing/cache-concurrency tests failed (one or two failures out of 4,199), so they are not clean evidence. The final repository wrapper passed end to end at 44,039/53,803 within that reviewed envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

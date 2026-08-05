@@ -239,10 +239,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                         nameof(configuration));
                 }
 
+                NormalizePreferredAudioLanguageForUpdate(config);
                 SanitizeExternalUrlFields(config);
             }
 
             base.UpdateConfiguration(configuration);
+        }
+
+        internal static void NormalizePreferredAudioLanguageForUpdate(PluginConfiguration config)
+        {
+            if (!PreferredAudioLanguageNormalizer.TryNormalize(
+                    config.PreferredAudioLanguage,
+                    preserveNull: false,
+                    out var normalized))
+            {
+                throw new ArgumentException(
+                    "PreferredAudioLanguage must be empty or a supported BCP-47 language tag no longer than 255 characters.",
+                    nameof(config));
+            }
+
+            config.PreferredAudioLanguage = normalized!;
         }
 
         // Armed while a startup migration failure is being handled. Enhanced import

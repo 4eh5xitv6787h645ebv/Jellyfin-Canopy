@@ -38,6 +38,8 @@ export interface PluginConfig {
     MaintainerrItemStatusEnabled?: boolean;
     /** Allow the generic two-boolean item status for non-administrators. */
     MaintainerrItemStatusForUsers?: boolean;
+    /** Administrator default for deterministic audio quality-tag selection. */
+    PreferredAudioLanguage?: string;
     [key: string]: unknown;
 }
 
@@ -47,6 +49,8 @@ export interface PluginConfig {
  */
 export interface UserSettings {
     animeFillerWarningsEnabled?: boolean;
+    /** null inherits admin, empty selects Automatic, otherwise canonical BCP-47. */
+    preferredAudioLanguage?: string | null;
     [key: string]: unknown;
 }
 

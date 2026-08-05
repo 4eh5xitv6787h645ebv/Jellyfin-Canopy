@@ -279,6 +279,11 @@
                             <div class="jc-setting-description" data-desc-for="qualityTagsEnabled">
                                 <div class="fieldDescription jc-field-desc-sm">This feature is a slightly modified version of the original script by <a class="sectionTitle" href="https://github.com/BobHasNoSoul/Jellyfin-Qualitytags/" target="_blank">BobHasNoSoul</a></div>
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="preferredAudioLanguage">Preferred audio language default</label>
+                                <input is="emby-input" id="preferredAudioLanguage" data-config-key="PreferredAudioLanguage" type="text" maxlength="255" inputmode="text" placeholder="Automatic (for example: en-US)" pattern="[A-Za-z0-9-]*" />
+                                <div class="fieldDescription">Optional BCP-47 language used by audio quality badges. Exact regional matches are preferred, then the base language, Jellyfin's default track, and a deterministic fallback. Leave blank for Automatic; users can inherit or override this value.</div>
+                            </div>
                             <details id="qualityCategoriesAdminDetails" class="jc-details-section">
                                 <summary>Configure tag categories</summary>
                                 <div id="qualityCategoriesAdmin" class="jc-details-body">

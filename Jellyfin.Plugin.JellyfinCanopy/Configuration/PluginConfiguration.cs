@@ -496,6 +496,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ShowSpecialFormatTag { get; set; } = true;
         public bool ShowVideoCodecTag { get; set; } = true;
         public bool ShowAudioInfoTag { get; set; } = true;
+        public string PreferredAudioLanguage { get; set; } = string.Empty;
         public int ResolutionTagOrder { get; set; } = 1;
         public int SourceTagOrder { get; set; } = 2;
         public int DynamicRangeTagOrder { get; set; } = 3;

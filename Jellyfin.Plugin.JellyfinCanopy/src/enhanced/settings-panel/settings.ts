@@ -7,6 +7,7 @@
 
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
+import { canonicalizeAudioLanguagePreference } from '../../tags/audio-track-selection';
 import { showReleaseNotesNotification } from './release-notes';
 import type { PanelContext } from './panel';
 import {
@@ -60,8 +61,18 @@ async function reconcileAfterFailure(ctx: PanelContext, editor: PanelEditorConte
 }
 
 /** Persist through the editor that owns this panel; target failures rebuild only target-local UI. */
-function persistEditorSettings(ctx: PanelContext, editor: PanelEditorContext): Promise<boolean> {
-    return Promise.resolve(editor.saveSettings()).then(
+function persistEditorSettings(
+    ctx: PanelContext,
+    editor: PanelEditorContext,
+    shouldDeferFailureReconciliation: () => boolean = () => false,
+): Promise<boolean> {
+    let request: ReturnType<PanelEditorContext['saveSettings']>;
+    try {
+        request = editor.saveSettings();
+    } catch (error) {
+        request = Promise.reject(error);
+    }
+    return Promise.resolve(request).then(
         () => true,
         async (error: unknown) => {
             const classified = error instanceof AdminTargetPersistenceError ? error : null;
@@ -79,7 +90,9 @@ function persistEditorSettings(ctx: PanelContext, editor: PanelEditorContext): P
                         : 'panel_admin_target_save_error';
                 toast(JC.t!(key), undefined, 'error');
             }
-            await reconcileAfterFailure(ctx, editor);
+            if (!shouldDeferFailureReconciliation()) {
+                await reconcileAfterFailure(ctx, editor);
+            }
             if (editor.appliesToActor && JC.identity.isCurrent(editor.actor)) {
                 reapplyAcknowledgedSideEffects();
             }
@@ -98,7 +111,74 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     const editor = ctx.editor || createSelfPanelEditorContext(identityContext || JC.identity.capture()!);
     const settings = editor.settings as Record<string, any>;
     const appliesToActor = editor.appliesToActor;
-    const persistSettings = () => persistEditorSettings(ctx, editor);
+    let audioLanguageIntent = 0;
+    let acknowledgedAudioGeneration = 0;
+    let acknowledgedAudioLanguage = settings.preferredAudioLanguage as string | null | undefined;
+    type AudioGeneration = {
+        id: number;
+        value: string | null;
+        inFlight: number;
+        succeeded: boolean;
+    };
+    let pendingAudioGeneration: AudioGeneration | null = null;
+    const publishAcknowledgedAudioLanguage = (showSavedToast: boolean): void => {
+        const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
+            ? JC.currentSettings as Record<string, any>
+            : settings;
+        const changed = liveSettings.preferredAudioLanguage !== acknowledgedAudioLanguage;
+        liveSettings.preferredAudioLanguage = acknowledgedAudioLanguage;
+        if (liveSettings !== settings) settings.preferredAudioLanguage = acknowledgedAudioLanguage;
+        if ((showSavedToast || changed) && liveSettings.qualityTagsEnabled
+            && typeof (JC as any).reinitializeQualityTags === 'function') {
+            (JC as any).reinitializeQualityTags();
+        }
+        if (showSavedToast) toast(JC.t!('panel_settings_ui_preferred_audio_language_saved'));
+    };
+    const settleAudioCarrier = (generation: AudioGeneration, saved: boolean): void => {
+        generation.inFlight = Math.max(0, generation.inFlight - 1);
+        if (!editor.isCurrent() || !JC.identity.isCurrent(editor.actor)) return;
+        if (saved) {
+            generation.succeeded = true;
+            if (generation.id >= acknowledgedAudioGeneration) {
+                acknowledgedAudioGeneration = generation.id;
+                acknowledgedAudioLanguage = generation.value;
+            }
+            if (pendingAudioGeneration === generation) {
+                pendingAudioGeneration = null;
+                publishAcknowledgedAudioLanguage(true);
+            }
+            return;
+        }
+        if (!generation.succeeded && generation.inFlight === 0
+            && pendingAudioGeneration === generation) {
+            pendingAudioGeneration = null;
+            publishAcknowledgedAudioLanguage(false);
+        }
+    };
+    const persistSettings = (): Promise<boolean> => {
+        const generation = pendingAudioGeneration;
+        if (!appliesToActor || !generation) {
+            return persistEditorSettings(ctx, editor);
+        }
+        // All settings saves serialize the whole self-owned object. Overlay the
+        // pending audio intent for every synchronous capture so an unrelated
+        // setting edit cannot persist the renderer's older acknowledged value.
+        settings.preferredAudioLanguage = generation.value;
+        let request: Promise<boolean>;
+        try {
+            request = persistEditorSettings(
+                ctx,
+                editor,
+                () => pendingAudioGeneration !== null
+                    && (pendingAudioGeneration !== generation || generation.inFlight > 1),
+            );
+        } finally {
+            settings.preferredAudioLanguage = acknowledgedAudioLanguage;
+        }
+        generation.inFlight++;
+        void request.then((saved) => settleAudioCarrier(generation, saved));
+        return request;
+    };
 
     const addSettingToggleListener = (id: string, settingKey: string, featureKey: string, requiresRefresh = false) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
@@ -233,6 +313,64 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             }
         });
     }
+
+    const audioLanguageMode = document.getElementById('preferredAudioLanguageMode') as HTMLSelectElement | null;
+    const audioLanguageInput = document.getElementById('preferredAudioLanguageInput') as HTMLInputElement | null;
+    const updateAudioLanguageInput = (): void => {
+        if (!audioLanguageMode || !audioLanguageInput) return;
+        const custom = audioLanguageMode.value === 'custom';
+        audioLanguageInput.disabled = !custom;
+        audioLanguageInput.closest<HTMLElement>('.jc-preferred-audio-custom')!.style.display = custom ? 'block' : 'none';
+    };
+    const commitAudioLanguagePreference = (): void => {
+        if (!audioLanguageMode || !audioLanguageInput) return;
+        let next: string | null;
+        if (audioLanguageMode.value === 'inherit') {
+            next = null;
+        } else if (audioLanguageMode.value === 'automatic') {
+            next = '';
+        } else {
+            const canonical = canonicalizeAudioLanguagePreference(audioLanguageInput.value);
+            if (canonical === null || canonical === '') {
+                audioLanguageInput.setCustomValidity(JC.t!('panel_settings_ui_preferred_audio_language_invalid'));
+                audioLanguageInput.reportValidity();
+                return;
+            }
+            next = canonical;
+            audioLanguageInput.value = canonical;
+        }
+        audioLanguageInput.setCustomValidity('');
+        const intent = ++audioLanguageIntent;
+        const generation: AudioGeneration = {
+            id: intent,
+            value: next,
+            inFlight: 0,
+            succeeded: false,
+        };
+        pendingAudioGeneration = generation;
+        let save: Promise<boolean>;
+        if (appliesToActor) {
+            save = persistSettings();
+        } else {
+            settings.preferredAudioLanguage = next;
+            save = persistSettings();
+        }
+        void save.then((saved) => {
+            if (!editor.isCurrent()) return;
+            if (appliesToActor && !JC.identity.isCurrent(editor.actor)) return;
+            if (!appliesToActor && saved && intent === audioLanguageIntent) {
+                toast(JC.t!('panel_settings_ui_preferred_audio_language_saved'));
+            }
+        });
+        resetAutoCloseTimer();
+    };
+    audioLanguageMode?.addEventListener('change', () => {
+        updateAudioLanguageInput();
+        if (audioLanguageMode.value !== 'custom') commitAudioLanguagePreference();
+    });
+    audioLanguageInput?.addEventListener('change', commitAudioLanguagePreference);
+    updateAudioLanguageInput();
+
     // Expand or collapse the 6 category rows when the user clicks the chevron.
     // The chevron rotation is driven by CSS via the aria-expanded attribute.
     if (qualitySubExpander && qualitySubGroup) {

@@ -392,6 +392,26 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <span>${JC.t!('panel_settings_ui_quality_tags_categories_label')}</span>
                                     </button>
                                 </div>
+                                ${(() => {
+                                    const raw = settings.preferredAudioLanguage;
+                                    const mode = raw === null || raw === undefined
+                                        ? 'inherit'
+                                        : String(raw).trim() === '' ? 'automatic' : 'custom';
+                                    const value = mode === 'custom' ? String(raw) : '';
+                                    return `
+                                        <div style="margin-top:12px;">
+                                            <label for="preferredAudioLanguageMode" style="display:block; font-size:13px; font-weight:600; margin-bottom:6px;">${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language'))}</label>
+                                            <select id="preferredAudioLanguageMode" style="width:100%; padding:10px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; font-family:inherit;">
+                                                <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_inherit'))}</option>
+                                                <option value="automatic" ${mode === 'automatic' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_automatic'))}</option>
+                                                <option value="custom" ${mode === 'custom' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_custom'))}</option>
+                                            </select>
+                                            <div class="jc-preferred-audio-custom" style="margin-top:8px; display:${mode === 'custom' ? 'block' : 'none'};">
+                                                <input id="preferredAudioLanguageInput" type="text" maxlength="255" inputmode="text" value="${escapeHtml(value)}" placeholder="en-US" aria-label="${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_custom'))}" style="box-sizing:border-box; width:100%; padding:10px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; font-family:inherit;" />
+                                            </div>
+                                            <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:6px;">${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_desc'))}</div>
+                                        </div>`;
+                                })()}
                                 <div id="qualityTagsSubToggles" class="jc-quality-cat-list" style="display: none;">
                                     ${(() => {
                                         const cats = [

@@ -204,6 +204,48 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void PreferredAudioLanguage_CanonicalizesAndPreservesInheritAutomaticTriState()
+        {
+            SeedSettings();
+
+            Assert.IsType<OkObjectResult>(Controller(0).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings { Revision = 0, PreferredAudioLanguage = " pt-br " }));
+            Assert.Equal(
+                "pt-BR",
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").PreferredAudioLanguage);
+
+            Assert.IsType<OkObjectResult>(Controller(1).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings { Revision = 1, PreferredAudioLanguage = string.Empty }));
+            Assert.Equal(
+                string.Empty,
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").PreferredAudioLanguage);
+
+            Assert.IsType<OkObjectResult>(Controller(2).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings { Revision = 2, PreferredAudioLanguage = null }));
+            Assert.Null(
+                _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").PreferredAudioLanguage);
+            var nullAcknowledgement = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(
+                Assert.IsType<OkObjectResult>(Controller(3).SaveUserSettingsSettings(
+                    UserId,
+                    new UserSettings { Revision = 3, PreferredAudioLanguage = null })).Value);
+            var mvcJson = JsonSerializer.Serialize(nullAcknowledgement, new JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
+            Assert.Contains("\"PreferredAudioLanguage\":null", mvcJson, StringComparison.Ordinal);
+
+            Assert.IsType<BadRequestObjectResult>(Controller(3).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings { Revision = 3, PreferredAudioLanguage = "bad_tag" }));
+            var stored = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.Equal(3, stored.Revision);
+            Assert.Null(stored.PreferredAudioLanguage);
+        }
+
+        [Fact]
         public void InvalidPluginDefaults_AreNeverSeededOrResetIntoUserFiles()
         {
             _provider.Current = new PluginConfiguration { PauseScreenDelaySeconds = 0 };
