@@ -43,7 +43,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             // so the resolver's config manager is not exercised here.
             var resolver = new SpoilerUserResolver(
                 userConfigManager: null!, lib, NullLogger<SpoilerUserResolver>.Instance, identity);
-            return new SpoilerFieldStripFilter(resolver, lib, new StubUserManager(), new StubUserDataManager(), new FakePluginConfigProvider(cfg));
+            var users = new StubUserManager();
+            var userData = new StubUserDataManager();
+            var nextUnwatched = new SpoilerNextUnwatchedService(
+                lib, users, userData, NullLogger<SpoilerNextUnwatchedService>.Instance);
+            return new SpoilerFieldStripFilter(resolver, lib, users, userData, new FakePluginConfigProvider(cfg), nextUnwatched);
         }
 
         [Fact]

@@ -261,6 +261,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<ISpoilerGuardItemActionOwner, SpoilerGuardItemActionOwner>();
             serviceCollection.AddSingleton<SpoilerGuardPlatformItemActionAdapter>();
             serviceCollection.AddSingleton<SpoilerBlurImageFilter>();
+            // Per-(user, series) next-unwatched boundary for the advanced
+            // category reveals; owns its own bounded cache and evicts on
+            // IUserDataManager.UserDataSaved (O(1) on the event thread).
+            serviceCollection.AddSingleton<SpoilerNextUnwatchedService>();
             serviceCollection.AddSingleton<SpoilerFieldStripFilter>();
             // Shared pre-acquisition ("pending") pending-add core used by BOTH the
             // SpoilerGuardController HTTP endpoints and SeerrClient's durable

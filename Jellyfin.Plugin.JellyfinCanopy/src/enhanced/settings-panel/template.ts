@@ -654,6 +654,8 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                 ${row('sbPrefHideTaglines',  'HideTaglines',            'panel_settings_spoiler_guard_override_taglines',  'panel_settings_spoiler_guard_override_taglines_desc',  adminOn.taglines)}
                                 ${row('sbPrefHideTags',      'HideTags',                'panel_settings_spoiler_guard_override_tags',      'panel_settings_spoiler_guard_override_tags_desc',      adminOn.tags)}
                                 ${row('sbPrefHideReviews',   'HideReviews',             'panel_settings_spoiler_guard_override_reviews',   'panel_settings_spoiler_guard_override_reviews_desc',   adminOn.reviews)}
+                                ${/* Advanced categories: unchecking is the STRICTER choice (full uniform strip); the row only renders when the admin enabled the mode. */ ''}
+                                ${row('sbPrefAdvancedCategories', 'UseAdvancedCategories', 'panel_settings_spoiler_guard_override_advanced', 'panel_settings_spoiler_guard_override_advanced_desc', JC.pluginConfig.SpoilerAdvancedMode === true)}
                                 <div style="margin-top: 12px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                     <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
                                         <input type="checkbox" id="sbPrefSkipDisableConfirm" ${sbPrefs.SkipDisableConfirm ? 'checked' : ''} data-pref="SkipDisableConfirm" style="width:16px; height:16px; accent-color:${toggleAccentColor}; cursor:pointer;">
