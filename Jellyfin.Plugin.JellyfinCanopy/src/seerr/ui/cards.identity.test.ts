@@ -13,6 +13,15 @@ describe('Seerr card identity ownership', () => {
     };
 
     beforeAll(async () => {
+        JC.core.navigation = {
+            routeHref: (route: string, params: Record<string, string | number | boolean | null | undefined> = {}) => {
+                const query = Object.entries(params)
+                    .filter(([, value]) => value !== null && value !== undefined)
+                    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+                    .join('&');
+                return `#/${route}${query ? `?${query}` : ''}`;
+            },
+        } as unknown as NonNullable<typeof JC.core.navigation>;
         internal.icons = { star: '' };
         internal.setStatusBadge = vi.fn();
         internal.configureRequestButton = vi.fn();

@@ -265,9 +265,6 @@ function createSeerrSection(results: any[], title: string, context: IdentityCont
                     const itemName = item.title || item.name;
                     titleLink.textContent = itemName;
                     titleLink.title = itemName;
-                    titleLink.href = `#!/details?id=${jellyfinMediaId}`;
-                    titleLink.removeAttribute('target');
-                    titleLink.removeAttribute('rel');
                 }
             }
             fragment.appendChild(card);

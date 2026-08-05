@@ -29,6 +29,8 @@ ui.addMainStyles = function () {
         /* CARDS & BADGES */
         .seerr-card { position: relative; }
         .seerr-card .cardScalable { contain: paint; }
+        .seerr-poster-link { position: absolute; inset: 0; z-index: 99; cursor: pointer; }
+        .seerr-poster-link:focus-visible { outline: 3px solid var(--jc-accent, #00a4dc); outline-offset: -3px; }
         .seerr-icon-on-card { width: 1.2em !important; height: 1.2em !important; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); flex-shrink: 0; }
         .seerr-status-badge { position: absolute; top: 8px; right: 8px; z-index: 100; width: 1.5em; height: 1.5em; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 0 1px rgba(255,255,255,0.4) inset, 0 4px 12px rgba(0,0,0,0.6); }
         .seerr-status-badge svg { width: 1.4em; height: 1.4em; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
