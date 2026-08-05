@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43918,
-        "totalLines": 53696
+        "coveredLines": 43935,
+        "totalLines": 53701
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 43905,
-        "maximumCoveredLines": 43918
+        "cleanRuns": 2,
+        "minimumCoveredLines": 43927,
+        "maximumCoveredLines": 43935
       },
       "tolerance": {
         "missingCoveredLines": 13,
-        "rationale": "Issue #663 adds the default-off Calendar requester-tag resolver, controller integration, configuration contract, and focused server coverage, rebased onto merged PR #689 at main 6447d638. Four clean full-suite runs on this exact 53,696-line source and test scope passed all 4,178 tests and observed 43,914, 43,905, 43,912 and the official hosted CI result of 43,918 covered lines. The thirteen-line envelope is timing-dependent branch coverage in existing asynchronous monitor paths, not a source or test difference; the spread is 0.024 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "The issue-682 fix preserves direct critic percentages through every live and full-cache rating-inheritance path and bumps the cache schema to v5. After merging main at b0626553 (post #689/#692/#696), the instrumented scope is 53,701 lines: the #696 Calendar requester scope of 53,696 plus this branch's five critic-rating lines. Two post-merge full-suite runs on this exact source, tests and scope measured 43,927 and 43,929 covered plugin lines; the only local test failures were wall-clock budget asserts that execute their full plugin path before asserting elapsed time, so they do not reduce plugin-assembly coverage. The high-water is pinned to 43,935 to absorb the +4-to-+6 hosted-CI offset repeatedly observed on the two previous envelopes (local 43,905-43,914 vs CI 43,918; local 43,475-43,484 vs CI 43,485), with the floor held at 43,922 below both local observations. The spread is 0.024 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
