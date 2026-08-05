@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -172,6 +175,107 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(1, userData.UserDataSavedSubscriberCount);
             service.Dispose();
             Assert.Equal(0, userData.UserDataSavedSubscriberCount);
+        }
+
+        // ─── ComputeBoundary (the real bounded query path, no seam) ──────────
+
+        private static SpoilerNextUnwatchedService NewLiveService(
+            CountingLibraryManager lib, out StubUserManager users)
+        {
+            users = new StubUserManager
+            {
+                GetUserByIdHook = _ => new User("boundary-user", "provider", "password-provider"),
+            };
+            return new SpoilerNextUnwatchedService(
+                lib, users, new StubUserDataManager(),
+                NullLogger<SpoilerNextUnwatchedService>.Instance);
+        }
+
+        [Fact]
+        public void ComputeBoundary_UsesTheBoundedSeriesScopedQueryShape()
+        {
+            var seriesId = Guid.NewGuid();
+            var episodeId = Guid.NewGuid();
+            InternalItemsQuery? seen = null;
+            var lib = new CountingLibraryManager
+            {
+                GetItemListHook = q =>
+                {
+                    seen = q;
+                    return new List<BaseItem>
+                    {
+                        new Episode { Id = episodeId, SeriesId = seriesId, ParentIndexNumber = 2, IndexNumber = 5 },
+                    };
+                },
+            };
+            using var service = NewLiveService(lib, out _);
+
+            var boundary = service.GetBoundary(Guid.NewGuid(), seriesId);
+
+            Assert.Equal(new SpoilerNextUnwatchedService.NextUnwatchedBoundary(episodeId, 2, 5), boundary);
+            Assert.NotNull(seen);
+            Assert.Equal(seriesId, seen!.ParentId);
+            Assert.Equal(1, seen.Limit);
+            Assert.False(seen.IsPlayed ?? true);
+            Assert.Equal(0, seen.ParentIndexNumberNotEquals);
+            Assert.Equal(1, lib.GetItemListCallCount);
+        }
+
+        [Theory]
+        [InlineData(0, 2)]      // season 0 result (defensive: query already excludes)
+        [InlineData(null, 2)]   // missing season index
+        [InlineData(2, null)]   // missing episode index
+        public void ComputeBoundary_UnusableFirstEpisode_ReturnsNull(int? season, int? episode)
+        {
+            var lib = new CountingLibraryManager
+            {
+                GetItemListHook = _ => new List<BaseItem>
+                {
+                    new Episode { Id = Guid.NewGuid(), ParentIndexNumber = season, IndexNumber = episode },
+                },
+            };
+            using var service = NewLiveService(lib, out _);
+
+            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
+        }
+
+        [Fact]
+        public void ComputeBoundary_NoUnwatchedEpisodes_ReturnsNull()
+        {
+            var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem>() };
+            using var service = NewLiveService(lib, out _);
+
+            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
+        }
+
+        [Fact]
+        public void ComputeBoundary_UnknownUser_ReturnsNullWithoutQuerying()
+        {
+            var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem>() };
+            using var service = NewLiveService(lib, out var users);
+            users.GetUserByIdHook = _ => null;
+
+            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
+            Assert.Equal(0, lib.GetItemListCallCount);
+        }
+
+        [Fact]
+        public void ComputeBoundary_QueryFault_FailsClosedToNull_AndCachesTheNull()
+        {
+            var calls = 0;
+            var lib = new CountingLibraryManager
+            {
+                GetItemListHook = _ => { calls++; throw new InvalidOperationException("db saturated"); },
+            };
+            using var service = NewLiveService(lib, out _);
+            var user = Guid.NewGuid();
+            var series = Guid.NewGuid();
+
+            Assert.Null(service.GetBoundary(user, series));
+            Assert.Null(service.GetBoundary(user, series));
+            // The fault result is cached like any other answer — a broken
+            // library must not turn the strip path into a per-item query storm.
+            Assert.Equal(1, calls);
         }
 
         [Fact]
