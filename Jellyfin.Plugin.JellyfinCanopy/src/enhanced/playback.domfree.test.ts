@@ -311,6 +311,39 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
+    describe('track command self-restart (final-confirmation regression)', () => {
+        it('a source change caused by the successful command still publishes memory and toast', async () => {
+            const video = document.createElement('video');
+            let src = 'http://jf.test/Videos/item-1/stream?MediaSourceId=1';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (v: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([ownSession()]);
+                commands.push({ path, ...options });
+                return new Promise((r) => { resolveCommand = r; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            expect(commands).toHaveLength(1); // Index 3 commanded, POST pending
+            // The switch restarts the stream: same item, new transcode URL.
+            src = 'http://jf.test/Videos/item-1/stream.m3u8?PlaySessionId=new';
+            resolveCommand({});
+            await flushPromises();
+            await flushPromises();
+
+            // Memory was published: the next press continues the cycle (→ Off).
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            await flushPromises();
+            expect(commands).toHaveLength(2);
+            expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
+        });
+    });
+
     describe('aspect ratio without panels', () => {
         it('cycles auto → cover → fill → auto via the native localStorage key and object-fit', () => {
             const video = mountVideo();

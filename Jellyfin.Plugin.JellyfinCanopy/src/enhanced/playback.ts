@@ -807,11 +807,18 @@ async function cycleTrackViaApi(
             body: { Name: commandName, Arguments: { Index: String(next) } }
         });
     } catch (err) {
-        if (pressIsStale()) return true; // stale press — no fallback either
+        if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) {
+            return true; // stale press — no fallback either
+        }
         console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }
-    if (pressIsStale()) return true;
+    // POST-side staleness deliberately ignores the element/source snapshot: a
+    // successful track switch itself restarts the stream (new currentSrc, and
+    // the host may recreate the element), and that must not swallow the toast
+    // or the command memory. The memory is keyed by session+item, so a write
+    // after a genuine item change self-invalidates on the next press.
+    if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return true;
     _lastCommandedTrack[kind] = { sessionId, itemId, index: next, at: performance.now() };
     const nextStream = next === OFF_STREAM_INDEX ? undefined : streams.find((s) => s.Index === next);
     const name = JC.escapeHtml(trackDisplayName(nextStream));
