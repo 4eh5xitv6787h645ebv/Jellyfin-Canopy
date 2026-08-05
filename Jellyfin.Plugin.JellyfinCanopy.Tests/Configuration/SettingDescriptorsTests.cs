@@ -133,5 +133,39 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Equal(config.MaintainerrExternalUrl, privatePayload["MaintainerrExternalUrl"]);
             Assert.Equal(config.MaintainerrUrlMappings, privatePayload["MaintainerrUrlMappings"]);
         }
+
+        [Fact]
+        public void CalendarRequesterTagFallback_ExposesOnlySafeAuthenticatedCapability()
+        {
+            var config = new PluginConfiguration
+            {
+                CalendarRequesterTagFallbackEnabled = true,
+                CalendarRequesterTagPrefix = "private-requester:",
+                CalendarRequesterTagMappings = "11111111-1111-1111-1111-111111111111=alice",
+            };
+
+            var anonymous = SettingDescriptors.BuildPayload(
+                SettingExposure.Public,
+                new SettingContext(config, IsAuthenticated: false));
+            var authenticated = SettingDescriptors.BuildPayload(
+                SettingExposure.Public,
+                new SettingContext(config, IsAuthenticated: true));
+            var privatePayload = SettingDescriptors.BuildPayload(
+                SettingExposure.Private,
+                new SettingContext(config, IsAuthenticated: true));
+
+            Assert.False(Assert.IsType<bool>(
+                anonymous[nameof(PluginConfiguration.CalendarRequesterTagFallbackEnabled)]));
+            Assert.True(Assert.IsType<bool>(
+                authenticated[nameof(PluginConfiguration.CalendarRequesterTagFallbackEnabled)]));
+            Assert.DoesNotContain(nameof(PluginConfiguration.CalendarRequesterTagPrefix), authenticated);
+            Assert.DoesNotContain(nameof(PluginConfiguration.CalendarRequesterTagMappings), authenticated);
+            Assert.Equal(
+                config.CalendarRequesterTagPrefix,
+                privatePayload[nameof(PluginConfiguration.CalendarRequesterTagPrefix)]);
+            Assert.Equal(
+                config.CalendarRequesterTagMappings,
+                privatePayload[nameof(PluginConfiguration.CalendarRequesterTagMappings)]);
+        }
     }
 }

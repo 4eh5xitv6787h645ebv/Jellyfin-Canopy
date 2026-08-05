@@ -63,6 +63,7 @@ export interface ArrPluginConfig extends PluginConfig {
     CalendarFilterByLibraryAccess?: boolean;
     CalendarShowOnlyRequested?: boolean;
     CalendarForceOnlyRequested?: boolean;
+    CalendarRequesterTagFallbackEnabled?: boolean;
     CalendarUseCustomTabs?: boolean;
     CalendarUseNativeTab?: boolean;
     CalendarUsePluginPages?: boolean;

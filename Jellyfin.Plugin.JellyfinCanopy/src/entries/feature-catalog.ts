@@ -175,6 +175,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         id: 'calendar-page',
         entry: 'calendar-page',
         scope: 'navigation',
+        restartOnConfigChange: true,
         isEnabled: (state) => Boolean(state.identity)
             && JC.pluginConfig?.CalendarPageEnabled === true,
         isApplicable: (state) => /#\/calendar([?#]|$)/i.test(state.routeKey),

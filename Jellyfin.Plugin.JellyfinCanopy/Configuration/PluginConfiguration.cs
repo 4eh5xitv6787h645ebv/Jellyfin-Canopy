@@ -306,6 +306,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             CalendarFilterByLibraryAccess = true;
             CalendarShowOnlyRequested = false;
             CalendarForceOnlyRequested = false;
+            CalendarRequesterTagFallbackEnabled = false;
+            CalendarRequesterTagPrefix = "canopy-requester:";
+            CalendarRequesterTagMappings = "";
 
             // Hidden Content Settings
             HiddenContentEnabled = false;
@@ -836,6 +839,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool CalendarFilterByLibraryAccess { get; set; }
         public bool CalendarShowOnlyRequested { get; set; }
         public bool CalendarForceOnlyRequested { get; set; }
+        /// <summary>
+        /// Enables the exact, server-owned requester-tag fallback used by requested-only
+        /// Calendar filtering. Seerr ownership remains authoritative whenever it is available.
+        /// </summary>
+        public bool CalendarRequesterTagFallbackEnabled { get; set; }
+
+        /// <summary>
+        /// Reserved lowercase ASCII prefix for requester tags. The configured token is appended
+        /// verbatim and the resulting media tag is matched exactly on the server.
+        /// </summary>
+        public string CalendarRequesterTagPrefix { get; set; }
+
+        /// <summary>
+        /// Newline-separated stable Jellyfin user GUID-to-token mappings. This value is
+        /// administrator-only and is never projected to ordinary clients.
+        /// </summary>
+        public string CalendarRequesterTagMappings { get; set; }
 
         // Hidden Content Settings
         public bool HiddenContentEnabled { get; set; }

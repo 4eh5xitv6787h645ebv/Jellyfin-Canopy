@@ -75,6 +75,63 @@ describe('calendar page error state', () => {
         expect(notify).not.toHaveBeenCalled();
     });
 
+    it('loads the server-owned snapshot when tag fallback is enabled without Seerr', async () => {
+        (window.JellyfinCanopy as unknown as Record<string, unknown>).pluginConfig = {
+            SeerrEnabled: false,
+            CalendarRequesterTagFallbackEnabled: true,
+        };
+        plugin.mockResolvedValue({
+            complete: true,
+            requests: [{ tmdbId: 77, type: 'movie' }],
+            requestKeyCount: 1,
+        });
+
+        await data.ensureRequestData();
+
+        expect(plugin).toHaveBeenCalledWith('/arr/request-snapshot?userOnly=true', { signal: undefined });
+        expect(data.state.requestedItems).toEqual(new Set(['movie:77']));
+        expect(data.state.requestedLoaded).toBe(true);
+        expect(data.state.requestedError).toBe(false);
+    });
+
+    it('publishes a complete empty set without a request when both attribution sources are disabled', async () => {
+        (window.JellyfinCanopy as unknown as Record<string, unknown>).pluginConfig = {
+            SeerrEnabled: false,
+            CalendarRequesterTagFallbackEnabled: false,
+        };
+
+        await data.ensureRequestData();
+
+        expect(plugin).not.toHaveBeenCalled();
+        expect(data.state.requestedItems).toEqual(new Set());
+        expect(data.state.requestedLoaded).toBe(true);
+        expect(data.state.requestedError).toBe(false);
+    });
+
+    it('shows the Requests filter for fallback-only attribution and hides it with no source', () => {
+        const JC = window.JellyfinCanopy as unknown as Record<string, unknown>;
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        data.state.isLoading = false;
+        data.state.eventsError = false;
+        views.setActiveContainer(container);
+
+        JC.pluginConfig = {
+            SeerrEnabled: false,
+            CalendarRequesterTagFallbackEnabled: true,
+        };
+        views.renderPage();
+        expect(container.querySelector('[data-calendar-filter="Requests"]')).not.toBeNull();
+
+        JC.pluginConfig = {
+            SeerrEnabled: false,
+            CalendarRequesterTagFallbackEnabled: false,
+        };
+        views.renderPage();
+        expect(container.querySelector('[data-calendar-filter="Requests"]')).toBeNull();
+        views.setActiveContainer(null);
+    });
+
     it('flags a snapshot failure, publishes no partial keys, and allows a retry', async () => {
         data.state.requestedItems = new Set(['movie:stale']);
         plugin.mockRejectedValue(new Error('requests down'));

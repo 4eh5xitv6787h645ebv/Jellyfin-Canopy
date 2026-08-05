@@ -89,6 +89,10 @@ describe('built-in detail integration catalog', () => {
         expect(descriptor('requests-page').restartOnConfigChange).toBe(true);
     });
 
+    it('restarts the calendar when requester attribution configuration changes', () => {
+        expect(descriptor('calendar-page').restartOnConfigChange).toBe(true);
+    });
+
     it('keeps enabled remove actions identity-global for event-shell menus on any route', () => {
         const removeActions = descriptor('remove-home-actions');
         JC.currentSettings = { removeContinueWatchingEnabled: true };
