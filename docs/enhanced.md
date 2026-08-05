@@ -104,6 +104,10 @@ Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys co
 | `Z` | Jump to Last Position |
 | `0`–`9` | Jump to that percentage of the video (`1` = 10%, `5` = 50%, …) |
 
+The audio and subtitle cycle shortcuts wait for Jellyfin's active track menu to
+finish mounting before changing one track. Repeated shortcuts coalesce while a
+menu is opening, and leaving playback cancels the pending action.
+
 **To customize a shortcut:**
 
 1. Press `?` to open Canopy User Settings.

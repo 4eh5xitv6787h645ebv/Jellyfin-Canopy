@@ -6,10 +6,12 @@
 import { JC } from '../globals';
 import { toast } from '../core/ui-kit';
 import { createStableMethodFacade } from '../core/feature-loader';
+import { onBodyMutation } from '../core/dom-observer';
+import { closeOpenActionSheet, getActiveActionSheetScroller } from '../core/action-sheet';
 import { createAutoSkipEngine,
     createSessionItemResolver, parseTranscodeOffsetTicksFromSrc } from './auto-skip';
 import type { AutoSkipEngine, MediaSegment, VideoLike } from './auto-skip';
-import type { IdentityContext } from '../types/jc';
+import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
 
 interface FpsStream {
     Type?: string;
@@ -509,98 +511,194 @@ const skipIntroOutro = (): void => {
 /**
  * Cycles through available subtitle tracks in the OSD menu.
  */
-const cycleSubtitleTrack = (): void => {
-    const context = JC.identity.capture();
-    if (!context) return;
-    const performCycle = () => {
-        if (!JC.identity.isCurrent(context)) return;
-        const allItems = document.querySelectorAll('.actionSheetContent .listItem');
-        if (allItems.length === 0) {
-            toast(JC.t!('toast_no_subtitles_found'), undefined, 'warning');
-            document.body.click();
-            return;
-        }
+type TrackSheetKind = 'subtitle' | 'audio';
 
-        const subtitleOptions = Array.from(allItems).filter(item => {
-            const textElement = item.querySelector('.listItemBodyText');
-            return textElement && textElement.textContent.trim() !== 'Secondary Subtitles';
-        });
+interface PendingTrackCycle {
+    readonly kind: TrackSheetKind;
+    readonly context: IdentityContext;
+    readonly expectedGeneration: number;
+    readonly expectedTitle: string;
+    readonly ignoredTitle: string | null;
+    ignoredScroller: HTMLElement | null;
+    ownedScroller: HTMLElement | null;
+    observer: BodySubscriberHandle | null;
+    deadlineTimer: number | null;
+}
 
-        if (subtitleOptions.length === 0) {
-            toast(JC.t!('toast_no_subtitles_found'), undefined, 'warning');
-            document.body.click();
-            return;
-        }
+// An empty mounted sheet is a real outcome, but a slow sheet must not be
+// mistaken for it. Three seconds matches the existing bounded aspect-sheet
+// backstop and remains explicitly retryable through another shortcut press.
+const TRACK_SHEET_READY_DEADLINE_MS = 3_000;
+let trackSheetSubscriberSequence = 0;
+let pendingTrackCycle: PendingTrackCycle | null = null;
 
-        const currentIndex = subtitleOptions.findIndex(option => {
-            const checkIcon = option.querySelector('.listItemIcon.check');
-            return checkIcon && getComputedStyle(checkIcon).visibility !== 'hidden';
-        });
+function trackTrigger(kind: TrackSheetKind): HTMLElement | null {
+    return document.querySelector<HTMLElement>(kind === 'subtitle' ? 'button.btnSubtitles' : 'button.btnAudio');
+}
 
-        const nextIndex = (currentIndex + 1) % subtitleOptions.length;
-        const nextOption = subtitleOptions[nextIndex];
+function normalizedSheetTitle(value: string | null | undefined): string {
+    return (value || '').replace(/\s+/g, ' ').trim();
+}
 
-        if (nextOption) {
-            (nextOption as HTMLElement).click();
-            const subtitleName = nextOption.querySelector('.listItemBodyText')!.textContent.trim();
-            toast(JC.t!('toast_subtitle', { subtitle: JC.escapeHtml(subtitleName) }));
-        }
-    };
+function trackTitle(kind: TrackSheetKind, trigger: HTMLElement | null): string {
+    return normalizedSheetTitle(trigger?.getAttribute('title') || trigger?.getAttribute('aria-label'))
+        || (kind === 'subtitle' ? 'Subtitles' : 'Audio');
+}
 
-    const subtitleMenuTitle = Array.from(document.querySelectorAll('.actionSheetContent .actionSheetTitle')).find(el => el.textContent === 'Subtitles');
-    if (subtitleMenuTitle) {
-        performCycle();
-    } else {
-        if (document.querySelector('.actionSheetContent')) {
-            document.body.click();
-        }
-        document.querySelector<HTMLElement>('button.btnSubtitles')?.click();
-        schedulePlaybackTimer(context, performCycle, 200);
+function activeSheetTitle(scroller: HTMLElement): string {
+    const content = scroller.closest<HTMLElement>('.actionSheetContent');
+    return normalizedSheetTitle(
+        content?.querySelector<HTMLElement>('.actionSheetTitle')?.textContent
+        || scroller.querySelector<HTMLElement>('.actionSheetTitle')?.textContent
+    );
+}
+
+function optionsForTrack(kind: TrackSheetKind, scroller: HTMLElement): HTMLElement[] {
+    const rows = Array.from(scroller.querySelectorAll<HTMLElement>('.listItem'));
+    if (kind === 'subtitle') {
+        return rows.filter((row) => row.dataset.id !== 'secondarysubtitle'
+            && row.querySelector('.listItemBodyText') !== null);
     }
-};
+    return rows.filter((row) => row.querySelector('.listItemBodyText.actionSheetItemText') !== null);
+}
 
-/**
- * Cycles through available audio tracks in the OSD menu.
- */
-const cycleAudioTrack = (): void => {
-    const context = JC.identity.capture();
-    if (!context) return;
-    const performCycle = () => {
-        if (!JC.identity.isCurrent(context)) return;
-        const audioOptions = Array.from(document.querySelectorAll('.actionSheetContent .listItem')).filter(item => item.querySelector('.listItemBodyText.actionSheetItemText'));
+function cancelPendingTrackCycle(expected?: PendingTrackCycle): void {
+    const pending = pendingTrackCycle;
+    if (!pending || (expected && pending !== expected)) return;
+    pendingTrackCycle = null;
+    cancelPlaybackTimer(pending.deadlineTimer);
+    pending.deadlineTimer = null;
+    pending.observer?.unsubscribe();
+    pending.observer = null;
+}
 
-        if (audioOptions.length === 0) {
-            toast(JC.t!('toast_no_audio_tracks_found'), undefined, 'warning');
-            document.body.click();
-            return;
-        }
+function trackCycleIsCurrent(pending: PendingTrackCycle): boolean {
+    return pendingTrackCycle === pending
+        && isPlaybackCurrent(pending.context, pending.expectedGeneration)
+        && JC.isVideoPage?.() === true;
+}
 
-        const currentIndex = audioOptions.findIndex(option => {
-            const checkIcon = option.querySelector('.actionsheetMenuItemIcon.listItemIcon.check');
-            return checkIcon && getComputedStyle(checkIcon).visibility !== 'hidden';
-        });
-
-        const nextIndex = (currentIndex + 1) % audioOptions.length;
-        const nextOption = audioOptions[nextIndex];
-
-        if (nextOption) {
-            (nextOption as HTMLElement).click();
-            const audioName = nextOption.querySelector('.listItemBodyText.actionSheetItemText')!.textContent.trim();
-            toast(JC.t!('toast_audio', { audio: JC.escapeHtml(audioName) }));
-        }
-    };
-
-    const audioMenuTitle = Array.from(document.querySelectorAll('.actionSheetContent .actionSheetTitle')).find(el => el.textContent === 'Audio');
-    if (audioMenuTitle) {
-        performCycle();
-    } else {
-        if (document.querySelector('.actionSheetContent')) {
-            document.body.click();
-        }
-        document.querySelector<HTMLElement>('button.btnAudio')?.click();
-        schedulePlaybackTimer(context, performCycle, 200);
+function resolveOwnedTrackScroller(pending: PendingTrackCycle): HTMLElement | null {
+    if (!trackCycleIsCurrent(pending)) {
+        cancelPendingTrackCycle(pending);
+        return null;
     }
-};
+    if (pending.ownedScroller && !pending.ownedScroller.isConnected) {
+        cancelPendingTrackCycle(pending);
+        return null;
+    }
+
+    const active = getActiveActionSheetScroller();
+    if (!active) return null;
+    const title = activeSheetTitle(active);
+    if (title !== pending.expectedTitle) {
+        // The pre-existing sheet and the superseded opposite-kind sheet can
+        // remain in Jellyfin's DOM while the requested menu mounts. Any other
+        // newer sheet is user/host replacement and silently cancels stale work.
+        if (active !== pending.ignoredScroller && title !== pending.ignoredTitle) {
+            cancelPendingTrackCycle(pending);
+        }
+        return null;
+    }
+
+    if (pending.ownedScroller && pending.ownedScroller !== active) {
+        cancelPendingTrackCycle(pending);
+        return null;
+    }
+    pending.ownedScroller = active;
+    return active;
+}
+
+function performPendingTrackCycle(pending: PendingTrackCycle): boolean {
+    const scroller = resolveOwnedTrackScroller(pending);
+    if (!scroller || pendingTrackCycle !== pending) return false;
+    const options = optionsForTrack(pending.kind, scroller);
+    if (options.length === 0) return false;
+
+    const checkSelector = pending.kind === 'subtitle'
+        ? '.listItemIcon.check'
+        : '.actionsheetMenuItemIcon.listItemIcon.check';
+    const currentIndex = options.findIndex((option) => {
+        const checkIcon = option.querySelector<HTMLElement>(checkSelector);
+        return checkIcon !== null && getComputedStyle(checkIcon).visibility !== 'hidden';
+    });
+    const nextOption = options[(currentIndex + 1) % options.length];
+    const textSelector = pending.kind === 'subtitle'
+        ? '.listItemBodyText'
+        : '.listItemBodyText.actionSheetItemText';
+    const trackName = nextOption?.querySelector<HTMLElement>(textSelector)?.textContent.trim();
+    if (!nextOption || !trackName) return false;
+
+    // Settle first: a click can synchronously mutate/close the sheet and must
+    // never leave its observer or timeout able to perform a second cycle.
+    cancelPendingTrackCycle(pending);
+    nextOption.click();
+    if (pending.kind === 'subtitle') {
+        toast(JC.t!('toast_subtitle', { subtitle: JC.escapeHtml(trackName) }));
+    } else {
+        toast(JC.t!('toast_audio', { audio: JC.escapeHtml(trackName) }));
+    }
+    return true;
+}
+
+function startTrackCycle(kind: TrackSheetKind): void {
+    const context = JC.identity.capture();
+    if (!context || JC.isVideoPage?.() !== true) return;
+
+    const previous = pendingTrackCycle;
+    const repeatedPending = previous?.kind === kind;
+    const trigger = trackTrigger(kind);
+    const pending: PendingTrackCycle = {
+        kind,
+        context,
+        expectedGeneration: playbackGeneration,
+        expectedTitle: repeatedPending ? previous.expectedTitle : trackTitle(kind, trigger),
+        ignoredTitle: previous && previous.kind !== kind ? previous.expectedTitle : null,
+        ignoredScroller: repeatedPending ? previous.ignoredScroller : null,
+        ownedScroller: repeatedPending ? previous.ownedScroller : null,
+        observer: null,
+        deadlineTimer: null,
+    };
+    cancelPendingTrackCycle();
+    pendingTrackCycle = pending;
+
+    const activeBeforeOpen = getActiveActionSheetScroller();
+    const targetAlreadyOpen = activeBeforeOpen !== null
+        && activeSheetTitle(activeBeforeOpen) === pending.expectedTitle;
+    if (!pending.ownedScroller && targetAlreadyOpen) {
+        pending.ownedScroller = activeBeforeOpen;
+    } else if (activeBeforeOpen && activeSheetTitle(activeBeforeOpen) !== pending.expectedTitle) {
+        pending.ignoredScroller = activeBeforeOpen;
+    }
+    if (performPendingTrackCycle(pending) || pendingTrackCycle !== pending) return;
+
+    pending.observer = onBodyMutation(
+        `jc-track-sheet-ready-${++trackSheetSubscriberSequence}`,
+        () => { performPendingTrackCycle(pending); }
+    );
+    pending.deadlineTimer = schedulePlaybackTimer(context, () => {
+        pending.deadlineTimer = null;
+        if (performPendingTrackCycle(pending) || !trackCycleIsCurrent(pending)) return;
+        const ownedScroller = resolveOwnedTrackScroller(pending);
+        if (pendingTrackCycle !== pending) return;
+        cancelPendingTrackCycle(pending);
+        if (ownedScroller) closeOpenActionSheet();
+        const key = kind === 'subtitle' ? 'toast_no_subtitles_found' : 'toast_no_audio_tracks_found';
+        toast(JC.t!(key), undefined, 'warning');
+    }, TRACK_SHEET_READY_DEADLINE_MS);
+
+    if (repeatedPending || targetAlreadyOpen) return;
+    if (activeBeforeOpen && activeSheetTitle(activeBeforeOpen) !== pending.expectedTitle) {
+        closeOpenActionSheet();
+    }
+    trigger?.click();
+    performPendingTrackCycle(pending); // atomic host mounts win without waiting for a mutation batch
+}
+
+const cycleSubtitleTrack = (): void => startTrackCycle('subtitle');
+
+/** Cycles through available audio tracks in the OSD menu. */
+const cycleAudioTrack = (): void => startTrackCycle('audio');
 
 // ~3s at 120ms: the aspect-ratio action sheet always opens well within this.
 const ASPECT_CYCLE_MAX_ATTEMPTS = 25;
@@ -944,6 +1042,7 @@ const handleLongPressClick = (e: Event): void => {
 };
 
 function resetPlaybackState(): void {
+    cancelPendingTrackCycle();
     playbackGeneration += 1;
     for (const timer of playbackTimers) clearTimeout(timer);
     playbackTimers.clear();
