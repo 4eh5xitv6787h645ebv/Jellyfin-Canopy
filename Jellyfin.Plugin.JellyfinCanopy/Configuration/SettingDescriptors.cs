@@ -386,6 +386,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("CalendarFilterByLibraryAccess", c => c.CalendarFilterByLibraryAccess),
                 Public("CalendarShowOnlyRequested", c => c.CalendarShowOnlyRequested),
                 Public("CalendarForceOnlyRequested", c => c.CalendarForceOnlyRequested),
+                // Only the authenticated capability bit reaches the Calendar client. The
+                // reserved prefix and stable-user mappings stay on the elevated endpoint.
+                PublicContextual("CalendarRequesterTagFallbackEnabled", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.CalendarRequesterTagFallbackEnabled),
 
                 // Hidden Content Settings
                 Public("HiddenContentEnabled", c => c.HiddenContentEnabled),
@@ -462,6 +466,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 // action endpoint to round-trip a corruption error envelope.
                 Private("SonarrInstancesCorrupt", c => c.IsSonarrInstancesCorrupt()),
                 Private("RadarrInstancesCorrupt", c => c.IsRadarrInstancesCorrupt()),
+
+                // Calendar requester attribution authority is server/admin-owned. Raw tags and
+                // stable user ids must never reach the public config payload.
+                Private("CalendarRequesterTagPrefix", c => c.CalendarRequesterTagPrefix),
+                Private("CalendarRequesterTagMappings", c => c.CalendarRequesterTagMappings),
 
                 // ================= server-only admin defaults with per-user overrides =================
                 // These never appear in public/private-config; they reach the client through the

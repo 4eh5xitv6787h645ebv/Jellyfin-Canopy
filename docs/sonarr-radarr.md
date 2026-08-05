@@ -299,6 +299,29 @@ Found on the **Pages** tab under "Calendar Page".
 | **Filter by Library Access** | On | Restricts calendar items to libraries the user can access. Upcoming items not yet in Jellyfin are matched by their Sonarr/Radarr root folder. |
 | **Show Requested Only (Default)** | — | The calendar loads showing only requested items; users can still toggle other items back on. |
 | **Force Only Requested Items** | — | Locks the calendar to requested items only and removes the ability to show non-requested items, enforcing the filter. |
+| **Recover requester attribution from media tags** | Off | Uses exact, administrator-configured Jellyfin media tags as a fail-closed fallback when Seerr has no authoritative owner for an item. |
+| **Requester tag prefix** | `canopy-requester:` | Reserved lowercase tag prefix used by the fallback. |
+| **Requester tag mappings** | — | One stable Jellyfin user GUID and lowercase tag token per line, in `guid=token` form. |
+
+### Optional requester-tag fallback
+
+The Calendar's **Requests** filter normally gets requester ownership from Seerr. If an import workflow preserves ownership only as Jellyfin media tags, an administrator can enable **Recover requester attribution from media tags** and map each participating Jellyfin account to one exact tag token. For example:
+
+```text
+11111111-1111-1111-1111-111111111111=alice
+22222222-2222-2222-2222-222222222222=bob
+```
+
+With the default prefix, Alice's imported items must carry the exact tag `canopy-requester:alice`. Use the stable Jellyfin user GUID shown by Jellyfin's administration tools; display names and browser-supplied identities are never used for attribution. Prefixes and tokens are deliberately lowercase ASCII. A prefix must start with a letter, end with `:`, and contain only letters, numbers, `.`, `_`, or `-`; a token must start with a letter or number and uses the same character set.
+
+The fallback is intentionally conservative:
+
+- Seerr ownership always wins. A caller-owned Seerr request is included, a foreign-owned request is excluded, and a tag is considered only when the complete Seerr ownership ledger contains no owner for that movie or series.
+- A configured but unavailable, incomplete, or changing Seerr source never falls back to tags. A conclusively unlinked user requires a complete scan of every configured Seerr identity domain before any tag can be accepted. Seerr-disabled installations can use tags alone.
+- Tag scans always use the authenticated user's Jellyfin library access, independently of **Filter by Library Access**. Raw tags, user mappings, usernames, source URLs, and owner identities never leave the server; the browser receives only movie/series TMDB keys.
+- Missing mapped users, duplicate mappings, multiple requester tags, case-confusable reserved tags, conflicting media editions, changed scan results, or any query failure suppress attribution instead of guessing.
+
+To keep work bounded, mappings are limited to 64 KiB and 256 rows, the prefix to 32 characters, each token to 64 characters, the access-scoped tag scan to 5,000 items, and an unlinked ownership proof to eight Seerr instances. Saving requester-attribution settings restarts the Calendar feature so the next view uses one consistent configuration generation.
 
 !!! note "Accuracy with multiple instances and date-only releases"
 

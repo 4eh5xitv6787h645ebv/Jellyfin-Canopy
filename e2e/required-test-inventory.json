@@ -26,6 +26,7 @@
     "e2e/bookmarks-responsive.spec.ts › Bookmarks responsive containment (#466 findings 1–2) › modern: Bookmark offset modal keeps close and actions reachable at 320x568",
     "e2e/bookmarks-responsive.spec.ts › Bookmarks responsive containment (#466 findings 1–2) › keyboard users can add, activate, edit, and delete a bookmark through native controls",
     "e2e/bookmarks-responsive.spec.ts › Bookmarks responsive containment (#466 findings 1–2) › keyboard duplicate, replacement, and migration flows expose named modal controls",
+    "e2e/calendar-requester-tags.spec.ts › Calendar requester-tag fallback › fallback-only filtering and live config restart use real Jellyfin tags",
     "e2e/boot.spec.ts › boot › initializes with all core namespaces and no real console errors",
     "e2e/boot.spec.ts › boot › shared notifications are accessible, stacked, exact-once, and route-owned",
     "e2e/console-net.spec.ts › console and HTTP error safety net › late responses retain exact Request ownership across a sink reset",

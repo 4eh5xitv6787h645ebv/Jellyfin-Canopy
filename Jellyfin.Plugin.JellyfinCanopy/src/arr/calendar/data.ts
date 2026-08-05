@@ -380,7 +380,8 @@ export async function fetchUserData(signal?: AbortSignal): Promise<void> {
 async function fetchUserRequests(signal?: AbortSignal): Promise<void> {
     const context = currentIdentity();
     if (!context || signal?.aborted) return;
-    if (!JC.pluginConfig?.SeerrEnabled) {
+    if (!JC.pluginConfig?.SeerrEnabled
+        && !JC.pluginConfig?.CalendarRequesterTagFallbackEnabled) {
         state.requestedItems = new Set();
         state.requestedLoaded = true;
         state.requestedLoading = false;

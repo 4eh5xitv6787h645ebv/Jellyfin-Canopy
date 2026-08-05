@@ -1149,6 +1149,24 @@
                             <div class="jc-setting-description" data-desc-for="calendarForceOnlyRequested">
                                 <div class="fieldDescription">When enabled, the calendar always shows only your requested items and the Requests filter is hidden.</div>
                             </div>
+                            <div class="checkboxContainer"><label><input id="calendarRequesterTagFallbackEnabled" data-config-key="CalendarRequesterTagFallbackEnabled" is="emby-checkbox" type="checkbox"/><span>Recover requester attribution from media tags</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="calendarRequesterTagFallbackEnabled">
+                                <div class="fieldDescription jc-field-desc-xl">Opt in to an exact server-side media-tag fallback when no authoritative Seerr owner exists. Seerr ownership always wins conflicts. Tag matches are restricted to each caller's accessible Jellyfin libraries.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="calendarRequesterTagPrefix">Requester tag prefix</label>
+                                <input id="calendarRequesterTagPrefix" data-config-key="CalendarRequesterTagPrefix" data-config-fallback="canopy-requester:" is="emby-input" type="text" maxlength="32" placeholder="canopy-requester:"/>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="calendarRequesterTagPrefix">
+                                <div class="fieldDescription jc-field-desc-xl">A lowercase ASCII prefix ending in a colon. The default creates tags such as <code>canopy-requester:alice</code>.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel" for="calendarRequesterTagMappings">Requester mappings <span style="font-size:0.8em; opacity:0.6;">(one per line)</span></label>
+                                <textarea class="emby-textarea emby-input jc-textarea-medium" id="calendarRequesterTagMappings" data-config-key="CalendarRequesterTagMappings" maxlength="65536" placeholder="01234567-89ab-cdef-0123-456789abcdef=alice"></textarea>
+                            </div>
+                            <div class="jc-setting-description" data-desc-for="calendarRequesterTagMappings">
+                                <div class="fieldDescription jc-field-desc-xl">Map a canonical lowercase Jellyfin user GUID to one lowercase ASCII token with <code>guid=token</code>. Usernames are deliberately not accepted because they can be renamed or duplicated. Invalid, duplicate, ambiguous, or deleted-user mappings fail closed.</div>
+                            </div>
                         </div>
                     </fieldset>
                 </div>
