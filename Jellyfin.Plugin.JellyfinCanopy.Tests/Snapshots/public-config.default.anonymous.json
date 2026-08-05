@@ -27,6 +27,7 @@
   "CalendarHighlightFavorites": false,
   "CalendarHighlightWatchedSeries": false,
   "CalendarPageEnabled": false,
+  "CalendarRequesterTagFallbackEnabled": false,
   "CalendarShowOnlyRequested": false,
   "CalendarTimeFormat": "5pm/5:30pm",
   "ClearLocalStorageTimestamp": 0,

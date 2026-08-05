@@ -295,7 +295,10 @@ function renderLegend(): string {
         return state.activeFilters.has(filterType) ? 'active' : 'inactive';
     };
 
-    const showRequestsFilter = !!JC.pluginConfig?.SeerrEnabled && !state.settings.forceOnlyRequested;
+    const showRequestsFilter = Boolean(
+        JC.pluginConfig?.SeerrEnabled
+        || JC.pluginConfig?.CalendarRequesterTagFallbackEnabled
+    ) && !state.settings.forceOnlyRequested;
     const requestsLabel = JC.t?.('requests_requests') || 'Requests';
     const requestsLegend = showRequestsFilter
         ? `<div class="jc-calendar-legend-item ${getItemClass('Requests')}" data-calendar-filter="Requests">

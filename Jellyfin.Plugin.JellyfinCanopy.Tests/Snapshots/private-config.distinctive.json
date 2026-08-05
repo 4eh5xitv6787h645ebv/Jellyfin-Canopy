@@ -2,6 +2,8 @@
   "BazarrExternalUrl": "cfg-BazarrExternalUrl",
   "BazarrUrl": "cfg-BazarrUrl",
   "BazarrUrlMappings": "cfg-BazarrUrlMappings",
+  "CalendarRequesterTagMappings": "cfg-CalendarRequesterTagMappings",
+  "CalendarRequesterTagPrefix": "cfg-CalendarRequesterTagPrefix",
   "MaintainerrExternalUrl": "cfg-MaintainerrExternalUrl",
   "MaintainerrUrl": "cfg-MaintainerrUrl",
   "MaintainerrUrlMappings": "cfg-MaintainerrUrlMappings",

@@ -2,6 +2,8 @@
   "BazarrExternalUrl": "",
   "BazarrUrl": "",
   "BazarrUrlMappings": "",
+  "CalendarRequesterTagMappings": "",
+  "CalendarRequesterTagPrefix": "canopy-requester:",
   "MaintainerrExternalUrl": "",
   "MaintainerrUrl": "",
   "MaintainerrUrlMappings": "",
