@@ -21,10 +21,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             StubUserDataManager userData,
             int capacity = TagCacheProjectionRevisionService.DefaultJournalCapacity)
         {
-            return new TagCacheProjectionRevisionService(
+            var tracker = new TagCacheProjectionRevisionService(
                 userData,
                 NullLogger<TagCacheProjectionRevisionService>.Instance,
                 capacity);
+            tracker.Initialize();
+            return tracker;
         }
 
         [Fact]
@@ -174,7 +176,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public void ConstructorSubscribes_InitializeIsIdempotent_AndDisposeUnsubscribes()
+        public void InitializeSubscribesIdempotently_StopIsReversible_AndDisposeUnsubscribes()
         {
             var userData = new StubUserDataManager();
             var tracker = new TagCacheProjectionRevisionService(
@@ -182,10 +184,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 NullLogger<TagCacheProjectionRevisionService>.Instance,
                 journalCapacity: 2);
 
-            Assert.Equal(1, userData.UserDataSavedSubscriberCount);
+            Assert.Equal(0, userData.UserDataSavedSubscriberCount);
             tracker.Initialize();
             tracker.Initialize();
             Assert.Equal(1, userData.UserDataSavedSubscriberCount);
+
+            var firstEpoch = tracker.Epoch;
+            tracker.Stop();
+            tracker.Stop();
+            Assert.Equal(0, userData.UserDataSavedSubscriberCount);
+            tracker.Initialize();
+            Assert.Equal(1, userData.UserDataSavedSubscriberCount);
+            Assert.NotEqual(firstEpoch, tracker.Epoch);
 
             tracker.Dispose();
             Assert.Equal(0, userData.UserDataSavedSubscriberCount);

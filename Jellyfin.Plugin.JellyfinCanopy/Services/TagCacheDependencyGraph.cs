@@ -251,6 +251,64 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     .SequenceEqual(current.Genres ?? Array.Empty<string>());
 
         /// <summary>
+        /// Reconcile an unchanged Episode against the already-built Series cache
+        /// surface. Full-cache paging processes Series first, so no Series BaseItem
+        /// index or per-Episode scalar lookup is required.
+        /// </summary>
+        internal static bool TryPrepareParentSeriesRefreshFromCache(
+            TagCacheEntry series,
+            Episode episode,
+            TagCacheEntry existing,
+            long lastUpdated,
+            out TagCacheEntry? refreshed)
+        {
+            var ratingChanged = episode.CommunityRating == null
+                && (existing.CommunityRating != series.CommunityRating
+                    || existing.CriticRating != series.CriticRating);
+            var tmdbChanged = !string.Equals(
+                existing.SeriesTmdbId,
+                series.TmdbId,
+                StringComparison.Ordinal);
+            if (!ratingChanged && !tmdbChanged)
+            {
+                refreshed = null;
+                return false;
+            }
+
+            refreshed = existing.Clone();
+            refreshed.SeriesTmdbId = series.TmdbId;
+            if (episode.CommunityRating == null)
+            {
+                refreshed.CommunityRating = series.CommunityRating;
+                refreshed.CriticRating = series.CriticRating;
+            }
+
+            refreshed.LastUpdated = lastUpdated;
+            return true;
+        }
+
+        internal static TagCacheEntry ApplySeasonRelationshipRefreshFromCache(
+            TagCacheEntry? series,
+            Episode episode,
+            TagCacheEntry existing,
+            long lastUpdated)
+        {
+            var refreshed = existing.Clone();
+            refreshed.SeriesId = episode.SeriesId == Guid.Empty ? null : episode.SeriesId.ToString("N");
+            refreshed.SeasonId = episode.SeasonId == Guid.Empty ? null : episode.SeasonId.ToString("N");
+            refreshed.SeasonNumber = episode.ParentIndexNumber;
+            refreshed.SeriesTmdbId = series?.TmdbId;
+            if (episode.CommunityRating == null)
+            {
+                refreshed.CommunityRating = series?.CommunityRating;
+                refreshed.CriticRating = series?.CriticRating;
+            }
+
+            refreshed.LastUpdated = lastUpdated;
+            return refreshed;
+        }
+
+        /// <summary>
         /// Apply only the fields declared as ParentSeries dependencies. Expansion already owns
         /// the live subtree snapshot, so descendant repair never re-resolves or media-probes an
         /// otherwise unchanged Episode/Season merely because parent metadata changed.

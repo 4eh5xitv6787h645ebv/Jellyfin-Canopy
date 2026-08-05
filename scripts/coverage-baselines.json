@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 42932,
-        "totalLines": 52621
+        "coveredLines": 43458,
+        "totalLines": 53159
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 42930,
-        "maximumCoveredLines": 42932
+        "minimumCoveredLines": 43451,
+        "maximumCoveredLines": 43458
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "The issue-681 fix detects 8K/4320p quality tags in the tag-cache projection and adds regression coverage for the quality mapping and reconcile paths. Rebased onto main's reviewed baseline of 42,809/52,615 (81.363%), two clean CI coverage runs on the identical rebased source and 52,621-line scope observed 42,930 and 42,932 covered lines; the two-line envelope is timing-dependent branch coverage in the tag-cache monitor's asynchronous paths, not a source or test difference. The high-water is 42,932/52,621 (81.587%) and the enforced floor 42,930/52,621 (81.583%), above main's 81.349% floor. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 7,
+        "rationale": "Rebased onto current main. Two clean CI coverage runs on this exact tree and 53159-line scope observed 43451 and 43458 covered lines; the 7-line envelope is timing-dependent branch coverage in the tag-cache asynchronous paths, not a source or test difference. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

@@ -175,12 +175,17 @@ First, make sure the tags are enabled and your browser isn't serving a stale cac
 2. Enable the tags you want — **Quality Tags**, **Genre Tags**, **Language Tags**, **Rating Tags** — and adjust their position if needed.
 3. Hard-refresh the browser with ++ctrl+f5++, clear the browser cache, and restart the browser if tags still look stale.
 
-If they're still missing, rebuild the tag cache. Poster tags are drawn from a server-side cache that the plugin keeps current *incrementally* as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. To force a rebuild:
+If they're still missing and **Server-Side Tag Cache** is enabled, rebuild the tag cache. Poster tags are drawn from a server-side cache that the plugin keeps current *incrementally* as your library changes, and rebuilds nightly via the **Build Tag Cache** scheduled task. To force a rebuild:
 
 1. Go to **Dashboard → Scheduled Tasks**.
 2. Under **Jellyfin Canopy**, find **Build Tag Cache**.
 3. Run it manually (click `▶︎`).
 4. Hard-refresh your browser (++ctrl+f5++) once it finishes.
+
+If **Server-Side Tag Cache** is disabled, the scheduled task deliberately does
+nothing and poster tags use the client per-page fallback. Re-enabling the setting
+starts one background rebuild; fallback remains active until that complete cache
+is ready, so a large library may take a little time without serving partial data.
 
 !!! tip "First install"
 

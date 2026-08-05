@@ -75,6 +75,7 @@ public sealed class MonitorSubscriptionLifecycleTests
                 AutoSeason,
                 PrepareHandles,
                 PreparedContexts,
+                new StubTagCacheLifecycle(),
                 NullLogger<LiveNotifierService>.Instance);
         }
 

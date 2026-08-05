@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using MediaBrowser.Model.Tasks;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 {
@@ -18,15 +17,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
     /// </summary>
     public class BuildTagCacheTask : IScheduledTask
     {
-        private readonly TagCacheService _tagCacheService;
-        private readonly TagCacheMonitor _tagCacheMonitor;
-        private readonly ILogger<BuildTagCacheTask> _logger;
+        private readonly TagCacheLifecycleService _tagCacheLifecycle;
 
-        public BuildTagCacheTask(TagCacheService tagCacheService, TagCacheMonitor tagCacheMonitor, ILogger<BuildTagCacheTask> logger)
+        public BuildTagCacheTask(TagCacheLifecycleService tagCacheLifecycle)
         {
-            _tagCacheService = tagCacheService;
-            _tagCacheMonitor = tagCacheMonitor;
-            _logger = logger;
+            _tagCacheLifecycle = tagCacheLifecycle;
         }
 
         public string Name => "Build Tag Cache";
@@ -50,11 +45,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
         }
 
         public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
-        {
-            _tagCacheService.BuildFullCache(progress, cancellationToken);
-            // Ensure the monitor is subscribed to events after the first build
-            _tagCacheMonitor.EnsureSubscribed();
-            return Task.CompletedTask;
-        }
+            => _tagCacheLifecycle.ReconcileAsync(progress, cancellationToken);
     }
 }

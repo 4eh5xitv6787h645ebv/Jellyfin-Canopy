@@ -70,7 +70,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IUserDataManager _userDataManager;
         private readonly ILogger<TagCacheProjectionRevisionService> _logger;
         private readonly int _journalCapacity;
-        private readonly string _epoch = Guid.NewGuid().ToString("N");
+        private string _epoch = Guid.NewGuid().ToString("N");
         private readonly ConcurrentDictionary<Guid, UserJournal> _journals = new();
         private readonly object _subscriptionGate = new();
         private bool _subscribed;
@@ -114,12 +114,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             _journalCapacity = journalCapacity;
-
-            // Subscribe during construction, not only from the scheduled startup
-            // task. MVC may activate TagCacheController before that task runs; DI
-            // construction must therefore establish tracking before the first
-            // tag-cache request can observe a projection cursor.
-            Initialize();
         }
 
         internal string Epoch => _epoch;
@@ -138,11 +132,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
+                // A disabled interval is an authority boundary. Start every newly
+                // enabled interval with a fresh epoch and no replayable history so
+                // a cursor issued before disable can only request a full reset.
+                _epoch = Guid.NewGuid().ToString("N");
+                _journals.Clear();
                 _userDataManager.UserDataSaved += OnUserDataSaved;
                 _subscribed = true;
             }
 
             _logger.LogInformation("[TagCacheProjection] User-data revision tracking active (epoch {Epoch})", _epoch);
+        }
+
+        /// <summary>
+        /// Stop projection tracking while the server cache is disabled. The next
+        /// <see cref="Initialize"/> rotates the epoch before accepting events.
+        /// </summary>
+        public void Stop()
+        {
+            lock (_subscriptionGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (!_subscribed)
+                {
+                    return;
+                }
+
+                _userDataManager.UserDataSaved -= OnUserDataSaved;
+                _subscribed = false;
+                _journals.Clear();
+            }
+
+            _logger.LogInformation("[TagCacheProjection] User-data revision tracking stopped");
         }
 
         /// <summary>

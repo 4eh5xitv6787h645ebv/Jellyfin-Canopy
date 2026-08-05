@@ -64,6 +64,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly PlatformPrepareHandleOwner _platformPrepareHandles;
         private readonly PlatformPreparedActionContextOwner _platformPreparedContexts;
         private readonly ILogger<LiveNotifierService> _logger;
+        private readonly ITagCacheLifecycle _tagCacheLifecycle;
 
         private BasePlugin<PluginConfiguration>? _plugin;
         private EventHandler<BasePluginConfiguration>? _handler;
@@ -78,6 +79,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             AutoSeasonRequestMonitor autoSeasonRequestMonitor,
             PlatformPrepareHandleOwner platformPrepareHandles,
             PlatformPreparedActionContextOwner platformPreparedContexts,
+            ITagCacheLifecycle tagCacheLifecycle,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -90,6 +92,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _platformPrepareHandles = platformPrepareHandles ?? throw new ArgumentNullException(nameof(platformPrepareHandles));
             _platformPreparedContexts = platformPreparedContexts ?? throw new ArgumentNullException(nameof(platformPreparedContexts));
             _logger = logger;
+            _tagCacheLifecycle = tagCacheLifecycle ?? throw new ArgumentNullException(nameof(tagCacheLifecycle));
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -152,6 +155,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // before session I/O can yield, so disabling and re-enabling Platform v1
             // can never revive an action issued under an earlier configuration.
             InvalidatePlatformAuthority();
+
+            // Revoke or create tag-cache authority synchronously before the first
+            // session-I/O await. Disable cannot leave a late build publication alive;
+            // enable remains unavailable until its one background generation commits.
+            _tagCacheLifecycle.NotifyConfigurationChanged();
 
             // Reconcile monitor subscriptions + invalidate cached Seerr state BEFORE
             // the first await, so the fire-and-forget ConfigurationChanged callback

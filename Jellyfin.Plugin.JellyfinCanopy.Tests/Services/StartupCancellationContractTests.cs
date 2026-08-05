@@ -22,10 +22,10 @@ public sealed class StartupCancellationContractTests
         Assert.True(executeEnd > executeStart);
         var executeBody = startupSource[executeStart..executeEnd];
 
-        Assert.Contains("await Task.Run(() =>", executeBody);
-        Assert.Contains("}, cancellationToken);", executeBody);
+        Assert.Contains("await Task.Run(async () =>", executeBody);
+        Assert.Contains("}, cancellationToken).ConfigureAwait(false);", executeBody);
         Assert.Contains(
-            "_tagCacheService.BuildFullCache(null, cancellationToken);",
+            "_tagCacheLifecycle.InitializeAsync(null, cancellationToken)",
             executeBody);
         Assert.DoesNotContain("CancellationToken.None", executeBody);
 

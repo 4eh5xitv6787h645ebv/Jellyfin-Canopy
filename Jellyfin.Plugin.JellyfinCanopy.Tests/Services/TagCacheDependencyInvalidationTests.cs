@@ -2370,9 +2370,27 @@ public sealed class TagCacheDependencyInvalidationTests
                 GetItemByIdHook = _ => throw new InvalidOperationException("reconcile snapshot must avoid scalar lookups"),
                 GetItemListHook = query => query.ParentId == Guid.Empty
                     ? allItems
+                        .Where(item => query.IncludeItemTypes.Contains(item.GetBaseItemKind()))
+                        .Skip(query.StartIndex ?? 0)
+                        .Take(query.Limit ?? allItems.Length)
+                        .ToArray()
                     : query.ParentId == seriesId
                         ? episodes
                         : throw new InvalidOperationException("unexpected reconcile query"),
+                GetItemsResultHook = query =>
+                {
+                    var filtered = allItems
+                        .Where(item => query.IncludeItemTypes.Contains(item.GetBaseItemKind()))
+                        .ToArray();
+                    var page = filtered
+                        .Skip(query.StartIndex ?? 0)
+                        .Take(query.Limit ?? filtered.Length)
+                        .ToArray();
+                    return new MediaBrowser.Model.Querying.QueryResult<BaseItem>(
+                        query.StartIndex,
+                        filtered.Length,
+                        page);
+                },
             };
             using var service = new TagCacheService(
                 library,
@@ -2403,7 +2421,8 @@ public sealed class TagCacheDependencyInvalidationTests
 
             service.BuildFullCache(progress: null, CancellationToken.None);
 
-            Assert.Equal(2, library.GetItemListCallCount); // one library snapshot + Series first Episode
+            Assert.Equal(1, library.GetItemListCallCount); // Series first-Episode projection
+            Assert.Equal(3, library.GetItemsResultCallCount); // one Series page + two fixed 500-row Episode pages
             Assert.Equal(0, library.GetItemByIdCallCount);
             Assert.Equal(1, probeCount); // Series projection only
             Assert.All(episodes, episode =>
@@ -2659,7 +2678,9 @@ public sealed class TagCacheDependencyInvalidationTests
             using var release = new ManualResetEventSlim();
             var library = new CountingLibraryManager
             {
-                GetItemListHook = _ => new BaseItem[] { movie },
+                GetItemListHook = query => query.IncludeItemTypes.Contains(BaseItemKind.Movie)
+                    ? new BaseItem[] { movie }
+                    : Array.Empty<BaseItem>(),
                 GetItemByIdHook = id => id == movie.Id ? movie : null,
             };
             var service = new TagCacheService(
@@ -2667,6 +2688,13 @@ public sealed class TagCacheDependencyInvalidationTests
                 new StubAppPaths(dir),
                 NullLogger<TagCacheService>.Instance);
             service.SeedEntryForTest(Key(movie.Id), new TagCacheEntry { Type = "Movie" });
+            service.SaveToDisk();
+            var cachePath = Path.Combine(
+                dir,
+                "configurations",
+                "Jellyfin.Plugin.JellyfinCanopy",
+                "tag-cache.json");
+            var lastCompleteDisk = File.ReadAllBytes(cachePath);
             service.SetDisposeFlushGuardSpinsForTest(0);
             service.OnBeforeSwapForTest = () =>
             {
@@ -2679,6 +2707,7 @@ public sealed class TagCacheDependencyInvalidationTests
             Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
 
             service.Dispose();
+            Assert.Equal(lastCompleteDisk, File.ReadAllBytes(cachePath));
             release.Set();
             await reconcile.WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -2688,6 +2717,11 @@ public sealed class TagCacheDependencyInvalidationTests
                 NullLogger<TagCacheService>.Instance);
             loaded.LoadFromDisk();
             Assert.Equal(0, loaded.Count);
+            Assert.True(File.Exists(cachePath + ".incomplete"));
+
+            loaded.BuildFullCache(progress: null, CancellationToken.None);
+            Assert.Equal(1, loaded.Count);
+            Assert.False(File.Exists(cachePath + ".incomplete"));
         }
         finally
         {

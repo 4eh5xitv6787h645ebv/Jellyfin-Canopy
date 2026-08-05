@@ -18,6 +18,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
+    internal delegate bool TagCachePublicationFence();
+
     /// <summary>
     /// Manages a server-side pre-computed tag cache for all library items.
     /// The cache is stored in memory (ConcurrentDictionary) and persisted to disk as JSON.
@@ -117,6 +119,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // simulate a flush landing in that exact window.
         internal Action? OnAfterSnapshotForTest;
 
+        // Test seam after disk bytes are read but before their deserialized snapshot
+        // can cross the lifecycle generation fence.
+        internal Action? OnAfterDiskReadForTest;
+
+        internal Action? OnBeforeCachePersistForTest;
+
         // Test seam: invoked inside BuildFullCache while the flush guard is held, just BEFORE the
         // cache swap, so a test can simulate an incremental flush firing mid-rebuild.
         internal Action? OnBeforeSwapForTest;
@@ -140,11 +148,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private long _firstPendingTicks; // 0 = nothing pending since last flush
         private int _flushing;           // 0/1 non-reentrancy guard for the worker
         private int _disposed;           // 0/1; prevents timer resurrection during shutdown
+        private int _suspended;          // 0/1; disabled server mode accepts no work
         private long _retryBackoffTicks;
         private long _removedDependencyEntriesVisited;
         private int _repairIncomplete;
+        private long _libraryEventGeneration;
+        private int _loadFromDiskCalls;
+        private int _saveToDiskCalls;
         private static readonly TimeSpan FlushDebounce = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan FlushMaxWait = TimeSpan.FromSeconds(30);
+        internal const int FullCachePageSize = 500;
+
+        private sealed class MonitorLease : IDisposable
+        {
+            private object? _gate;
+
+            public MonitorLease(object gate)
+            {
+                _gate = gate;
+            }
+
+            public void Dispose()
+            {
+                var gate = Interlocked.Exchange(ref _gate, null);
+                if (gate != null)
+                {
+                    Monitor.Exit(gate);
+                }
+            }
+        }
 
         // Spin budget the full rebuild uses to acquire the flush guard (spins × 10ms ≈ 30s). Far
         // larger than Dispose's 5s default: a rebuild that can't take the guard must NOT fall back
@@ -213,9 +245,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _contentJournal = new ContentChange[contentJournalCapacity];
         }
 
-        public long Version => Interlocked.Read(ref _version);
-        public long LastModified => Interlocked.Read(ref _lastModified);
-        public int Count => _cache.Count;
+        public long Version
+        {
+            get
+            {
+                lock (_contentGate)
+                {
+                    return Interlocked.Read(ref _version);
+                }
+            }
+        }
+
+        public long LastModified
+        {
+            get
+            {
+                lock (_contentGate)
+                {
+                    return Interlocked.Read(ref _lastModified);
+                }
+            }
+        }
+
+        public int Count
+        {
+            get
+            {
+                lock (_contentGate)
+                {
+                    return _cache.Count;
+                }
+            }
+        }
         internal long ContentRevision => Interlocked.Read(ref _contentRevision);
         internal long ServedContentIdsVisited => Interlocked.Read(ref _servedContentIdsVisited);
         internal void SetLegacyTimestampForTest(long timestamp)
@@ -234,6 +295,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal int PendingChangeCountForTest => _pending.Count;
 
         internal bool HasFlushTimerForTest => Volatile.Read(ref _flushTimer) != null;
+
+        internal bool IsSuspendedForTest => Volatile.Read(ref _suspended) != 0;
+
+        internal int LoadFromDiskCallsForTest => Volatile.Read(ref _loadFromDiskCalls);
+
+        internal int SaveToDiskCallsForTest => Volatile.Read(ref _saveToDiskCalls);
 
         internal long RemovedDependencyEntriesVisitedForTest
             => Interlocked.Read(ref _removedDependencyEntriesVisited);
@@ -284,6 +351,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private string CacheFilePath =>
             Path.Combine(_applicationPaths.PluginsPath, "configurations", "Jellyfin.Plugin.JellyfinCanopy", "tag-cache.json");
 
+        private string RepairMarkerPath => CacheFilePath + ".incomplete";
+
         /// <summary>
         /// Reconcile the tag cache against the current library. Called by the scheduled task
         /// (daily / manual) and by the first-install build. Rather than rebuilding every entry,
@@ -296,63 +365,262 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// retains the old timestamp when nothing really changed, so the client delta doesn't churn.
         /// </summary>
         public void BuildFullCache(IProgress<double>? progress, CancellationToken cancellationToken)
+            => BuildFullCache(progress, cancellationToken, canPublish: null);
+
+        /// <summary>
+        /// Build a private replacement through fixed-size library pages. When supplied,
+        /// <paramref name="canPublish"/> owns the lifecycle generation fence and is
+        /// rechecked under the content gate before the complete swap/journal/save action.
+        /// A failed page, cancellation, persistence failure, or rejected fence leaves the live
+        /// cache and its disk snapshot untouched.
+        /// </summary>
+        internal bool BuildFullCache(
+            IProgress<double>? progress,
+            CancellationToken cancellationToken,
+            TagCachePublicationFence? canPublish)
         {
-            _logger.LogInformation("[TagCache] Starting cache reconcile...");
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Volatile.Read(ref _suspended) != 0)
+            {
+                _logger.LogInformation("[TagCache] Reconcile skipped while server cache mode is disabled.");
+                return false;
+            }
+
+            _logger.LogInformation("[TagCache] Starting bounded cache reconcile...");
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            // Serialize the reconcile against incremental flushes: hold the flush guard across the
-            // whole pass + swap. While we hold it, a FlushPending that fires sees _flushing==1 and
-            // re-arms WITHOUT draining (it never mutates the OLD _cache), so events raised during
-            // the reconcile stay in _pending and are applied onto the NEW cache below.
-            //
-            // Crucially we take the guard BEFORE the library snapshot below. If a flush is ALREADY
-            // running when we start it has already drained _pending and is mutating _cache — its
-            // deltas are gone from _pending, so proceeding to swap would silently drop them (the
-            // post-swap drain finds nothing to re-apply). That is the lost-update window. So instead
-            // of a lossy timeout-and-proceed, we WAIT (bounded) for the in-flight flush to finish;
-            // once it does, its changes are committed to the library and the fresh scan below
-            // captures them. Only if a flush is STILL running after ~30s do we abort this reconcile
-            // rather than swap lossily — incremental flushes keep the cache fresh and the scheduled
-            // task retries next cycle. AcquireFlushGuard polls (10ms sleeps), so this neither
-            // busy-spins nor deadlocks (the single guard is always released by its holder).
-            if (!AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10))
+            // The guard is acquired before the first page so a flush that already drained
+            // its queue cannot be lost at publication. Cancellation interrupts the bounded
+            // wait instead of sleeping for the former fixed ~30 second window.
+            if (!AcquireFlushGuard(
+                    maxSpins: _rebuildFlushGuardSpins,
+                    spinMs: 10,
+                    cancellationToken))
             {
-                _logger.LogWarning("[TagCache] Skipping reconcile: an incremental flush is still running after the guard wait; retrying next cycle to avoid a lost-update swap.");
-                return;
+                _logger.LogWarning("[TagCache] Skipping reconcile: an incremental flush still owns the writer guard.");
+                return false;
             }
 
             try
             {
-                // Stable snapshot of the current cache. The guard keeps flushes from mutating it
-                // while we reconcile, so both the rating pre-pass and the main loop read one state.
                 var oldCache = _cache;
-
-                var allItems = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = TaggableTypes.ToArray(),
-                    IsVirtualItem = false,
-                    Recursive = true
-                }).ToList();
-
-                _logger.LogInformation($"[TagCache] Found {allItems.Count} taggable items");
-
-                // Parent-Series dependencies share the same authoritative graph as incremental
-                // events. This also heals a missed TMDB/rating event for an unchanged Episode;
-                // containers are rebuilt unconditionally below because they derive first-Episode
-                // data whose revision is independent of the container's own revision.
-                var seriesById = allItems
-                    .Where(static item => item.GetBaseItemKind() == BaseItemKind.Series)
-                    .ToDictionary(static item => item.Id);
-
-                var newCache = new ConcurrentDictionary<string, TagCacheEntry>();
-                var changed = false; // an add or a genuine content change (drives the ?since= delta)
-                var contentUpserts = new List<string>();
+                var newCache = new ConcurrentDictionary<string, TagCacheEntry>(StringComparer.Ordinal);
+                var changed = false;
                 var processed = 0;
+                var eventGeneration = Interlocked.Read(ref _libraryEventGeneration);
 
-                foreach (var item in allItems)
+                // Resolve Series first in its own bounded pass. Episode inheritance can
+                // then use this authoritative parent snapshot without a scalar database
+                // lookup per episode, while only Series rows plus one input page coexist
+                // with the old and replacement dictionaries.
+                ReadPages(new[] { BaseItemKind.Series });
+                ReadPages(
+                    TaggableTypes.Where(static kind => kind != BaseItemKind.Series).ToArray());
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Interlocked.Read(ref _libraryEventGeneration) != eventGeneration)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    throw new InvalidOperationException("The Jellyfin library changed during tag-cache paging; the unpublished replacement was discarded to avoid an offset-page omission.");
+                }
 
+                OnBeforeSwapForTest?.Invoke();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var removed = false;
+                var drainRemoved = false;
+                bool Publish()
+                {
+                    // Publish the swap and journal under one gate. Derive upserts and
+                    // removals directly from the two required snapshots instead of
+                    // retaining additional O(N) id lists.
+                    lock (_contentGate)
+                    {
+                        if (Volatile.Read(ref _disposed) != 0
+                            || Volatile.Read(ref _suspended) != 0
+                            || (canPublish != null && !canPublish()))
+                        {
+                            return false;
+                        }
+
+                        var priorVersion = Interlocked.Read(ref _version);
+                        var priorLastModified = Interlocked.Read(ref _lastModified);
+                        var priorContentRevision = _contentRevision;
+                        var priorJournalStart = _contentJournalStart;
+                        var priorJournalCount = _contentJournalCount;
+                        var priorJournal = (ContentChange?[])_contentJournal.Clone();
+                        var priorDirty = _dirty;
+                        var priorDirtyVersion = Interlocked.Read(ref _dirtyVersion);
+                        IReadOnlyList<TagCacheChange> pendingBatch = Array.Empty<TagCacheChange>();
+
+                        try
+                        {
+                            _cache = newCache;
+                            foreach (var pair in newCache)
+                            {
+                                if (!oldCache.TryGetValue(pair.Key, out var previous)
+                                    || !ContentEquals(previous, pair.Value))
+                                {
+                                    RecordContentChangeLocked(pair.Key, removed: false);
+                                }
+                            }
+
+                            foreach (var key in oldCache.Keys)
+                            {
+                                if (!newCache.ContainsKey(key))
+                                {
+                                    removed = true;
+                                    RecordContentChangeLocked(key, removed: true);
+                                }
+                            }
+
+                            if (changed || removed)
+                            {
+                                Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                                _userAccessCache.Clear();
+                            }
+
+                            if (removed)
+                            {
+                                Interlocked.Increment(ref _version);
+                            }
+
+                            pendingBatch = _pending.Drain();
+                            if (ApplyPendingBatch(pendingBatch, out drainRemoved))
+                            {
+                                Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                            }
+
+                            if (drainRemoved)
+                            {
+                                Interlocked.Increment(ref _version);
+                            }
+
+                            if (!SaveToDisk(
+                                    writerGuardHeld: true,
+                                    canCommit: canPublish,
+                                    clearRepairMarker: true))
+                            {
+                                if (canPublish != null && !canPublish())
+                                {
+                                    throw new OperationCanceledException(
+                                        "The tag-cache lifecycle generation was revoked before disk commit.",
+                                        cancellationToken);
+                                }
+
+                                throw new IOException("The complete tag-cache replacement could not be persisted.");
+                            }
+                        }
+                        catch
+                        {
+                            _cache = oldCache;
+                            Interlocked.Exchange(ref _version, priorVersion);
+                            Interlocked.Exchange(ref _lastModified, priorLastModified);
+                            Interlocked.Exchange(ref _contentRevision, priorContentRevision);
+                            _contentJournalStart = priorJournalStart;
+                            _contentJournalCount = priorJournalCount;
+                            Array.Copy(priorJournal, _contentJournal, _contentJournal.Length);
+                            _dirty = priorDirty;
+                            Interlocked.Exchange(ref _dirtyVersion, priorDirtyVersion);
+                            foreach (var pending in pendingBatch)
+                            {
+                                _pending.Record(pending);
+                            }
+
+                            throw;
+                        }
+                    }
+
+                    return true;
+                }
+
+                var published = Publish();
+                if (!published)
+                {
+                    _logger.LogInformation("[TagCache] Discarded completed replacement because its lifecycle generation is no longer enabled.");
+                    return false;
+                }
+
+                progress?.Report(100);
+                sw.Stop();
+                _logger.LogInformation(
+                    "[TagCache] Bounded reconcile complete: {Count} entries (changed={Changed}, removed={Removed}) in {Seconds:F1}s",
+                    _cache.Count,
+                    changed,
+                    removed || drainRemoved,
+                    sw.Elapsed.TotalSeconds);
+                return true;
+
+                void ReadPages(BaseItemKind[] includeTypes)
+                {
+                    var included = includeTypes.ToHashSet();
+                    var startIndex = 0;
+                    var expectedTotal = -1;
+                    var cacheCountBeforePass = newCache.Count;
+
+                    while (true)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var pageResult = _libraryManager.GetItemsResult(new InternalItemsQuery
+                        {
+                            IncludeItemTypes = includeTypes,
+                            IsVirtualItem = false,
+                            Recursive = true,
+                            StartIndex = startIndex,
+                            Limit = FullCachePageSize,
+                            EnableTotalRecordCount = expectedTotal < 0,
+                            OrderBy = new[] { (ItemSortBy.SortName, JSortOrder.Ascending) }
+                        });
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var page = pageResult.Items;
+
+                        if (expectedTotal < 0)
+                        {
+                            expectedTotal = pageResult.TotalRecordCount;
+                        }
+
+                        if (page.Count > FullCachePageSize)
+                        {
+                            throw new InvalidOperationException($"Tag-cache page exceeded the fixed limit of {FullCachePageSize} rows.");
+                        }
+
+                        if (page.Count == 0 && startIndex < expectedTotal)
+                        {
+                            throw new InvalidOperationException("Tag-cache paging ended before Jellyfin's authoritative row count was reached.");
+                        }
+
+                        foreach (var item in page)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var kind = item.GetBaseItemKind();
+                            // Defensive filtering also keeps lightweight test managers
+                            // honest when they return an unfiltered backing collection.
+                            if (!included.Contains(kind))
+                            {
+                                continue;
+                            }
+
+                            ProcessItem(item);
+                        }
+
+                        startIndex += page.Count;
+                        if (startIndex >= expectedTotal)
+                        {
+                            break;
+                        }
+
+                        progress?.Report(Math.Min(99, processed * 100.0 / (processed + FullCachePageSize)));
+                    }
+
+                    var distinctRows = newCache.Count - cacheCountBeforePass;
+                    if (distinctRows != expectedTotal)
+                    {
+                        throw new InvalidOperationException(
+                            $"Tag-cache paging returned {distinctRows} distinct rows for Jellyfin's authoritative count of {expectedTotal}; the unpublished replacement was discarded.");
+                    }
+                }
+
+                void ProcessItem(BaseItem item)
+                {
                     var key = item.Id.ToString("N").ToLowerInvariant();
                     var kind = item.GetBaseItemKind();
                     var revision = item.DateLastSaved.Ticks;
@@ -361,32 +629,35 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     TagCacheEntry? parentSeriesRefresh = null;
                     var parentOrRelationshipChanged = false;
                     if (kind == BaseItemKind.Episode
-                        && item is MediaBrowser.Controller.Entities.TV.Episode epDep
+                        && item is MediaBrowser.Controller.Entities.TV.Episode episode
                         && old != null
                         && old.SourceRevision == revision)
                     {
-                        seriesById.TryGetValue(epDep.SeriesId, out var parentSeries);
-                        var relationshipChanged = !string.Equals(old.SeriesId, FormatId(epDep.SeriesId), StringComparison.Ordinal)
-                            || !string.Equals(old.SeasonId, FormatId(epDep.SeasonId), StringComparison.Ordinal);
+                        TagCacheEntry? parentSeries = null;
+                        if (episode.SeriesId != Guid.Empty)
+                        {
+                            newCache.TryGetValue(FormatId(episode.SeriesId)!, out parentSeries);
+                        }
+                        var relationshipChanged = !string.Equals(old.SeriesId, FormatId(episode.SeriesId), StringComparison.Ordinal)
+                            || !string.Equals(old.SeasonId, FormatId(episode.SeasonId), StringComparison.Ordinal);
                         if (relationshipChanged)
                         {
                             parentOrRelationshipChanged = true;
-                            if (epDep.SeriesId == Guid.Empty || parentSeries != null)
+                            if (episode.SeriesId == Guid.Empty || parentSeries != null)
                             {
-                                parentSeriesRefresh = TagCacheDependencyGraph.ApplySeasonRelationshipRefresh(
+                                parentSeriesRefresh = TagCacheDependencyGraph.ApplySeasonRelationshipRefreshFromCache(
                                     parentSeries,
-                                    epDep,
+                                    episode,
                                     old,
                                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                             }
                         }
                         else if (parentSeries != null)
                         {
-                            parentOrRelationshipChanged = TagCacheDependencyGraph.TryPrepareParentSeriesRefresh(
+                            parentOrRelationshipChanged = TagCacheDependencyGraph.TryPrepareParentSeriesRefreshFromCache(
                                 parentSeries,
-                                item,
+                                episode,
                                 old,
-                                static _ => null,
                                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                                 out parentSeriesRefresh);
                         }
@@ -394,128 +665,51 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                     if (!ShouldRebuild(kind, old, revision, parentOrRelationshipChanged))
                     {
-                        // Unchanged: reuse the existing entry verbatim — no media probe, timestamp
-                        // preserved. old is non-null here (ShouldRebuild returns true when it is).
                         newCache[key] = old!;
                     }
                     else
                     {
-                        // A parent-only change must not re-probe unchanged Episode media. The
-                        // authoritative dependency graph already prepared exactly the inherited
-                        // fields from this reconcile's stable Series/Episode snapshot.
                         var entry = parentSeriesRefresh ?? BuildEntryForItem(item);
                         if (entry == null)
                         {
-                            // Unexpected build failure (a bug, not a media-probe failure — those return
-                            // a degraded entry below): keep the last-good entry rather than dropping it
-                            // (dropping would look like a removal and force a client full reload). Its
-                            // OLD SourceRevision keeps it a rebuild candidate next cycle.
-                            if (old != null) newCache[key] = old;
+                            if (old != null)
+                            {
+                                newCache[key] = old;
+                            }
+                            else
+                            {
+                                throw new InvalidOperationException($"Could not build a complete tag-cache entry for new item {key}.");
+                            }
                         }
                         else
                         {
-                            // A degraded entry (media probe failed) carries SourceRevision == 0
-                            // (unconfirmed): keep its fresh probe-independent data (own + inherited
-                            // rating/genres) but retain the last-good streams, and leave it unconfirmed
-                            // so the gate rebuilds it every cycle until the probe recovers.
                             if (entry.SourceRevision == 0
                                 && old != null
-                                && string.Equals(
-                                    entry.StreamSourceId,
-                                    old.StreamSourceId,
-                                    StringComparison.Ordinal))
+                                && string.Equals(entry.StreamSourceId, old.StreamSourceId, StringComparison.Ordinal))
                             {
                                 RetainLastGoodProbeData(entry, old);
                             }
 
                             if (old != null && ContentEquals(old, entry))
                             {
-                                // Rebuilt but content-identical (e.g. a container whose first episode
-                                // is unchanged, or a no-op re-save): retain the old timestamp so the
-                                // client delta doesn't churn. SourceRevision is still refreshed.
                                 entry.LastUpdated = old.LastUpdated;
                             }
                             else
                             {
                                 changed = true;
-                                contentUpserts.Add(key);
                             }
+
                             newCache[key] = entry;
                         }
                     }
 
                     processed++;
-                    if (processed % 500 == 0)
-                    {
-                        progress?.Report((double)processed / allItems.Count * 100);
-                    }
                 }
-
-                // Keep the legacy Version bump below for older cached bundles. Current
-                // clients receive each key through the revision journal as a tombstone.
-                var removedIds = new List<string>();
-                foreach (var key in oldCache.Keys)
-                {
-                    if (!newCache.ContainsKey(key)) removedIds.Add(key);
-                }
-                var removed = removedIds.Count > 0;
-
-                OnBeforeSwapForTest?.Invoke();
-
-                // Publish the dictionary swap and every externally visible mutation
-                // under the same gate as the monotonic journal. A delta reader can
-                // therefore observe old state/old revision or new state/new revision,
-                // never a cursor that skips the swap.
-                lock (_contentGate)
-                {
-                    _cache = newCache;
-                    foreach (var key in contentUpserts.OrderBy(static key => key, StringComparer.Ordinal))
-                    {
-                        RecordContentChangeLocked(key, removed: false);
-                    }
-
-                    foreach (var key in removedIds.OrderBy(static key => key, StringComparer.Ordinal))
-                    {
-                        RecordContentChangeLocked(key, removed: true);
-                    }
-                }
-
-                if (changed || removed)
-                {
-                    Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    // Added/updated/removed items may change a user's accessible set. Only cleared on
-                    // an actual change so a no-op reconcile doesn't force every user to recompute.
-                    _userAccessCache.Clear();
-                }
-                if (removed)
-                {
-                    Interlocked.Increment(ref _version);
-                }
-
-                // Apply events queued while we were reconciling onto the freshly-published cache, so
-                // the swap can't strand a change that arrived mid-reconcile. A removal is journaled
-                // and also bumps the backward-compatibility Version signal.
-                if (ApplyPendingBatch(_pending.Drain(), out var drainRemoved))
-                {
-                    Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                }
-                if (drainRemoved)
-                {
-                    Interlocked.Increment(ref _version);
-                }
-
-                progress?.Report(100);
-
-                sw.Stop();
-                _logger.LogInformation($"[TagCache] Reconcile complete: {_cache.Count} entries (changed={changed}, removed={removed || drainRemoved}) in {sw.Elapsed.TotalSeconds:F1}s");
             }
             finally
             {
-                // We only reach the try after acquiring the guard above, so always release it.
                 Interlocked.Exchange(ref _flushing, 0);
             }
-
-            SaveToDisk();
         }
 
         /// <summary>
@@ -606,8 +800,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (itemId == Guid.Empty) return;
             lock (_lifecycleGate)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
                 _pending.Record(itemId, removed: false); // PERF(S1): O(1) record-and-defer, safe on the scan thread
+                Interlocked.Increment(ref _libraryEventGeneration);
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
                 ScheduleFlush();
             }
@@ -623,8 +818,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             if (itemId == Guid.Empty) return;
             lock (_lifecycleGate)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
                 _pending.Record(itemId, removed: true);
+                Interlocked.Increment(ref _libraryEventGeneration);
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
                 ScheduleFlush();
             }
@@ -639,12 +835,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             lock (_lifecycleGate)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
                 var key = item.Id.ToString("N").ToLowerInvariant();
                 _cache.TryGetValue(key, out var previous);
                 var change = TagCacheDependencyGraph.Capture(item, removed, previous);
                 if (change.Id == Guid.Empty) return;
                 _pending.Record(change);
+                Interlocked.Increment(ref _libraryEventGeneration);
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
                 ScheduleFlush();
             }
@@ -655,7 +852,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private void ScheduleFlush()
         {
-            if (Volatile.Read(ref _disposed) != 0) return;
+            if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
             Interlocked.CompareExchange(ref _firstPendingTicks, DateTime.UtcNow.Ticks, 0);
             ArmFlushTimer(ComputeFlushDelay());
         }
@@ -667,7 +864,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             lock (_lifecycleGate)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
                 var existing = _flushTimer;
                 if (existing != null)
                 {
@@ -717,7 +914,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private void FlushPending()
         {
-            if (Volatile.Read(ref _disposed) != 0) return;
+            if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
             // Non-reentrant: if a flush already owns the batch, retry after the debounce.
             // (Retry via ArmFlushTimer, NOT ScheduleFlush: once the first pending change is older
             // than FlushMaxWait, ScheduleFlush would compute a zero delay and busy-spin the timer
@@ -730,7 +927,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             // Dispose may win after the callback's entry check but before it acquires the guard.
             // Re-check while owning the guard so no callback can mutate after shutdown persistence.
-            if (Volatile.Read(ref _disposed) != 0)
+            if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0)
             {
                 Interlocked.Exchange(ref _flushing, 0);
                 return;
@@ -742,6 +939,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var changed = ApplyPendingBatch(_pending.Drain(), out var removed);
 
                 OnAfterFlushApplyForTest?.Invoke();
+
+                if (Volatile.Read(ref _suspended) != 0)
+                {
+                    ClearMemoryForDisabledMode();
+                    return;
+                }
 
                 // Dispose can time out while this owner is blocked after draining. Enqueue and
                 // Dispose share _lifecycleGate, so once _disposed is visible no new work can arrive;
@@ -764,13 +967,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // a dirty cache with no live debounce timer.
                     if (Volatile.Read(ref _disposed) != 0)
                     {
-                        SaveToDisk();
+                        SaveToDisk(writerGuardHeld: true);
                     }
                 }
                 else if (Volatile.Read(ref _disposed) != 0
                     && Volatile.Read(ref _repairIncomplete) != 0)
                 {
-                    SaveToDisk();
+                    SaveToDisk(writerGuardHeld: true);
                 }
             }
             finally
@@ -780,7 +983,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // exponential global delay; a genuine new event clears it in EnqueueItemChange.
                 lock (_lifecycleGate)
                 {
-                    if (!_pending.IsEmpty && Volatile.Read(ref _disposed) == 0)
+                    if (!_pending.IsEmpty
+                        && Volatile.Read(ref _disposed) == 0
+                        && Volatile.Read(ref _suspended) == 0)
                     {
                         var backoffTicks = Interlocked.Exchange(ref _retryBackoffTicks, 0);
                         if (backoffTicks > 0)
@@ -804,16 +1009,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// blocking a rebuild/shutdown indefinitely. Callers that acquired MUST release it with
         /// <c>Interlocked.Exchange(ref _flushing, 0)</c>.
         /// </summary>
-        private bool AcquireFlushGuard(int maxSpins = 500, int spinMs = 10)
+        private bool AcquireFlushGuard(
+            int maxSpins = 500,
+            int spinMs = 10,
+            CancellationToken cancellationToken = default)
         {
             for (var i = 0; i < maxSpins; i++) // ~5s cap by default, well under the shutdown grace period
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
                 {
                     return true;
                 }
 
-                Thread.Sleep(spinMs);
+                if (cancellationToken.WaitHandle.WaitOne(spinMs))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
             }
 
             return false;
@@ -1873,8 +2085,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         public Dictionary<string, TagCacheEntry> GetCacheForUser(JUser user, long? since = null)
         {
             ArgumentNullException.ThrowIfNull(user);
-            // Capture local reference for thread safety (cache reference may be swapped)
-            var cache = _cache;
+            ConcurrentDictionary<string, TagCacheEntry> cache;
+            lock (_contentGate)
+            {
+                // A failed full publication can roll back the replacement. Capture
+                // only after that transaction commits or restores the prior cache.
+                cache = _cache;
+            }
             OnAfterUserCacheSnapshotForTest?.Invoke();
             var authorizationKey = AuthorizationKey(user);
 
@@ -1956,10 +2173,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ArgumentNullException.ThrowIfNull(user);
             ArgumentNullException.ThrowIfNull(itemIds);
 
-            // Capture the current dictionary once. A full reconcile may atomically
-            // replace _cache while this request runs, but it never mutates this
-            // captured dictionary after the swap.
-            var cache = _cache;
+            ConcurrentDictionary<string, TagCacheEntry> cache;
+            lock (_contentGate)
+            {
+                // Do not expose a replacement while its disk commit can still fail
+                // and roll back under the same gate.
+                cache = _cache;
+            }
             var result = new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal);
             foreach (var itemId in itemIds)
             {
@@ -2266,93 +2486,224 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// Load the cache from disk on startup.
         /// </summary>
         public void LoadFromDisk()
+            => LoadFromDisk(canPublish: null, onWriterGuardAcquired: null);
+
+        internal bool LoadFromDisk(
+            TagCachePublicationFence? canPublish,
+            Action? onWriterGuardAcquired = null)
         {
-            var path = CacheFilePath;
-            if (!File.Exists(path))
+            Interlocked.Increment(ref _loadFromDiskCalls);
+            if (!AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10))
             {
-                _logger.LogInformation("[TagCache] No cache file found, starting empty");
-                return;
+                _logger.LogWarning("[TagCache] Could not acquire the writer guard for a stable disk load.");
+                return false;
             }
 
             try
             {
-                var json = File.ReadAllText(path);
-                var data = JsonSerializer.Deserialize<TagCacheDiskFormat>(json);
-                if (data?.Items != null)
+                onWriterGuardAcquired?.Invoke();
+                var path = CacheFilePath;
+                if (File.Exists(RepairMarkerPath))
                 {
-                    if (data.IncompleteRepair)
-                    {
-                        _logger.LogInformation("[TagCache] Discarding cache with an incomplete shutdown repair; rebuilding from the library.");
-                        return;
-                    }
-
-                    // Discard a cache written by an older schema (e.g. predating
-                    // SeriesId) rather than serving entries the strip paths can't
-                    // process. Starting empty is safe — the Build task rebuilds it.
-                    if (data.SchemaVersion != CurrentCacheSchemaVersion)
-                    {
-                        _logger.LogInformation($"[TagCache] On-disk cache schema v{data.SchemaVersion} != current v{CurrentCacheSchemaVersion}; discarding {data.Items.Count} entries and rebuilding on next scan.");
-                        return;
-                    }
-                    var loaded = new ConcurrentDictionary<string, TagCacheEntry>(data.Items);
-                    _cache = loaded;
-                    Interlocked.Exchange(ref _version, data.Version);
-                    Interlocked.Exchange(ref _lastModified, data.LastModified);
-                    _logger.LogInformation($"[TagCache] Loaded {_cache.Count} entries from disk (v{data.Version}, schema v{data.SchemaVersion})");
+                    _logger.LogInformation("[TagCache] Incomplete shutdown repair marker found; rebuilding from the library while preserving the last complete snapshot bytes.");
+                    return false;
                 }
+
+                if (!File.Exists(path))
+                {
+                    _logger.LogInformation("[TagCache] No cache file found, starting empty");
+                    return false;
+                }
+
+                try
+                {
+                    var json = File.ReadAllText(path);
+                    OnAfterDiskReadForTest?.Invoke();
+                    var data = JsonSerializer.Deserialize<TagCacheDiskFormat>(json);
+                    if (data?.Items != null)
+                    {
+                        if (data.IncompleteRepair)
+                        {
+                            _logger.LogInformation("[TagCache] Discarding cache with an incomplete shutdown repair; rebuilding from the library.");
+                            return false;
+                        }
+
+                        // Discard a cache written by an older schema (e.g. predating
+                        // SeriesId) rather than serving entries the strip paths can't
+                        // process. Starting empty is safe — the Build task rebuilds it.
+                        if (data.SchemaVersion != CurrentCacheSchemaVersion)
+                        {
+                            _logger.LogInformation($"[TagCache] On-disk cache schema v{data.SchemaVersion} != current v{CurrentCacheSchemaVersion}; discarding {data.Items.Count} entries and rebuilding on next scan.");
+                            return false;
+                        }
+                        var loaded = new ConcurrentDictionary<string, TagCacheEntry>(data.Items);
+                        lock (_contentGate)
+                        {
+                            if (Volatile.Read(ref _suspended) != 0
+                                || (canPublish != null && !canPublish()))
+                            {
+                                _logger.LogInformation("[TagCache] Discarded disk load because its lifecycle generation is no longer enabled.");
+                                return false;
+                            }
+
+                            _cache = loaded;
+                            Interlocked.Exchange(ref _version, data.Version);
+                            Interlocked.Exchange(ref _lastModified, data.LastModified);
+                        }
+
+                        _logger.LogInformation($"[TagCache] Loaded {_cache.Count} entries from disk (v{data.Version}, schema v{data.SchemaVersion})");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"[TagCache] Failed to load cache from disk: {ex.Message}");
+                }
+
+                return false;
             }
-            catch (Exception ex)
+            finally
             {
-                _logger.LogWarning($"[TagCache] Failed to load cache from disk: {ex.Message}");
+                Interlocked.Exchange(ref _flushing, 0);
             }
         }
 
         /// <summary>
         /// Persist the cache to disk using atomic write (temp file + rename).
         /// </summary>
-        public void SaveToDisk()
+        public bool SaveToDisk()
+            => SaveToDisk(writerGuardHeld: false);
+
+        private bool SaveToDisk(
+            bool writerGuardHeld,
+            TagCachePublicationFence? canCommit = null,
+            bool clearRepairMarker = false)
         {
-            lock (_saveLock)
+            var acquired = false;
+            if (!writerGuardHeld)
             {
-                try
+                acquired = AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10);
+                if (!acquired)
                 {
-                    var dir = Path.GetDirectoryName(CacheFilePath);
-                    if (dir != null) Directory.CreateDirectory(dir);
+                    MarkDirty();
+                    _logger.LogWarning("[TagCache] Could not acquire the writer guard for a stable disk snapshot.");
+                    return false;
+                }
+            }
 
-                    // Capture the dirty version BEFORE reading _cache. A flush that lands after this
-                    // (mutating _cache and bumping _dirtyVersion) is then detected below so we don't
-                    // clear a dirty bit whose change we didn't actually persist.
-                    var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
-
-                    var data = new TagCacheDiskFormat
+            try
+            {
+                lock (_saveLock)
+                {
+                    if (Volatile.Read(ref _suspended) != 0)
                     {
-                        SchemaVersion = CurrentCacheSchemaVersion,
-                        Version = Interlocked.Read(ref _version),
-                        LastModified = Interlocked.Read(ref _lastModified),
-                        IncompleteRepair = Volatile.Read(ref _repairIncomplete) != 0,
-                        Items = new Dictionary<string, TagCacheEntry>(_cache)
-                    };
+                        return false;
+                    }
 
-                    OnAfterSnapshotForTest?.Invoke();
+                    Interlocked.Increment(ref _saveToDiskCalls);
+                    try
+                    {
+                        var dir = Path.GetDirectoryName(CacheFilePath);
+                        if (dir != null) Directory.CreateDirectory(dir);
 
-                    var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = false });
-                    AtomicFile.WriteAllText(CacheFilePath, json);
+                        // The writer guard stays held for streaming so this reference is
+                        // an immutable cache/metadata snapshot without an O(N) clone.
+                        var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
+                        var cacheSnapshot = _cache;
+                        var cacheVersion = Interlocked.Read(ref _version);
+                        var lastModified = Interlocked.Read(ref _lastModified);
+                        var incompleteRepair = Volatile.Read(ref _repairIncomplete) != 0;
+
+                        OnAfterSnapshotForTest?.Invoke();
+
+                    // Stream directly into AtomicFile's durable temp sibling. The old
+                    // Dictionary clone + complete JSON string briefly retained two
+                    // additional O(N) representations beside old/new cache snapshots.
+                        OnBeforeCachePersistForTest?.Invoke();
+                        var committed = AtomicFile.WriteVia(CacheFilePath, stream =>
+                        {
+                            using var writer = new Utf8JsonWriter(stream);
+                            writer.WriteStartObject();
+                            writer.WriteNumber(nameof(TagCacheDiskFormat.SchemaVersion), CurrentCacheSchemaVersion);
+                            writer.WriteNumber(nameof(TagCacheDiskFormat.Version), cacheVersion);
+                            writer.WriteNumber(nameof(TagCacheDiskFormat.LastModified), lastModified);
+                            writer.WriteBoolean(nameof(TagCacheDiskFormat.IncompleteRepair), incompleteRepair);
+                            writer.WritePropertyName(nameof(TagCacheDiskFormat.Items));
+                            JsonSerializer.Serialize(writer, cacheSnapshot);
+                            writer.WriteEndObject();
+                            writer.Flush();
+                        }, () => AcquireCommitLease(canCommit));
+                        if (!committed)
+                        {
+                            MarkDirty();
+                            _logger.LogInformation("[TagCache] Discarded a completed disk temp file because its lifecycle generation is no longer enabled.");
+                            return false;
+                        }
+
+                        if (clearRepairMarker && !incompleteRepair)
+                        {
+                            AtomicFile.DeleteIfExists(RepairMarkerPath);
+                        }
 
                     // Only clear the dirty bit if no flush recorded a change after our snapshot. If a
                     // concurrent flush bumped _dirtyVersion in the snapshot→persist window, leave _dirty
                     // set so the debounced timer persists the newer state — never wipe an unpersisted
                     // change. (Also write-failure-safe: a throw above skips the clear entirely.)
-                    if (Interlocked.Read(ref _dirtyVersion) == versionAtSnapshot)
-                    {
-                        _dirty = false;
-                    }
+                        if (Interlocked.Read(ref _dirtyVersion) == versionAtSnapshot)
+                        {
+                            _dirty = false;
+                        }
 
-                    _logger.LogInformation($"[TagCache] Saved {_cache.Count} entries to disk");
+                        _logger.LogInformation($"[TagCache] Saved {cacheSnapshot.Count} entries to disk");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        MarkDirty();
+                        _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
+                        return false;
+                    }
                 }
-                catch (Exception ex)
+            }
+            finally
+            {
+                if (acquired)
                 {
-                    _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
+                    Interlocked.Exchange(ref _flushing, 0);
                 }
+            }
+        }
+
+        private IDisposable? AcquireCommitLease(TagCachePublicationFence? canCommit)
+        {
+            Monitor.Enter(_lifecycleGate);
+            if (Volatile.Read(ref _suspended) != 0
+                || (canCommit != null && !canCommit()))
+            {
+                Monitor.Exit(_lifecycleGate);
+                return null;
+            }
+
+            return new MonitorLease(_lifecycleGate);
+        }
+
+        private bool PersistIncompleteRepairMarker()
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(RepairMarkerPath);
+                if (dir != null) Directory.CreateDirectory(dir);
+
+                // Do not wait behind the active cache writer or replace the last
+                // complete snapshot. The tiny sidecar makes startup rebuild while
+                // preserving those durable bytes for diagnostics/recovery.
+                AtomicFile.WriteAllText(RepairMarkerPath, "incomplete\n");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"[TagCache] Failed to persist the incomplete-repair marker: {ex.Message}");
+                return false;
             }
         }
 
@@ -2371,10 +2722,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private void ScheduleDebouncedSave()
         {
-            MarkDirty();
             lock (_lifecycleGate)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
+                MarkDirty();
                 // Reuse existing timer if possible, otherwise create a new one.
                 // Change() resets the countdown without creating a new object.
                 var existing = _debounceSaveTimer;
@@ -2390,7 +2741,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 var timer = new Timer(_ =>
                 {
-                    if (_dirty) SaveToDisk();
+                    if (_dirty && Volatile.Read(ref _suspended) == 0) SaveToDisk();
                 }, null, TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
                 var old = Interlocked.Exchange(ref _debounceSaveTimer, timer);
                 if (old != null && !ReferenceEquals(old, timer))
@@ -2398,6 +2749,111 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     old.Dispose();
                 }
             }
+        }
+
+        /// <summary>
+        /// Resume accepting incremental work for a newly enabled lifecycle generation.
+        /// The lifecycle owner keeps requests unavailable until a current snapshot has
+        /// been loaded or built.
+        /// </summary>
+        internal void Resume()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            Volatile.Write(ref _suspended, 0);
+        }
+
+        /// <summary>
+        /// Stop timers and queued work and drop the in-memory snapshot when server mode
+        /// is disabled. The disk file is retained as last-good startup data, but cannot
+        /// be served while the lifecycle readiness gate is closed.
+        /// </summary>
+        internal void Suspend()
+        {
+            Timer? flush;
+            Timer? save;
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    return;
+                }
+
+                Volatile.Write(ref _suspended, 1);
+                flush = Interlocked.Exchange(ref _flushTimer, null);
+                save = Interlocked.Exchange(ref _debounceSaveTimer, null);
+                _pending.Drain();
+                Interlocked.Exchange(ref _firstPendingTicks, 0);
+                Interlocked.Exchange(ref _retryBackoffTicks, 0);
+            }
+
+            flush?.Dispose();
+            save?.Dispose();
+
+            // Do not block the synchronous configuration-save thread behind an O(N)
+            // publication or fsync. Fast-path the clear when both gates are free;
+            // otherwise queue one cleanup that re-checks suspension after the active
+            // writer finishes. The readiness/config gates were revoked above already.
+            if (!TryClearMemoryForDisabledMode())
+            {
+                ThreadPool.QueueUserWorkItem(_ => ClearMemoryForDisabledMode());
+                _logger.LogInformation("[TagCache] Disabled mode revoked an in-flight writer; memory cleanup will complete after that writer exits.");
+            }
+        }
+
+        private bool TryClearMemoryForDisabledMode()
+        {
+            if (!Monitor.TryEnter(_contentGate))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!Monitor.TryEnter(_saveLock))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    ClearMemoryForDisabledModeLocked();
+                    return true;
+                }
+                finally
+                {
+                    Monitor.Exit(_saveLock);
+                }
+            }
+            finally
+            {
+                Monitor.Exit(_contentGate);
+            }
+        }
+
+        private void ClearMemoryForDisabledMode()
+        {
+            lock (_contentGate)
+            {
+                lock (_saveLock)
+                {
+                    ClearMemoryForDisabledModeLocked();
+                }
+            }
+        }
+
+        private void ClearMemoryForDisabledModeLocked()
+        {
+            if (Volatile.Read(ref _suspended) == 0)
+            {
+                return;
+            }
+
+            _cache = new ConcurrentDictionary<string, TagCacheEntry>(StringComparer.Ordinal);
+            _pending.Drain();
+            _userAccessCache.Clear();
+            _userAccessInFlight.Clear();
+            _servedContentStates.Clear();
+            _dirty = false;
         }
 
         public void Dispose()
@@ -2419,6 +2875,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // schedules a debounced save that never fires during shutdown). Waiting for _flushing
             // to release means that flush has finished and set _dirty, so the save below catches it.
             var acquired = AcquireFlushGuard(maxSpins: _disposeFlushGuardSpins, spinMs: 10);
+            var writerTimedOut = !acquired;
 
             // Apply anything still queued in the debounce window so a change made moments before
             // shutdown is persisted — matching the old synchronous handler, which applied to the
@@ -2435,6 +2892,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // trusting pending work that shutdown could not prove was handed off.
                     Interlocked.Exchange(ref _repairIncomplete, 1);
                     MarkDirty();
+                    PersistIncompleteRepairMarker();
                     _logger.LogWarning("[TagCache] Shutdown timed out waiting for an in-flight cache writer; marking the disk snapshot incomplete for startup rebuild.");
                 }
                 else if (ApplyPendingBatch(_pending.Drain(), out var removed))
@@ -2457,7 +2915,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
             var timer = Interlocked.Exchange(ref _debounceSaveTimer, null);
             timer?.Dispose();
-            if (_dirty) SaveToDisk();
+            if (_dirty && !writerTimedOut) SaveToDisk();
         }
 
         /// <summary>
