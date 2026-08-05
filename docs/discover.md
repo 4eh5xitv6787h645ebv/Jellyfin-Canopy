@@ -359,7 +359,7 @@ Requesting in 4K is a two-part gate: an admin master switch, and per-user permis
 !!! note "When the 4K option actually appears"
     Beyond the admin master switch, the 4K option is offered only when the Seerr server actually has 4K enabled for that media type (a default 4K Radarr / Sonarr — Seerr's `movie4kEnabled` / `series4kEnabled`) **and** the signed-in user holds the Seerr **REQUEST_4K** (or the media-specific **REQUEST_4K_MOVIE** / **REQUEST_4K_TV**) permission. Otherwise the affordance is hidden. The server enforces the same rule on the request itself, so a 4K request can never be made without permission.
 
-In the **More Info** modal, TV actions use **Request More** as the primary action, with **Request in 4K** in the dropdown when 4K is requestable.
+In the **More Info** modal, TV actions use **Request More** when at least one season can still be requested, with **Request in 4K** in the dropdown when 4K is requestable. This includes **Specials** (Season 0) when Seerr has both partial-season requests and special-episode requests enabled. If only Specials remain and either setting is disabled or temporarily cannot be verified, Canopy does not show a request action. Search-result cards also wait for full title details before enabling a Specials-only request because Seerr's compact search response does not say whether Season 0 has episodes or whether those two settings are enabled.
 
 #### Requesting collections
 
@@ -377,7 +377,7 @@ These toggles on the **Seerr** tab shape the request experience:
 | **Show Request Quota Info** | On | Request modals display a chip with the user's current request usage and, when a complete request history makes it safe to derive, when the next slot frees up. A temporary history failure omits only that reset estimate rather than hiding Seerr's authoritative quota numbers — a maxed-out user then sees "Reset time is currently unavailable" instead of a silent gap, so an unavailable estimate is never mistaken for "no reset exists". A blocked request shows a detailed quota-error dialog instead of a vanishing toast. |
 | **Show Collections in Seerr Results** | On | Shows TMDB collections in results with an option to request the whole collection. See [Requesting collections](#requesting-collections). |
 | **Open Results in "More Info" Modal** | Off | Controls what happens when a user clicks a Seerr result's title or poster. **Off** opens the item in Seerr; **On** opens an in-app **More Info** modal, keeping the user inside Jellyfin. |
-| **Show "Request More" Button on Series** | On | Adds a **Request More** button beside the Seasons heading on Series detail pages whenever the show has unrequested seasons in Seerr, so users can request more seasons without using the search bar. |
+| **Show "Request More" Button on Series** | On | Adds a **Request More** button beside the Seasons heading on Series detail pages whenever the show has requestable seasons in Seerr, so users can request more seasons without using the search bar. A non-empty Specials season counts when Seerr enables both partial-season and special-episode requests. |
 | **Show Streaming Providers on Posters** | — | Shows Elsewhere provider icons on Seerr result cards (needs a TMDB key). See [Streaming posters on Seerr cards](#streaming-posters-on-seerr-cards). |
 
 ### Recommendations, similar & discovery on detail pages

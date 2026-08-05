@@ -132,7 +132,19 @@ function analyzeSeasonStatuses(seasons: any) {
     if (!seasons || seasons.length === 0) return { overallStatus: 1, statusSummary: null, total: 0 };
     const regularSeasons = seasons.filter((s: any) => s.seasonNumber > 0);
     const total = regularSeasons.length;
-    if (total === 0) return { overallStatus: 1, statusSummary: null, total: 0 };
+    if (total === 0) {
+        const specials = seasons.find((season: any) => season?.seasonNumber === 0);
+        // Search-result mediaInfo is a sparse status projection: it carries no
+        // root-season episode count or request-settings snapshot. Preserve the
+        // status for badges, but mark a Specials-only card non-actionable until
+        // a full-detail owner can prove both capability and non-empty content.
+        return {
+            overallStatus: specials?.status ?? MediaStatus.UNKNOWN,
+            statusSummary: null,
+            total: 0,
+            specialsOnly: !!specials,
+        };
+    }
 
     const statusCounts = {
         available: regularSeasons.filter((s: any) => s.status === MediaStatus.AVAILABLE).length,
@@ -154,17 +166,6 @@ function analyzeSeasonStatuses(seasons: any) {
         statusSummary = (availableCount > 0) ? JC.t!('seerr_seasons_available_count', { count: availableCount, total }) : JC.t!('seerr_seasons_requested_count', { count: requestedCount, total });
     } else {
         overallStatus = MediaStatus.UNKNOWN;
-    }
-
-    // If every regular season is accounted for but the specials season (0) was never
-    // requested, still surface a "Request More" affordance instead of marking the
-    // show fully Available, so specials-only seasons remain requestable.
-    if (overallStatus === MediaStatus.AVAILABLE) {
-        const specialsSeason = seasons.find((s: any) => s.seasonNumber === 0);
-        if (specialsSeason && specialsSeason.status === MediaStatus.UNKNOWN) {
-            overallStatus = MediaStatus.DELETED;
-            statusSummary = JC.t!('seerr_seasons_accounted_for', { count: accountedForCount, total });
-        }
     }
 
     return { overallStatus, statusSummary, total, availableCount };

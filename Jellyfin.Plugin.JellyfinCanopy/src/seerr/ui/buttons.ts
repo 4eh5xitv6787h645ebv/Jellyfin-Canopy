@@ -169,6 +169,28 @@ function configureTvShowButton(button: any, overallStatus: any, seasonAnalysis: 
         button.disabled = disabled;
         button.className = `seerr-request-button seerr-button-tv ${className}`; // Reset classes
     };
+    if (seasonAnalysis?.specialsOnly) {
+        // The search projection cannot prove that Specials has episodes or is
+        // enabled. Keep status display deterministic but do not publish a
+        // request action; full details/More Info owns the authoritative check.
+        switch (overallStatus) {
+            case MediaStatus.AVAILABLE:
+                setButton(JC.t!('seerr_btn_available'), icons.available, 'seerr-button-available', true, null);
+                break;
+            case MediaStatus.BLOCKED:
+                setButton(JC.t!('seerr_btn_blocklisted'), icons.cancel, 'seerr-button-blocklisted', true, null);
+                break;
+            case MediaStatus.PENDING:
+            case MediaStatus.PROCESSING:
+            case MediaStatus.PARTIALLY_AVAILABLE:
+                setButton(JC.t!('seerr_btn_pending'), icons.pending, 'seerr-button-pending', true, null);
+                break;
+            default:
+                setButton(JC.t!('seerr_btn_request'), icons.request, 'seerr-button-request', true, null);
+                break;
+        }
+        return;
+    }
     switch (overallStatus) {
         case MediaStatus.PENDING: setButton(JC.t!('seerr_btn_pending'), icons.pending, 'seerr-button-pending'); break;
         case MediaStatus.PROCESSING: setButton(JC.t!('seerr_btn_request'), icons.request, 'seerr-button-request'); break;

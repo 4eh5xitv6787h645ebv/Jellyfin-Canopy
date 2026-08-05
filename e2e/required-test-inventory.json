@@ -117,6 +117,7 @@
     "e2e/seerr-collection-rich-cards.spec.ts › Seerr collection request rich cards (#463) › modern / mobile",
     "e2e/seerr-collection-rich-cards.spec.ts › Seerr collection request rich cards (#463) › modern / desktop",
     "e2e/seerr-collection-rich-cards.spec.ts › Seerr collection responsive device audit (#463 follow-up) › modern / 50-device popularity proxy / 23 portrait viewports",
+    "e2e/seerr-specials-request-more.spec.ts › Seerr Specials Request More (#674) › enabled Specials render and submit season zero while disabled or unavailable settings fail closed",
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › synthetic success consumes its own entry before the next real Back",
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › one Escape closes only the topmost nested modal and keeps the shortcut gate",
     "e2e/seerr-modal-history.spec.ts › Seerr modal history ownership › intervening SPA history preserves one-step Back and Forward around a retired modal",

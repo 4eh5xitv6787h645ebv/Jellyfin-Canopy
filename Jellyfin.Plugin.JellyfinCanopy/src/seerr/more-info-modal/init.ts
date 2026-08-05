@@ -4,6 +4,7 @@
 import { JC } from '../../globals';
 import { installModalA11y, type ModalA11yHandle } from '../../core/modal-a11y';
 import type { IdentityContext } from '../../types/jc';
+import type { UnrequestedSeasonsResolution } from './seasons';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 /* eslint-disable @typescript-eslint/no-misused-promises -- legacy async event listeners with fire-and-forget bodies; semantics preserved verbatim */
@@ -23,6 +24,7 @@ interface MoreInfoModalApi {
     open: (tmdbId: any, mediaType: any) => Promise<void>;
     close: (immediate?: boolean) => void;
     checkForUnrequestedSeasons?: (data: any) => Promise<boolean>;
+    resolveUnrequestedSeasons?: (data: any) => Promise<UnrequestedSeasonsResolution>;
 }
 
 const moreInfoModal = {} as MoreInfoModalApi;
@@ -347,3 +349,4 @@ export function installSeerrMoreInfo(): () => void {
 // Series page "Request More" button) so the unrequested-seasons check
 // logic does not need to be duplicated.
 moreInfoModal.checkForUnrequestedSeasons = internal.checkForUnrequestedSeasons;
+moreInfoModal.resolveUnrequestedSeasons = internal.resolveUnrequestedSeasons;

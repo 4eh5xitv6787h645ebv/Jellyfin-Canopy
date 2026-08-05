@@ -52,6 +52,73 @@ function scheduleModalFrame(callback: () => void): void {
     cleanups?.add(cancel);
 }
 
+const TV_REQUESTABILITY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000] as const;
+let tvActionRenderToken = 0;
+
+function isCurrentTvActionRender(actionMount: HTMLElement, renderToken: number): boolean {
+    return isLiveNode(actionMount)
+        && actionMount.dataset.tvActionRenderToken === String(renderToken);
+}
+
+/**
+ * Resolve and render TV follow-up actions. An unavailable Specials capability
+ * fails closed for the current paint and retries with bounded modal-owned
+ * backoff; it never becomes a permanent negative or outlives the modal.
+ */
+function renderTvFollowUpActions(
+    data: any,
+    actionMount: HTMLElement,
+    show4kTv: boolean,
+    canRequest4k: boolean,
+    renderToken: number,
+    attempt = 0,
+): void {
+    void internal.resolveUnrequestedSeasons(data).then((resolution: any) => {
+        if (!isCurrentTvActionRender(actionMount, renderToken)) return;
+        const validResolution = resolution
+            && typeof resolution.hasUnrequestedSeasons === 'boolean'
+            && typeof resolution.definitive === 'boolean';
+        if (!validResolution || !resolution.definitive) {
+            const delay = TV_REQUESTABILITY_RETRY_DELAYS_MS[attempt];
+            if (delay === undefined) return;
+            const timer = window.setTimeout(() => {
+                cleanup();
+                state.currentModal?._actionCleanups?.delete(cleanup);
+                if (isCurrentTvActionRender(actionMount, renderToken)) {
+                    renderTvFollowUpActions(
+                        data,
+                        actionMount,
+                        show4kTv,
+                        canRequest4k,
+                        renderToken,
+                        attempt + 1,
+                    );
+                }
+            }, delay);
+            const cleanup = () => clearTimeout(timer);
+            trackModalCleanup(cleanup);
+            return;
+        }
+
+        if (resolution.hasUnrequestedSeasons) {
+            const requestMoreButton = internal.buildTvRequestMoreButton(data, show4kTv, canRequest4k);
+            if (requestMoreButton) actionMount.appendChild(requestMoreButton);
+            void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
+            return;
+        }
+
+        if (show4kTv && canRequest4k) {
+            const followUp4k = internal.buildSingleTv4kButton(data);
+            if (followUp4k) actionMount.appendChild(followUp4k);
+            void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
+        }
+    }).catch((error: unknown) => {
+        if (isCurrentTvActionRender(actionMount, renderToken)) {
+            console.warn(`${logPrefix} TV Request More resolution failed:`, error);
+        }
+    });
+}
+
 function buildSingle4kButton(data: any) {
 const button = document.createElement('button');
 ownControl(button);
@@ -350,7 +417,11 @@ state.currentModal._actionCleanups?.clear?.();
 const actionMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-actions"]');
 const chipMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-status-chip"]');
 const downloadsMount = state.currentModal.querySelector<HTMLElement>('[data-mount="jc-downloads"]');
-if (actionMount) actionMount.innerHTML = '';
+const actionRenderToken = ++tvActionRenderToken;
+if (actionMount) {
+    actionMount.innerHTML = '';
+    actionMount.dataset.tvActionRenderToken = String(actionRenderToken);
+}
 if (chipMount) chipMount.innerHTML = '';
 if (downloadsMount) downloadsMount.innerHTML = '';
 
@@ -468,42 +539,21 @@ if (mediaType === 'movie') {
 
     const canRequestNormal = JC.seerrStatus!.isRequestable(effectiveStatus);
     const canRequest4k = JC.seerrStatus!.isRequestable(effectiveStatus4k);
-    if (canRequestNormal) {
+    const hasRegularEpisodes = Array.isArray(data.seasons)
+        && data.seasons.some((season: any) => Number.isInteger(season?.seasonNumber)
+            && season.seasonNumber > 0
+            && Number.isInteger(season?.episodeCount)
+            && season.episodeCount > 0);
+    if (canRequestNormal && hasRegularEpisodes) {
         const actions = internal.buildTvActions(data, show4kTv);
         if (actions && actionMount) actionMount.appendChild(actions);
         void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
         return;
     }
 
-    const hasStatus = hasNormalStatus || has4kStatus;
-    const hasDeletedStatus = effectiveStatus === 7 || effectiveStatus4k === 7;
-
-    // Check if there are unrequested seasons
-    if (hasStatus) {
-        if (hasDeletedStatus && actionMount) {
-            const requestMoreButton = internal.buildTvRequestMoreButton(data, show4kTv, canRequest4k);
-            if (requestMoreButton) actionMount.appendChild(requestMoreButton);
-            void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
-            return;
-        }
-        void internal.checkForUnrequestedSeasons(data).then((hasUnrequestedSeasons: any) => {
-            if (!isLiveNode(actionMount)) return;
-            if (hasUnrequestedSeasons && actionMount) {
-                const requestMoreButton = internal.buildTvRequestMoreButton(data, show4kTv, canRequest4k);
-                if (requestMoreButton) actionMount.appendChild(requestMoreButton);
-                void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
-            } else if (show4kTv && canRequest4k && actionMount) {
-                const followUp4k = internal.buildSingleTv4kButton(data);
-                if (followUp4k) actionMount.appendChild(followUp4k);
-                void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
-            }
-        });
-        return;
+    if (actionMount) {
+        renderTvFollowUpActions(data, actionMount, show4kTv, canRequest4k, actionRenderToken);
     }
-
-    const actions = internal.buildTvActions(data);
-    if (actions && actionMount) actionMount.appendChild(actions);
-    void maybeRenderMoreInfoQuotaChip(actionMount, 'tv');
 }
 }
 internal.buildSingle4kButton = buildSingle4kButton;

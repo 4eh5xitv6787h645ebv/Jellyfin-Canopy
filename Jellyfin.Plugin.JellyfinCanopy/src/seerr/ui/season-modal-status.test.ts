@@ -32,6 +32,8 @@ describe('season modal status domains', () => {
         jellyfinMediaId?: string;
         rawMediaInfo?: any;
         rootSeasons?: any;
+        partialRequestsEnabled?: boolean;
+        enableSpecialEpisodes?: boolean;
     } = {}) {
         const host = options.host ?? document.createElement('div');
         const requests = options.requestStatus == null ? [] : [{
@@ -66,8 +68,8 @@ describe('season modal status domains', () => {
         internal.updateSeasonList(
             host,
             tvDetails,
-            true,
-            false,
+            options.partialRequestsEnabled ?? true,
+            options.enableSpecialEpisodes ?? false,
             options.is4kMode ?? false,
         );
 
@@ -215,6 +217,41 @@ describe('season modal status domains', () => {
         expect(row.status.textContent).toBe('seerr_season_status_not_requested');
         expect((row.host as any)._requestStateValid).toBe(true);
         expect((row.host as any)._validatedRegularSeasonNumbers).toEqual([1]);
+    });
+
+    it('makes a non-empty unknown Specials row selectable only when both capabilities are enabled', () => {
+        const specialMediaInfo = {
+            status: 5,
+            status4k: 1,
+            seasons: [{ seasonNumber: 0, status: 1, status4k: 1 }],
+            requests: [],
+        };
+        const enabled = renderSeason({
+            rootSeasons: [{ seasonNumber: 0, episodeCount: 3, name: 'Specials' }],
+            rawMediaInfo: specialMediaInfo,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: true,
+        });
+        expect(enabled.checkbox.dataset.seasonNumber).toBe('0');
+        expect(enabled.checkbox.disabled).toBe(false);
+        expect(enabled.status.textContent).toBe('seerr_season_status_not_requested');
+
+        const partialDisabled = renderSeason({
+            rootSeasons: [{ seasonNumber: 0, episodeCount: 3, name: 'Specials' }],
+            rawMediaInfo: specialMediaInfo,
+            partialRequestsEnabled: false,
+            enableSpecialEpisodes: true,
+        });
+        expect(partialDisabled.checkbox.dataset.seasonNumber).toBe('0');
+        expect(partialDisabled.checkbox.disabled).toBe(true);
+
+        const specialsDisabled = renderSeason({
+            rootSeasons: [{ seasonNumber: 0, episodeCount: 3, name: 'Specials' }],
+            rawMediaInfo: specialMediaInfo,
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: false,
+        });
+        expect(specialsDisabled.host.querySelector('[data-season-number="0"]')).toBeNull();
     });
 
     it('clears a selected season when refreshed request state disables it', () => {

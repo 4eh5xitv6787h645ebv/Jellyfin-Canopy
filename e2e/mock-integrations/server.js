@@ -155,6 +155,61 @@ function movieDetail(id) {
     };
 }
 
+function tvSpecialsDetail(id) {
+    const idNumber = Number(id);
+    return {
+        id: idNumber,
+        mediaType: 'tv',
+        name: 'JC Specials Request Fixture',
+        originalName: 'JC Specials Request Fixture',
+        overview: 'Hermetic TV fixture with every regular season available and only Specials unrequested.',
+        firstAirDate: '2024-01-01',
+        lastAirDate: '2025-01-01',
+        status: 'Returning Series',
+        episodeRunTime: [42],
+        posterPath: null,
+        backdropPath: null,
+        genres: [{ id: 18, name: 'Drama' }],
+        contentRatings: { results: [{ iso_3166_1: 'US', rating: 'TV-14' }] },
+        credits: { cast: [], crew: [] },
+        createdBy: [],
+        relatedVideos: [],
+        keywords: [],
+        seasons: [
+            {
+                seasonNumber: 0,
+                episodeCount: 3,
+                name: 'Specials',
+                overview: 'Requestable fixture Specials.',
+                airDate: '2024-01-01',
+                posterPath: '/jc-specials-fixture.jpg',
+            },
+            {
+                seasonNumber: 1,
+                episodeCount: 8,
+                name: 'Season 1',
+                overview: 'Already available regular season.',
+                airDate: '2024-02-01',
+                posterPath: '/jc-season-one-fixture.jpg',
+            },
+        ],
+        mediaInfo: {
+            id: idNumber + 100000,
+            status: 5,
+            status4k: 1,
+            jellyfinMediaId: null,
+            jellyfinMediaId4k: null,
+            downloadStatus: [],
+            downloadStatus4k: [],
+            seasons: [
+                { seasonNumber: 0, status: 1, status4k: 1 },
+                { seasonNumber: 1, status: 5, status4k: 1 },
+            ],
+            requests: [],
+        },
+    };
+}
+
 function searchResults(query) {
     const normalized = query.toLowerCase();
     if (normalized.includes('deadpool')) {
@@ -167,6 +222,9 @@ function searchResults(query) {
     }
     if (normalized.includes('night of the living dead')) {
         return [10331, 10332, 10333, 10334].map(movieDetail);
+    }
+    if (normalized.includes('specials request fixture')) {
+        return [tvSpecialsDetail(1399)];
     }
     return [550, 603, 862].map(movieDetail);
 }
@@ -262,7 +320,13 @@ async function handleSeerr(request, response) {
         return json(response, 200, { movie4kEnabled: true, series4kEnabled: true });
     }
     if (url.pathname === '/api/v1/settings/main') {
-        return json(response, 200, { partialRequestsEnabled: true });
+        return json(response, 200, {
+            partialRequestsEnabled: true,
+            enableSpecialEpisodes: true,
+        });
+    }
+    if (url.pathname === '/api/v1/overrideRule' && request.method === 'GET') {
+        return json(response, 200, []);
     }
     if (url.pathname === '/api/v1/user' && request.method === 'GET') {
         return json(response, 200, page(readFixtureState().users));
@@ -306,6 +370,20 @@ async function handleSeerr(request, response) {
         return match[2]
             ? json(response, 200, page([603, 862].map(movieDetail)))
             : json(response, 200, movieDetail(match[1]));
+    }
+    match = url.pathname.match(/^\/api\/v1\/tv\/(\d+)\/season\/(\d+)$/);
+    if (match && request.method === 'GET') {
+        return json(response, 200, {
+            id: Number(match[2]),
+            seasonNumber: Number(match[2]),
+            episodes: [{ episodeNumber: 1, airDate: '2024-01-01' }],
+        });
+    }
+    match = url.pathname.match(/^\/api\/v1\/tv\/(\d+)(?:\/(similar|recommendations|ratings))?$/);
+    if (match && request.method === 'GET') {
+        if (match[2] === 'ratings') return json(response, 200, {});
+        if (match[2]) return json(response, 200, page([]));
+        return json(response, 200, tvSpecialsDetail(match[1]));
     }
     match = url.pathname.match(/^\/api\/v1\/collection\/(\d+)$/);
     if (match && request.method === 'GET') {
