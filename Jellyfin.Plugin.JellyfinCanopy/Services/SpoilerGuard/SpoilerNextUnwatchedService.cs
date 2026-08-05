@@ -33,13 +33,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     /// simpler and more predictable for spoiler purposes than Jellyfin NextUp's
     /// rewatch-aware ordering, and stable for a user who watches in order.
     ///
-    /// The strip filter consumes this as an amortized in-memory lookup; a cache
-    /// miss costs one series-scoped Limit=1 library query (the same bounded shape
-    /// as TagCacheService.GetFirstEpisode). Watched-state changes evict the
-    /// affected key via IUserDataManager.UserDataSaved; library mutations are
-    /// covered by the TTL alone — a stale boundary can only mis-categorize the
-    /// episode the user is about to watch between reveal tiers, never bypass a
-    /// base strip, so a bounded staleness window is acceptable.
+    /// The strip filter consumes this as a pure in-memory lookup; a cache miss
+    /// fails closed (full strip) and schedules a coalesced background fill whose
+    /// one series-scoped Limit=1 library query (the same bounded shape as
+    /// TagCacheService.GetFirstEpisode) never runs on the request thread.
+    /// Watched-state changes evict the affected key via
+    /// IUserDataManager.UserDataSaved; library mutations are covered by the TTL
+    /// alone — a stale or not-yet-computed boundary can only over-strip or
+    /// mis-categorize between reveal tiers, never bypass a base strip, so a
+    /// bounded staleness window is acceptable.
     /// </summary>
     public sealed class SpoilerNextUnwatchedService : IDisposable
     {
@@ -64,10 +66,24 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly IUserDataManager _userDataManager;
         private readonly ILogger<SpoilerNextUnwatchedService> _logger;
         private int _computeFailureLogBudget = 5;
+        private volatile bool _disposed;
 
-        // Test seams: substitute the boundary computation (no live library) and
-        // the clock (deterministic TTL expiry).
+        // PERF(S3): the strip filter consumes GetBoundary once per guarded
+        // episode, so a miss must never query the library on the request
+        // thread. Misses fail closed (full strip) and enqueue a background
+        // fill instead: _inFlight single-flights each (user, series) key so a
+        // 100-episode page produces at most one computation per series, and
+        // _computeGate bounds background library concurrency at 2 so a cold
+        // cache never becomes a query storm against a scan-saturated DB.
+        private readonly ConcurrentDictionary<(Guid UserId, Guid SeriesId), byte> _inFlight = new();
+        private readonly SemaphoreSlim _computeGate = new(2, 2);
+
+        // Test seams: substitute the boundary computation (runs synchronously,
+        // bypassing the background fill), observe scheduled background fills,
+        // and pin the clock for deterministic TTL expiry.
         internal Func<Guid, Guid, NextUnwatchedBoundary?>? BoundaryComputerForTest { get; set; }
+
+        internal Action<Task>? BackgroundFillObserverForTest { get; set; }
 
         internal Func<long>? ClockTicksForTest { get; set; }
 
@@ -86,22 +102,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         public void Dispose()
         {
+            _disposed = true;
             _userDataManager.UserDataSaved -= OnUserDataSaved;
         }
 
         /// <summary>
         /// Resolve the next-unwatched boundary for a user's guarded series.
         /// Returns null (⇒ every episode categorizes as <see cref="SpoilerEpisodeCategory.Other"/>,
-        /// full strip) when the series has no unwatched regular episode or on any
-        /// resolution failure — fail-closed toward the base behavior.
+        /// full strip) when the series has no unwatched regular episode, on any
+        /// resolution failure, or while the boundary has not been computed yet —
+        /// always fail-closed toward the base behavior. A cache miss never
+        /// queries the library on the calling (request) thread; it schedules a
+        /// coalesced background fill and later requests read the published
+        /// answer (PERF(S3)).
         /// </summary>
         public NextUnwatchedBoundary? GetBoundary(Guid userId, Guid seriesId)
         {
             if (userId == Guid.Empty || seriesId == Guid.Empty) return null;
 
-            // PERF(S3): the per-item cost on the strip path is this dictionary
-            // hit; the bounded query below runs once per (user, series) per TTL
-            // window / watched-state change, amortizing to O(1) per item.
+            // PERF(S3): the per-item cost on the strip path is this dictionary hit.
             var now = ClockTicksForTest?.Invoke() ?? DateTime.UtcNow.Ticks;
             var key = (userId, seriesId);
             if (_cache.TryGetValue(key, out var slot) && slot.ExpiresAtTicks > now)
@@ -109,10 +128,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return slot.Boundary;
             }
 
-            var boundary = BoundaryComputerForTest != null
-                ? BoundaryComputerForTest(userId, seriesId)
-                : ComputeBoundary(userId, seriesId);
+            if (BoundaryComputerForTest != null)
+            {
+                // Test seam: deterministic synchronous fill.
+                Publish(key, BoundaryComputerForTest(userId, seriesId), now);
+                return _cache[key].Boundary;
+            }
 
+            ScheduleBackgroundFill(key);
+            return null;
+        }
+
+        private void Publish((Guid UserId, Guid SeriesId) key, NextUnwatchedBoundary? boundary, long now)
+        {
             if (_cache.Count >= MaxCacheEntries)
             {
                 // PERF(S4): hard bound. Clearing everything is deliberate — a
@@ -122,7 +150,33 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             _cache[key] = new CacheSlot(boundary, now + CacheTtl.Ticks);
-            return boundary;
+        }
+
+        // One background fill per missing key at a time; at most two library
+        // computations run concurrently across all keys. A fault publishes the
+        // fail-closed null answer (with the normal TTL) so a broken library
+        // cannot turn every page into a scheduling churn loop.
+        private void ScheduleBackgroundFill((Guid UserId, Guid SeriesId) key)
+        {
+            if (_disposed) return;
+            if (!_inFlight.TryAdd(key, 0)) return;
+            var task = Task.Run(async () =>
+            {
+                await _computeGate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (_disposed) return;
+                    var boundary = ComputeBoundary(key.UserId, key.SeriesId);
+                    var now = ClockTicksForTest?.Invoke() ?? DateTime.UtcNow.Ticks;
+                    Publish(key, boundary, now);
+                }
+                finally
+                {
+                    _computeGate.Release();
+                    _inFlight.TryRemove(key, out _);
+                }
+            });
+            BackgroundFillObserverForTest?.Invoke(task);
         }
 
         /// <summary>

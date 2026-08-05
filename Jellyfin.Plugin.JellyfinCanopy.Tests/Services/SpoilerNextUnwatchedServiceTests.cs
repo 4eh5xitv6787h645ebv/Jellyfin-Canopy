@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -209,7 +210,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
-        public void ComputeBoundary_UsesTheBoundedSeriesScopedQueryShape()
+        public async Task ColdMiss_FailsClosedWithoutInlineQuery_ThenBackgroundFillPublishes()
         {
             var seriesId = Guid.NewGuid();
             var episodeId = Guid.NewGuid();
@@ -226,9 +227,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 },
             };
             using var service = NewLiveService(lib, out _);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            var user = Guid.NewGuid();
 
-            var boundary = service.GetBoundary(Guid.NewGuid(), seriesId);
+            // PERF(S3): the miss itself must not touch the library on the
+            // calling thread — it fails closed and schedules the fill.
+            Assert.Null(service.GetBoundary(user, seriesId));
+            _ = Assert.Single(fills);
+            await Task.WhenAll(fills);
 
+            var boundary = service.GetBoundary(user, seriesId);
             Assert.Equal(new SpoilerNextUnwatchedService.NextUnwatchedBoundary(episodeId, 2, 5), boundary);
             Assert.NotNull(seen);
             Assert.Equal(seriesId, seen!.ParentId);
@@ -238,11 +247,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(1, lib.GetItemListCallCount);
         }
 
+        [Fact]
+        public async Task ColdMiss_CoalescesConcurrentRequestsToOneFill()
+        {
+            var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem>() };
+            using var service = NewLiveService(lib, out _);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            var user = Guid.NewGuid();
+            var series = Guid.NewGuid();
+
+            // A 100-episode page hits the same missing key repeatedly; only
+            // one background fill may be scheduled for it.
+            for (var i = 0; i < 100; i++) Assert.Null(service.GetBoundary(user, series));
+            _ = Assert.Single(fills);
+            await Task.WhenAll(fills);
+            Assert.Equal(1, lib.GetItemListCallCount);
+        }
+
         [Theory]
         [InlineData(0, 2)]      // season 0 result (defensive: query already excludes)
         [InlineData(null, 2)]   // missing season index
         [InlineData(2, null)]   // missing episode index
-        public void ComputeBoundary_UnusableFirstEpisode_ReturnsNull(int? season, int? episode)
+        public async Task BackgroundFill_UnusableFirstEpisode_PublishesNull(int? season, int? episode)
         {
             var lib = new CountingLibraryManager
             {
@@ -252,32 +279,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 },
             };
             using var service = NewLiveService(lib, out _);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            var user = Guid.NewGuid();
+            var series = Guid.NewGuid();
 
-            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
+            Assert.Null(service.GetBoundary(user, series));
+            await Task.WhenAll(fills);
+            Assert.Null(service.GetBoundary(user, series));
+            Assert.Equal(1, lib.GetItemListCallCount);
         }
 
         [Fact]
-        public void ComputeBoundary_NoUnwatchedEpisodes_ReturnsNull()
-        {
-            var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem>() };
-            using var service = NewLiveService(lib, out _);
-
-            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
-        }
-
-        [Fact]
-        public void ComputeBoundary_UnknownUser_ReturnsNullWithoutQuerying()
+        public async Task BackgroundFill_UnknownUser_PublishesNullWithoutQuerying()
         {
             var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem>() };
             using var service = NewLiveService(lib, out var users);
             users.GetUserByIdHook = _ => null;
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            var user = Guid.NewGuid();
+            var series = Guid.NewGuid();
 
-            Assert.Null(service.GetBoundary(Guid.NewGuid(), Guid.NewGuid()));
+            Assert.Null(service.GetBoundary(user, series));
+            await Task.WhenAll(fills);
+            Assert.Null(service.GetBoundary(user, series));
             Assert.Equal(0, lib.GetItemListCallCount);
         }
 
         [Fact]
-        public void ComputeBoundary_QueryFault_FailsClosedToNull_AndCachesTheNull()
+        public async Task BackgroundFill_QueryFault_PublishesFailClosedNull_AndCachesIt()
         {
             var calls = 0;
             var lib = new CountingLibraryManager
@@ -285,14 +316,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 GetItemListHook = _ => { calls++; throw new InvalidOperationException("db saturated"); },
             };
             using var service = NewLiveService(lib, out _);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
             var user = Guid.NewGuid();
             var series = Guid.NewGuid();
 
             Assert.Null(service.GetBoundary(user, series));
-            Assert.Null(service.GetBoundary(user, series));
+            await Task.WhenAll(fills);
             // The fault result is cached like any other answer — a broken
-            // library must not turn the strip path into a per-item query storm.
+            // library must not turn the strip path into a fill-churn loop.
+            Assert.Null(service.GetBoundary(user, series));
+            Assert.Null(service.GetBoundary(user, series));
             Assert.Equal(1, calls);
+            _ = Assert.Single(fills);
         }
 
         [Fact]

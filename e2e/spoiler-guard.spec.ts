@@ -505,7 +505,16 @@ test.describe('Spoiler Guard', () => {
             });
             await setSeriesGuard(user, t.seriesId, plan.requiredGuarded);
 
-            const after = await listFull();
+            // The boundary fills in the background after the first guarded
+            // request (PERF(S3): a cache miss fails closed rather than query
+            // inline), so poll briefly until the reveal is published.
+            let after = await listFull();
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const candidate = after.find((e) => e.id === expectedNext!.id);
+                if (candidate && candidate.name === expectedNext!.name) break;
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                after = await listFull();
+            }
             const nextNow = after.find((e) => e.id === expectedNext!.id)!;
             const laterNow = after.find((e) => e.id === laterUnwatched!.id)!;
 
