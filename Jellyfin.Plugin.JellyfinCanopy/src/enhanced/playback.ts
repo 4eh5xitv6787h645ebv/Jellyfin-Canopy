@@ -751,11 +751,25 @@ function trackDisplayName(stream: OwnSessionStream | undefined): string {
  * fully handled (including "no tracks" toasts); false → caller falls back to
  * the DOM sheet path.
  */
-async function cycleTrackViaApi(kind: TrackSheetKind, context: IdentityContext): Promise<boolean> {
+async function cycleTrackViaApi(
+    kind: TrackSheetKind,
+    context: IdentityContext,
+    expectedGeneration: number,
+): Promise<boolean> {
     const api = JC.core?.api;
     if (!api || typeof api.jf !== 'function') return false;
+    // Ownership snapshot for the press: a next-episode swap (new element or
+    // new source) between the probe and the POST would command track indexes
+    // computed for the OLD item. Any staleness swallows the press.
+    const pressVideo = getVideo();
+    const pressSrc = pressVideo?.currentSrc || pressVideo?.src || '';
+    const pressIsStale = (): boolean => {
+        if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return true;
+        const video = getVideo();
+        return video !== pressVideo || (video?.currentSrc || video?.src || '') !== pressSrc;
+    };
     const session = await probeOwnSession(context);
-    if (!JC.identity.isCurrent(context) || JC.isVideoPage?.() !== true) return true; // stale press — swallow
+    if (pressIsStale()) return true; // stale press — swallow
     const sessionId = session?.Id;
     const itemId = session?.NowPlayingItem?.Id;
     if (!session || !sessionId || !itemId) return false;
@@ -793,12 +807,11 @@ async function cycleTrackViaApi(kind: TrackSheetKind, context: IdentityContext):
             body: { Name: commandName, Arguments: { Index: String(next) } }
         });
     } catch (err) {
-        if (JC.identity.isCurrent(context)) {
-            console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
-        }
+        if (pressIsStale()) return true; // stale press — no fallback either
+        console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }
-    if (!JC.identity.isCurrent(context)) return true;
+    if (pressIsStale()) return true;
     _lastCommandedTrack[kind] = { sessionId, itemId, index: next, at: performance.now() };
     const nextStream = next === OFF_STREAM_INDEX ? undefined : streams.find((s) => s.Index === next);
     const name = JC.escapeHtml(trackDisplayName(nextStream));
@@ -832,7 +845,7 @@ function cycleTrack(kind: TrackSheetKind): void {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
         let handled = false;
         try {
-            handled = await cycleTrackViaApi(kind, context);
+            handled = await cycleTrackViaApi(kind, context, expectedGeneration);
         } catch (err) {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
         }

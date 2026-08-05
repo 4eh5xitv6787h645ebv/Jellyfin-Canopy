@@ -261,6 +261,56 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
+    describe('track cycling stale-press guards (final-review regressions)', () => {
+        it('a video-element swap during the probe swallows the press (no POST, no fallback)', async () => {
+            const video = mountVideo();
+            let resolveSessions!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            // Next episode: the element is replaced while the probe is in flight.
+            video.remove();
+            mountVideo();
+            resolveSessions([ownSession()]);
+            await flushPromises();
+
+            expect(jf).toHaveBeenCalledTimes(1); // probe only — no command
+            expect(triggerClick).not.toHaveBeenCalled(); // and no menu fallback
+        });
+
+        it('a source swap on the same element during the probe also swallows the press', async () => {
+            const video = document.createElement('video');
+            let src = 'http://jf.test/Videos/item-a/stream?MediaSourceId=1';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            let resolveSessions!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleSubtitleTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            src = 'http://jf.test/Videos/item-b/stream?MediaSourceId=1';
+            resolveSessions([ownSession()]);
+            await flushPromises();
+
+            expect(jf).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('aspect ratio without panels', () => {
         it('cycles auto → cover → fill → auto via the native localStorage key and object-fit', () => {
             const video = mountVideo();

@@ -318,6 +318,11 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
      * are loaded), letting the caller fall back to the native skip button.
      */
     function skipActiveSegment(): MediaSegment | null {
+        // Same item-identity gate as onTick: a source change (next episode)
+        // must drop the old item's segments and return null while the new
+        // fetch is pending, so the caller's visible-button fallback still runs
+        // instead of seeking with stale boundaries.
+        reinitIfItemChanged();
         if (!video) return null;
         const t = video.currentTime;
         if (!Number.isFinite(t)) return null;
@@ -331,10 +336,15 @@ export function createAutoSkipEngine(deps: AutoSkipDeps) {
                 Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
             const target = Math.min(endSeconds, duration);
             if (target <= t) return null; // segment runs to (or past) the end — nothing to jump
-            // Latch the segment as acted-on so the auto engine's next tick
-            // (backward-entry guard) never re-evaluates this manual jump.
+            // Native-parity state after a manual jump (same shape a successful
+            // AUTO skip leaves): lastIgnored stays false and lastTimeTicks
+            // records the pre-jump in-segment position, so a direct seek back
+            // INTO the segment is rejected by the backward-entry guard while a
+            // legitimate replay (seek before StartTicks, play forward) is
+            // auto-skipped again.
             lastKey = segmentKey(seg);
-            lastIgnored = true;
+            lastIgnored = false;
+            lastTimeTicks = timeTicks;
             video.currentTime = target;
             return seg;
         }

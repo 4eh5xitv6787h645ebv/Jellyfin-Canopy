@@ -633,3 +633,47 @@ describe('manual skipActiveSegment', () => {
         expect(h.video.currentTime).toBe(600);
     });
 });
+
+describe('manual skip final-review regressions', () => {
+    it('a source change (next episode) drops stale segments and returns null (button fallback preserved)', async () => {
+        const h = makeHarness([intro5to30]);
+        h.engine.attach(h.video);
+        await flush();
+        h.video.currentTime = 10;
+        // Next episode: same element, new unresolvable source; NO tick fires
+        // before the shortcut press.
+        h.video.currentSrc = 'blob:next-episode';
+        expect(h.engine.skipActiveSegment()).toBeNull();
+        expect(h.video.currentTime).toBe(10); // never seeks with the old item's boundaries
+    });
+
+    it('NATIVE PARITY: a legitimate replay after a MANUAL skip auto-skips again', async () => {
+        const h = makeHarness([intro5to30]);
+        h.engine.attach(h.video);
+        await flush();
+        h.video.seekTo(1);
+        h.video.currentTime = 10;
+        expect(h.engine.skipActiveSegment()?.Id).toBe('seg-intro');
+        h.video.tick(); // natural tick at the landing position
+
+        // Replay: seek BEFORE StartTicks, play forward through the segment.
+        h.video.seekTo(2);
+        h.video.seekTo(10);
+        expect(h.video.currentTime).toBe(30); // auto-skipped again, native parity
+        expect(h.onSkipped).toHaveBeenCalledTimes(1);
+    });
+
+    it('a direct seek back INTO a manually skipped segment stays inert', async () => {
+        const h = makeHarness([intro5to30]);
+        h.engine.attach(h.video);
+        await flush();
+        h.video.seekTo(1);
+        h.video.currentTime = 10;
+        expect(h.engine.skipActiveSegment()?.Id).toBe('seg-intro');
+        h.video.tick();
+
+        h.video.seekTo(12); // directly back into the segment
+        expect(h.video.currentTime).toBe(12);
+        expect(h.onSkipped).not.toHaveBeenCalled();
+    });
+});
