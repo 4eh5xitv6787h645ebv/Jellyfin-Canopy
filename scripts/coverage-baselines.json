@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2811,
-        "totalLines": 3196
+        "coveredLines": 2918,
+        "totalLines": 3304
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 2811,
-        "maximumCoveredLines": 2811
+        "cleanRuns": 2,
+        "minimumCoveredLines": 2918,
+        "maximumCoveredLines": 2918
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The issue-682 client changes add critic-rating parsing helpers and OSD/tag-pipeline coverage. Three hosted runs (jobs 92222716772, 92224161396 and 92225613803) passed the complete client test execution and measured the identical 2,811/3,196 (87.954%) high-water on the exact client source and test scope; the first correctly failed only because that new scope had not yet been recorded in this ratchet artifact."
+        "rationale": "The issue-666 fix preserves explicit BCP-47 language regions (pt-BR, en-US, es-MX) in media language tags and adds the shared media-language core module with its regional-flag coverage. Rebased onto current main; the official CI client coverage gate measured 2,918/3,304 (88.317%) on this exact tree. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43485,
-        "totalLines": 53179
+        "coveredLines": 43476,
+        "totalLines": 53174
       },
       "observations": {
         "cleanRuns": 4,
-        "minimumCoveredLines": 43475,
-        "maximumCoveredLines": 43485
+        "minimumCoveredLines": 43470,
+        "maximumCoveredLines": 43476
       },
       "tolerance": {
-        "missingCoveredLines": 10,
-        "rationale": "The issue-682 fix preserves direct critic percentages (including zero and single-digit Rotten Tomatoes scores) through every live and full-cache rating-inheritance path and bumps the cache schema to v5 so rows written under the retired CommunityRating-only rule are invalidated. After the semantic repair on current main, four clean coverage runs using the pinned .NET 10.0.9 runtime passed all 4,144 tests on the exact final source, tests, and 53,179-line scope and observed 43,479, 43,475, an independent-review 43,484, and a hosted-CI high-water of 43,485 covered lines (81.771%). The ten-line envelope is timing-dependent branch coverage in the tag-cache monitor's asynchronous invalidation paths, not a source or test difference; the spread is 0.019 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 6,
+        "rationale": "This branch changes no server code; the server profile is inherited from main. Four clean CI coverage runs on the 53,174-line scope have observed 43,470, 43,472, 43,473 and 43,476 covered lines. The six-line envelope is timing-dependent branch coverage in the tag-cache monitor's asynchronous invalidation paths, not a source or test difference; the spread is 0.011 percentage points, far inside the 0.15pp policy bound. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
