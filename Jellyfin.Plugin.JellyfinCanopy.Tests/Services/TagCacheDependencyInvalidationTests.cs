@@ -1806,6 +1806,117 @@ public sealed class TagCacheDependencyInvalidationTests
     }
 
     [Fact]
+    public void ParentSeriesCacheRefresh_CriticOnlyChildIgnoresParentRatingChanges()
+    {
+        var series = new TagCacheEntry
+        {
+            TmdbId = "stable-series",
+            CommunityRating = 9,
+            CriticRating = 90,
+        };
+        var episode = new StubEpisode
+        {
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+        var existing = new TagCacheEntry
+        {
+            Type = "Episode",
+            SeriesTmdbId = "stable-series",
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+
+        var changed = TagCacheDependencyGraph.TryPrepareParentSeriesRefreshFromCache(
+            series,
+            episode,
+            existing,
+            lastUpdated: 123,
+            out var refreshed);
+
+        Assert.False(changed);
+        Assert.Null(refreshed);
+    }
+
+    [Fact]
+    public void ParentSeriesCacheRefresh_TmdbChangePreservesCriticOnlyChildRating()
+    {
+        var series = new TagCacheEntry
+        {
+            TmdbId = "new-series",
+            CommunityRating = 9,
+            CriticRating = 90,
+        };
+        var episode = new StubEpisode
+        {
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+        var existing = new TagCacheEntry
+        {
+            Type = "Episode",
+            SeriesTmdbId = "old-series",
+            CommunityRating = null,
+            CriticRating = 7,
+        };
+
+        var changed = TagCacheDependencyGraph.TryPrepareParentSeriesRefreshFromCache(
+            series,
+            episode,
+            existing,
+            lastUpdated: 123,
+            out var refreshed);
+
+        Assert.True(changed);
+        Assert.NotNull(refreshed);
+        Assert.Equal("new-series", refreshed!.SeriesTmdbId);
+        Assert.Null(refreshed.CommunityRating);
+        Assert.Equal(7, refreshed.CriticRating);
+        Assert.Equal(123, refreshed.LastUpdated);
+    }
+
+    [Fact]
+    public void EpisodeRelationshipCacheRefresh_PreservesCriticOnlyChildRating()
+    {
+        var newSeriesId = Guid.NewGuid();
+        var newSeasonId = Guid.NewGuid();
+        var series = new TagCacheEntry
+        {
+            TmdbId = "new-series",
+            CommunityRating = 9,
+            CriticRating = 90,
+        };
+        var episode = new StubEpisode
+        {
+            SeriesId = newSeriesId,
+            SeasonId = newSeasonId,
+            ParentIndexNumber = 2,
+            CommunityRating = null,
+            CriticRating = 0,
+        };
+        var existing = new TagCacheEntry
+        {
+            Type = "Episode",
+            CommunityRating = null,
+            CriticRating = 0,
+        };
+
+        var refreshed = TagCacheDependencyGraph.ApplySeasonRelationshipRefreshFromCache(
+            series,
+            episode,
+            existing,
+            lastUpdated: 123);
+
+        Assert.Equal(Key(newSeriesId), refreshed.SeriesId);
+        Assert.Equal(Key(newSeasonId), refreshed.SeasonId);
+        Assert.Equal("new-series", refreshed.SeriesTmdbId);
+        Assert.Equal(2, refreshed.SeasonNumber);
+        Assert.Null(refreshed.CommunityRating);
+        Assert.Equal(0, refreshed.CriticRating);
+        Assert.Equal(123, refreshed.LastUpdated);
+    }
+
+    [Fact]
     public void LargeSeriesEvent_RepairsOneThousandStaleEpisodeRelationshipsWithoutScalarRebuilds()
     {
         const int EpisodeCount = 1_000;
