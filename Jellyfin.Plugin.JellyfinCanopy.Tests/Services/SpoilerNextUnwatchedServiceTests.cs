@@ -366,6 +366,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public async Task InvalidationAfterPublish_WithdrawsTheJustPublishedBoundary()
+        {
+            // The narrowest interleaving: the worker passes its token check and
+            // publishes, and the invalidation lands before the worker's
+            // recheck. Because Invalidate removes the token FIRST, the recheck
+            // fails and the worker withdraws its own stale publication.
+            var seriesId = Guid.NewGuid();
+            var user = Guid.NewGuid();
+            var staleEpisode = new Episode { Id = Guid.NewGuid(), SeriesId = seriesId, ParentIndexNumber = 2, IndexNumber = 5 };
+            var userData = new StubUserDataManager();
+            var lib = new CountingLibraryManager
+            {
+                GetItemListHook = _ => new List<BaseItem> { staleEpisode },
+            };
+            using var service = NewLiveService(lib, out _, userData);
+            var fills = new List<Task>();
+            service.BackgroundFillObserverForTest = fills.Add;
+            service.AfterPublishForTest = () =>
+                userData.RaiseUserDataSaved(user, staleEpisode, UserDataSaveReason.TogglePlayed);
+
+            Assert.Null(service.GetBoundary(user, seriesId));
+            await Task.WhenAll(fills);
+
+            // The stale entry was withdrawn; the key misses again and refills.
+            service.AfterPublishForTest = null;
+            Assert.Null(service.GetBoundary(user, seriesId));
+            Assert.Equal(2, fills.Count);
+            await Task.WhenAll(fills);
+            Assert.NotNull(service.GetBoundary(user, seriesId));
+        }
+
+        [Fact]
         public void GetBoundary_CapOverflow_ClearsAndStaysBounded()
         {
             using var service = NewService();

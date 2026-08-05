@@ -94,6 +94,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         internal Action? BeforePublishForTest { get; set; }
 
+        internal Action? AfterPublishForTest { get; set; }
+
         internal Func<long>? ClockTicksForTest { get; set; }
 
         public SpoilerNextUnwatchedService(
@@ -184,9 +186,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (!_inFlight.TryGetValue(key, out var current) || current != token) return;
                     var now = ClockTicksForTest?.Invoke() ?? DateTime.UtcNow.Ticks;
                     Publish(key, boundary, now);
+                    AfterPublishForTest?.Invoke();
                     // An invalidation between the token check and Publish would
                     // otherwise be lost — re-check and withdraw the stale entry
                     // (conservative direction: the next request just refills).
+                    // Invalidate removes the token BEFORE the cache entry, so
+                    // this recheck cannot be satisfied by a token that an
+                    // in-progress invalidation is about to remove.
                     if (!_inFlight.TryGetValue(key, out current) || current != token)
                     {
                         _cache.TryRemove(key, out _);
@@ -302,8 +308,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private void Invalidate((Guid UserId, Guid SeriesId) key)
         {
-            _cache.TryRemove(key, out _);
+            // Token FIRST, cache second. The worker's publish path is
+            // check-token → publish → recheck-token: removing the token before
+            // the cache entry means a worker racing this method either fails
+            // its pre-publish check outright or fails the recheck and
+            // withdraws what it just published. Cache-first would leave a
+            // window where the worker publishes after our cache removal and
+            // passes its recheck against the not-yet-removed token.
             _inFlight.TryRemove(key, out _);
+            _cache.TryRemove(key, out _);
         }
     }
 }
