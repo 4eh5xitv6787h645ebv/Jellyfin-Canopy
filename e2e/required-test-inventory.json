@@ -160,6 +160,7 @@
     "e2e/settings-persist.spec.ts › per-user settings persistence › clearing both maintenance actions persists and reloads warning-only mode",
     "e2e/settings-persist.spec.ts › per-user settings persistence › the admin config page exposes a control bound to the pause-screen delay default (XCUT-6)",
     "e2e/settings-persist.spec.ts › per-user settings persistence › the pause-screen delay panel input persists across reload",
+    "e2e/spoiler-guard.spec.ts › Spoiler Guard › advanced per-category reveals: the next unwatched episode keeps its real title",
     "e2e/spoiler-guard.spec.ts › Spoiler Guard › disabling shows the confirm dialog and restores the episode title",
     "e2e/spoiler-guard.spec.ts › Spoiler Guard › non-admin enables Spoiler Guard: toggle flips, toast shows, metadata + images strip",
     "e2e/spoiler-guard.spec.ts › Spoiler Guard › per-user isolation: the admin API view keeps the real title while the user is guarded",
