@@ -180,18 +180,6 @@ const ALLOWLIST: AllowlistEntry[] = [
         line: 203,
         why: 'pre-built HTML from formatFutureReleaseDate\'s { isHtml, text } payload — the template that constructs it is itself scanned in render-helpers.ts',
     },
-    {
-        file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.size',
-        line: 71,
-        why: 'plugin-defined font-size preset tables (legacy js/ tree) — fixed numeric em values',
-    },
-    {
-        file: 'enhanced/settings-panel/template.ts',
-        expr: 'preset.family',
-        line: 73,
-        why: 'plugin-defined font-family preset tables (legacy js/ tree) — fixed font-family literals',
-    },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

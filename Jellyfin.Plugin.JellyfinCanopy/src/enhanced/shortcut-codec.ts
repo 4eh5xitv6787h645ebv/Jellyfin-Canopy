@@ -5,6 +5,10 @@
 const MODIFIER_ORDER = ['Meta', 'Ctrl', 'Alt', 'Shift'] as const;
 type Modifier = typeof MODIFIER_ORDER[number];
 
+/** Reserved grouped action used for the player's physical 0-9 seek policy. */
+export const PERCENTAGE_SHORTCUT_NAME = 'JumpToPercentage';
+export const PERCENTAGE_SHORTCUT_RANGE = '0-9';
+
 const MODIFIER_ALIASES: Readonly<Record<string, Modifier>> = {
     meta: 'Meta',
     cmd: 'Meta',
@@ -81,6 +85,7 @@ export interface ShortcutEntryLike {
 
 export interface ShortcutKeyboardEvent {
     key: string;
+    code?: string;
     metaKey: boolean;
     ctrlKey: boolean;
     altKey: boolean;
@@ -169,9 +174,46 @@ export function shortcutsEqual(left: unknown, right: unknown): boolean {
     return canonicalLeft !== '' && canonicalLeft === canonicalizeShortcut(right);
 }
 
+/** Whether a binding enables the reserved, non-rebindable percentage group. */
+export function isPercentageShortcutBinding(value: unknown): boolean {
+    return canonicalizeShortcut(value) === PERCENTAGE_SHORTCUT_RANGE;
+}
+
+/**
+ * Compare two effective bindings, including the grouped 0-9 reservation.
+ * Empty bindings never conflict, and modified digits remain ordinary keys.
+ */
+export function shortcutBindingsConflict(left: unknown, right: unknown): boolean {
+    const canonicalLeft = canonicalizeShortcut(left);
+    const canonicalRight = canonicalizeShortcut(right);
+    if (!canonicalLeft || !canonicalRight) return false;
+    if (canonicalLeft === canonicalRight) return true;
+    const leftIsRange = canonicalLeft === PERCENTAGE_SHORTCUT_RANGE;
+    const rightIsRange = canonicalRight === PERCENTAGE_SHORTCUT_RANGE;
+    return (leftIsRange && /^[0-9]$/.test(canonicalRight))
+        || (rightIsRange && /^[0-9]$/.test(canonicalLeft));
+}
+
+/** Resolve the physical top-row/numpad digit even when Shift changes event.key. */
+export function physicalDigitFromEvent(
+    event: Pick<ShortcutKeyboardEvent, 'key' | 'code'>,
+): number | null {
+    const codeMatch = /^(?:Digit|Numpad)([0-9])$/.exec(event.code || '');
+    const digit = codeMatch?.[1] || (/^[0-9]$/.test(event.key) ? event.key : '');
+    return digit ? Number(digit) : null;
+}
+
+/** Percentage seeking is intentionally limited to a zero-modifier digit. */
+export function hasShortcutModifiers(
+    event: Pick<ShortcutKeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+    return event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
+}
+
 /** Display uses the same representation that persistence and dispatch consume. */
 export function formatShortcut(value: unknown): string {
-    return canonicalizeShortcut(value);
+    const canonical = canonicalizeShortcut(value);
+    return canonical === PERCENTAGE_SHORTCUT_RANGE ? '0–9' : canonical;
 }
 
 /** Normalize a loaded payload in place so its next save migrates legacy values. */

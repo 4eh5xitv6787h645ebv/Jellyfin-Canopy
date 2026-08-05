@@ -187,6 +187,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
             serviceCollection.AddSingleton<Services.Arr.ArrDownloadActivityService>();
+            // Exact, bounded, current-user requester-tag attribution for Calendar filtering.
+            serviceCollection.AddSingleton<Services.Arr.CalendarRequesterTagResolver>();
             // Search / Interactive Search feature: itemId → arr identity resolution, instance
             // discovery, and the search/grab/monitor/add orchestration behind ArrSearchController.
             serviceCollection.AddSingleton<Services.Arr.IArrItemResolver, Services.Arr.ArrItemResolver>();

@@ -27,6 +27,7 @@
   "CalendarHighlightFavorites": false,
   "CalendarHighlightWatchedSeries": false,
   "CalendarPageEnabled": false,
+  "CalendarRequesterTagFallbackEnabled": false,
   "CalendarShowOnlyRequested": false,
   "CalendarTimeFormat": "5pm/5:30pm",
   "ClearLocalStorageTimestamp": 0,
@@ -104,6 +105,7 @@
   "PauseScreenEnabled": true,
   "PeopleTagsEnabled": false,
   "PluginIconsEnabled": false,
+  "PreferredAudioLanguage": "",
   "QualityTagsEnabled": false,
   "QualityTagsPosition": "top-left",
   "RandomButtonEnabled": true,
@@ -254,6 +256,12 @@
       "Key": "Z",
       "Label": "Jump to Last Position",
       "Name": "JumpToLastPosition"
+    },
+    {
+      "Category": "Player",
+      "Key": "0-9",
+      "Label": "Jump to Percentage",
+      "Name": "JumpToPercentage"
     }
   ],
   "ShowArrLinksAsText": false,

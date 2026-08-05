@@ -206,4 +206,202 @@ describe('settings shortcut editor identity ownership', () => {
         expect(key.textContent).toBe('P');
         expect(JC.identity.isCurrent(actor)).toBe(true);
     });
+
+    it('disables one action explicitly, removes duplicate rows, and preserves last-row metadata', async () => {
+        JC.identity.transition('server-a', 'user-a', 'shortcut-disable');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = `
+            <div class="jc-shortcut-row">
+                <span class="shortcut-key" tabindex="0" data-action="play" data-label="Play">P</span>
+                <span><span class="modified-indicator">•</span>Play</span>
+                <button class="shortcut-state-button" data-action="play" data-operation="disable">Disabled</button>
+                <button class="shortcut-reset-button" data-action="play">Reset</button>
+            </div>`;
+        const shortcuts = {
+            Shortcuts: [
+                { Name: 'play', Key: 'X', Earlier: true },
+                { Name: 'play', Key: 'Y', FutureMetadata: { owner: 'last' } },
+            ],
+        };
+        const activeShortcuts = { play: 'Y' };
+        const save = vi.fn().mockResolvedValue(undefined);
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        JC.t = (key: string) => ({
+            status_disabled: 'Disabled', shortcut_enable: 'Enable', shortcut_disable: 'Disable',
+        })[key] || key;
+        const editor: PanelEditorContext = {
+            mode: 'self', actor, targetUserId: actor.userId, targetDisplayName: '', appliesToActor: true,
+            settings: {}, shortcuts, activeShortcuts,
+            isCurrent: () => JC.identity.isCurrent(actor), saveSettings: save, saveShortcuts: save,
+        };
+        wireShortcutEditor({
+            help, editor, pluginShortcuts: [{ Name: 'play', Key: 'P' }],
+            primaryAccentColor: '#0ff', kbdBackground: '#111', identityContext: actor, trackTimer,
+        } as unknown as PanelContext);
+
+        help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.click();
+
+        expect(shortcuts.Shortcuts).toEqual([
+            { Name: 'play', Key: '', FutureMetadata: { owner: 'last' } },
+        ]);
+        await vi.waitFor(() => expect(activeShortcuts.play).toBe(''));
+        expect(help.querySelector('.shortcut-key')!.textContent).toBe('Disabled');
+        expect(help.querySelector('.shortcut-key')!.classList.contains('shortcut-disabled')).toBe(true);
+        expect(help.querySelector('.shortcut-key')!.getAttribute('aria-label')).toBe('Play: Disabled');
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')).toMatchObject({
+            textContent: 'Enable', disabled: true,
+        });
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.dataset.operation).toBe('enable');
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.getAttribute('aria-label'))
+            .toBe('Enable: Play');
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-reset-button')!.disabled).toBe(false);
+    });
+
+    it('resets a disabled override to the current admin value', async () => {
+        JC.identity.transition('server-a', 'user-a', 'shortcut-reset');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = `
+            <div class="jc-shortcut-row">
+                <span class="shortcut-key shortcut-disabled" tabindex="0" data-action="play" data-label="Play">Disabled</span>
+                <span><span class="modified-indicator">•</span>Play</span>
+                <button class="shortcut-state-button" data-action="play" data-operation="enable" disabled>Enabled</button>
+                <button class="shortcut-reset-button" data-action="play">Reset</button>
+            </div>`;
+        const shortcuts = { Shortcuts: [{ Name: 'play', Key: '' }] };
+        const activeShortcuts = { play: '' };
+        const save = vi.fn().mockResolvedValue(undefined);
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        JC.t = (key: string) => ({
+            status_disabled: 'Disabled', shortcut_enable: 'Enable', shortcut_disable: 'Disable',
+        })[key] || key;
+        const editor: PanelEditorContext = {
+            mode: 'self', actor, targetUserId: actor.userId, targetDisplayName: '', appliesToActor: true,
+            settings: {}, shortcuts, activeShortcuts,
+            isCurrent: () => JC.identity.isCurrent(actor), saveSettings: save, saveShortcuts: save,
+        };
+        wireShortcutEditor({
+            help, editor, pluginShortcuts: [{ Name: 'play', Key: 'Ctrl+P' }],
+            primaryAccentColor: '#0ff', kbdBackground: '#111', identityContext: actor, trackTimer,
+        } as unknown as PanelContext);
+
+        help.querySelector<HTMLButtonElement>('.shortcut-reset-button')!.click();
+
+        expect(shortcuts.Shortcuts).toEqual([]);
+        await vi.waitFor(() => expect(activeShortcuts.play).toBe('Ctrl+P'));
+        expect(help.querySelector('.shortcut-key')!.getAttribute('aria-label')).toBe('Play: Ctrl+P');
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')).toMatchObject({
+            textContent: 'Disable', disabled: false,
+        });
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.dataset.operation).toBe('disable');
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.getAttribute('aria-label'))
+            .toBe('Disable: Play');
+        expect(help.querySelector('.modified-indicator')).toBeNull();
+        expect(help.querySelector<HTMLButtonElement>('.shortcut-reset-button')!.disabled).toBe(true);
+    });
+
+    it('keeps the percentage group static and rejects enabling it across a bare-digit binding', () => {
+        vi.useFakeTimers();
+        JC.identity.transition('server-a', 'user-a', 'shortcut-group-conflict');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = `
+            <div class="jc-shortcut-row">
+                <span class="shortcut-key shortcut-group-key shortcut-disabled" data-action="JumpToPercentage">Disabled</span>
+                <span>Jump</span>
+                <button class="shortcut-state-button" data-action="JumpToPercentage" data-operation="enable">Enabled</button>
+                <button class="shortcut-reset-button" data-action="JumpToPercentage" disabled>Reset</button>
+            </div>`;
+        const shortcuts = { Shortcuts: [] as Array<{ Name: string; Key: string }> };
+        const activeShortcuts = { JumpToPercentage: '', Other: '5' };
+        const save = vi.fn().mockResolvedValue(undefined);
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        const editor: PanelEditorContext = {
+            mode: 'self', actor, targetUserId: actor.userId, targetDisplayName: '', appliesToActor: true,
+            settings: {}, shortcuts, activeShortcuts,
+            isCurrent: () => JC.identity.isCurrent(actor), saveSettings: save, saveShortcuts: save,
+        };
+        wireShortcutEditor({
+            help, editor,
+            pluginShortcuts: [{ Name: 'JumpToPercentage', Key: '0-9' }, { Name: 'Other', Key: '5' }],
+            primaryAccentColor: '#0ff', kbdBackground: '#111', identityContext: actor, trackTimer,
+        } as unknown as PanelContext);
+
+        const groupKey = help.querySelector<HTMLElement>('.shortcut-group-key')!;
+        groupKey.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', bubbles: true }));
+        help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.click();
+
+        expect(groupKey.classList.contains('shake-error')).toBe(true);
+        expect(shortcuts.Shortcuts).toEqual([]);
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it('re-enables the percentage group over an admin-disabled value when only modified digits exist', async () => {
+        JC.identity.transition('server-a', 'user-a', 'shortcut-group-enable');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = `
+            <div class="jc-shortcut-row">
+                <span class="shortcut-key shortcut-group-key shortcut-disabled" data-action="JumpToPercentage">Disabled</span>
+                <span>Jump</span>
+                <button class="shortcut-state-button" data-action="JumpToPercentage" data-operation="enable">Enabled</button>
+                <button class="shortcut-reset-button" data-action="JumpToPercentage" disabled>Reset</button>
+            </div>`;
+        const shortcuts = { Shortcuts: [] as Array<{ Name: string; Key: string }> };
+        const activeShortcuts = { JumpToPercentage: '', Other: 'Ctrl+5' };
+        const save = vi.fn().mockResolvedValue(undefined);
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        JC.t = (key: string) => ({ status_disabled: 'Disabled', status_enabled: 'Enabled' })[key] || key;
+        const editor: PanelEditorContext = {
+            mode: 'self', actor, targetUserId: actor.userId, targetDisplayName: '', appliesToActor: true,
+            settings: {}, shortcuts, activeShortcuts,
+            isCurrent: () => JC.identity.isCurrent(actor), saveSettings: save, saveShortcuts: save,
+        };
+        wireShortcutEditor({
+            help, editor,
+            pluginShortcuts: [{ Name: 'JumpToPercentage', Key: '' }, { Name: 'Other', Key: 'Ctrl+5' }],
+            primaryAccentColor: '#0ff', kbdBackground: '#111', identityContext: actor, trackTimer,
+        } as unknown as PanelContext);
+
+        help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.click();
+
+        // pluginShortcuts is the effective admin tier; enabling always writes
+        // the reserved user sentinel, even when that tier is disabled.
+        expect(shortcuts.Shortcuts).toEqual([{ Name: 'JumpToPercentage', Key: '0-9' }]);
+        await vi.waitFor(() => expect(activeShortcuts.JumpToPercentage).toBe('0-9'));
+    });
+
+    it('updates only an admin-target editor map when disabling a shortcut', async () => {
+        JC.identity.transition('server-a', 'admin-a', 'shortcut-target-disable');
+        const actor = JC.identity.capture()!;
+        const help = document.createElement('div');
+        help.innerHTML = `
+            <div class="jc-shortcut-row">
+                <span class="shortcut-key" data-action="play">P</span><span>Play</span>
+                <button class="shortcut-state-button" data-action="play" data-operation="disable">Disabled</button>
+                <button class="shortcut-reset-button" data-action="play" disabled>Reset</button>
+            </div>`;
+        const targetShortcuts = { Shortcuts: [] as Array<{ Name: string; Key: string }> };
+        const targetActive = { play: 'P' };
+        const actorActive = { play: 'A' };
+        JC.state = { activeShortcuts: actorActive } as unknown as NonNullable<typeof JC.state>;
+        JC.pluginConfig = { DisableAllShortcuts: false };
+        const save = vi.fn().mockResolvedValue(undefined);
+        const editor: PanelEditorContext = {
+            mode: 'admin-target', actor, targetUserId: 'target', targetDisplayName: 'Target', appliesToActor: false,
+            settings: {}, shortcuts: targetShortcuts, activeShortcuts: targetActive,
+            isCurrent: () => JC.identity.isCurrent(actor), saveSettings: save, saveShortcuts: save,
+        };
+        wireShortcutEditor({
+            help, editor, pluginShortcuts: [{ Name: 'play', Key: 'P' }],
+            primaryAccentColor: '#0ff', kbdBackground: '#111', identityContext: actor, trackTimer,
+        } as unknown as PanelContext);
+
+        help.querySelector<HTMLButtonElement>('.shortcut-state-button')!.click();
+
+        await vi.waitFor(() => expect(targetActive.play).toBe(''));
+        expect(actorActive.play).toBe('A');
+        expect(JC.state.activeShortcuts).toBe(actorActive);
+    });
 });

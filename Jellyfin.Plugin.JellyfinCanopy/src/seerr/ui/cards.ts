@@ -38,7 +38,8 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
         : assetUrl('seerr/poster-fallback.svg');
     const rating = item.voteAverage ? item.voteAverage.toFixed(1) : 'N/A';
     // Escape API-sourced values before interpolation into search card HTML
-    const titleText = escapeHtml(item.title || item.name);
+    const title = String(item.title || item.name || '');
+    const titleText = escapeHtml(title);
     // Resolve Seerr URL based on mappings or fallback to base URL
     const base = JC.seerrAPI?.resolveSeerrBaseUrl() || '';
     const seerrUrl = base ? `${base}/${item.mediaType}/${item.id}` : null;
@@ -58,10 +59,15 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     }
     const isAvailable = Boolean(jellyfinMediaId)
         && (cardEffectiveStatus === MediaStatus.AVAILABLE || cardEffectiveStatus === MediaStatus.PARTIALLY_AVAILABLE);
-    const jellyfinHref = isAvailable ? `#!/details?id=${escapeHtml(jellyfinMediaId)}` : null;
+    const jellyfinHref = isAvailable
+        ? JC.core.navigation!.routeHref('details', { id: jellyfinMediaId })
+        : null;
+    const posterNavigatesToJellyfin = Boolean(
+        jellyfinHref && !useMoreInfoModal && item.mediaType !== 'collection'
+    );
     // True when the card should navigate directly to an external Seerr URL instead of
     // showing the hover overview — used to decide poster touch behaviour below.
-    const navigatesExternally = !useMoreInfoModal && !jellyfinMediaId && !!seerrUrl && item.mediaType !== 'collection';
+    const navigatesExternally = !useMoreInfoModal && !isAvailable && !!seerrUrl && item.mediaType !== 'collection';
     // is="emby-linkbutton" routes external URLs through the system browser on iOS/Android.
     const titleLinkIsAttribute = 'is="emby-linkbutton"';
     const titleHrefAttribute = jellyfinHref
@@ -115,7 +121,37 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
     const imageContainer = card.querySelector<HTMLElement>('.cardImageContainer');
     const cardScalable = card.querySelector('.cardScalable');
 
-    if (imageContainer && cardScalable) {
+    if (imageContainer && posterNavigatesToJellyfin && jellyfinHref) {
+        const posterLink = document.createElement('a');
+        posterLink.className = 'seerr-poster-link';
+        posterLink.setAttribute('href', jellyfinHref);
+        posterLink.setAttribute('aria-label', title);
+        imageContainer.appendChild(posterLink);
+        imageContainer.classList.remove('itemAction');
+
+        const capturedHref = jellyfinHref;
+        const preventStaleNavigation = (event: Event) => {
+            if (!isCurrent() || posterLink.getAttribute('href') !== capturedHref) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
+        posterLink.addEventListener('click', preventStaleNavigation, true);
+        posterLink.addEventListener('auxclick', preventStaleNavigation, true);
+        // Own activation keys so configured document-level shortcuts cannot cancel
+        // Enter navigation or replace the route after Space activation. Enter keeps
+        // the anchor's native default; Space supplies remote-control parity.
+        posterLink.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key !== ' ' && event.key !== 'Enter') return;
+            event.stopPropagation();
+            if (event.key === 'Enter') return;
+            event.preventDefault();
+            if (!isCurrent() || posterLink.getAttribute('href') !== capturedHref) return;
+            posterLink.click();
+        });
+    }
+
+    if (imageContainer && cardScalable && !posterNavigatesToJellyfin) {
         imageContainer.classList.remove('itemAction');
 
         let overview: HTMLElement | null = null;
@@ -300,7 +336,7 @@ function createSeerrCard(item: any, isSeerrActive: any, seerrUserFound: any) {
             }
             // Check if this is a library item (href already set to jellyfin item)
             const href = moreInfoLink.getAttribute('href');
-            const isLibraryLink = href && href.startsWith('#!/details?id=');
+            const isLibraryLink = isAvailable && href === jellyfinHref;
             const isExternalSeerrLink = href && /^https?:\/\//i.test(href);
 
             if (isLibraryLink) {

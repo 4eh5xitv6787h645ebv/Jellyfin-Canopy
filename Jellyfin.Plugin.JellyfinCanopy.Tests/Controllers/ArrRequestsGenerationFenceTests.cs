@@ -56,7 +56,9 @@ public sealed class ArrRequestsGenerationFenceTests
     {
         var provider = new FakePluginConfigProvider(Configuration(SourceA, "key-a"));
         var cache = new SeerrCache(provider);
-        var handler = new RequestHandler(EmptyRequestList(), blockDetail: false);
+        // A real selected row reaches the parental projection seam. An empty
+        // authoritative snapshot now completes without invoking a no-op filter.
+        var handler = new RequestHandler(RequestList(), blockDetail: false);
         var controller = BuildController(
             handler,
             provider,

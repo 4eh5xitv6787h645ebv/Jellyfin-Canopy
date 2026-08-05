@@ -465,9 +465,6 @@ function createCardsFragment(results: any[], options: any = {}): DocumentFragmen
                 const itemName = item.title || item.name;
                 titleLink.textContent = itemName;
                 titleLink.title = itemName;
-                titleLink.href = `#!/details?id=${jellyfinMediaId}`;
-                titleLink.removeAttribute('target');
-                titleLink.removeAttribute('rel');
             }
         }
 

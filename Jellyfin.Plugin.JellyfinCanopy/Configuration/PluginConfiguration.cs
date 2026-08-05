@@ -150,7 +150,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 new Shortcut { Name = "SkipIntroOutro", Key = "O", Label = "Skip Intro/Outro", Category = "Player" },
                 new Shortcut { Name = "FrameStepBack", Key = ",", Label = "Step Back One Frame", Category = "Player" },
                 new Shortcut { Name = "FrameStepForward", Key = ".", Label = "Step Forward One Frame", Category = "Player" },
-                new Shortcut { Name = "JumpToLastPosition", Key = "Z", Label = "Jump to Last Position", Category = "Player" }
+                new Shortcut { Name = "JumpToLastPosition", Key = "Z", Label = "Jump to Last Position", Category = "Player" },
+                new Shortcut { Name = "JumpToPercentage", Key = "0-9", Label = "Jump to Percentage", Category = "Player" }
             };
 
             // Seerr Search Settings
@@ -306,6 +307,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             CalendarFilterByLibraryAccess = true;
             CalendarShowOnlyRequested = false;
             CalendarForceOnlyRequested = false;
+            CalendarRequesterTagFallbackEnabled = false;
+            CalendarRequesterTagPrefix = "canopy-requester:";
+            CalendarRequesterTagMappings = "";
 
             // Hidden Content Settings
             HiddenContentEnabled = false;
@@ -505,6 +509,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool ShowSpecialFormatTag { get; set; } = true;
         public bool ShowVideoCodecTag { get; set; } = true;
         public bool ShowAudioInfoTag { get; set; } = true;
+        public string PreferredAudioLanguage { get; set; } = string.Empty;
         public int ResolutionTagOrder { get; set; } = 1;
         public int SourceTagOrder { get; set; } = 2;
         public int DynamicRangeTagOrder { get; set; } = 3;
@@ -849,6 +854,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool CalendarFilterByLibraryAccess { get; set; }
         public bool CalendarShowOnlyRequested { get; set; }
         public bool CalendarForceOnlyRequested { get; set; }
+        /// <summary>
+        /// Enables the exact, server-owned requester-tag fallback used by requested-only
+        /// Calendar filtering. Seerr ownership remains authoritative whenever it is available.
+        /// </summary>
+        public bool CalendarRequesterTagFallbackEnabled { get; set; }
+
+        /// <summary>
+        /// Reserved lowercase ASCII prefix for requester tags. The configured token is appended
+        /// verbatim and the resulting media tag is matched exactly on the server.
+        /// </summary>
+        public string CalendarRequesterTagPrefix { get; set; }
+
+        /// <summary>
+        /// Newline-separated stable Jellyfin user GUID-to-token mappings. This value is
+        /// administrator-only and is never projected to ordinary clients.
+        /// </summary>
+        public string CalendarRequesterTagMappings { get; set; }
 
         // Hidden Content Settings
         public bool HiddenContentEnabled { get; set; }

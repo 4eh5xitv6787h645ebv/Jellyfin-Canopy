@@ -12,6 +12,12 @@ import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 import { resolveQualityResolution } from './quality-resolution';
+import {
+    AUDIO_SELECTION_VERSION,
+    describeSelectedAudioTrack,
+    resolveEffectiveAudioLanguagePreference,
+    selectPreferredAudioTrack,
+} from './audio-track-selection';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -104,8 +110,28 @@ const qualityColors: Record<string, { bg: string; text: string }> = {
     'Physical': { bg: 'rgba(102, 102, 102, 0.9)', text: '#ffffff' }
 };
 
-// Computed quality labels derived from server cache entries
-const serverQualityCache = new Map<string, string[]>();
+interface QualityCacheEntry {
+    qualities: string[];
+    timestamp: number;
+    audioSelectionKey: string;
+}
+
+// Computed quality labels derived from server cache entries. The preference
+// fingerprint prevents an item-only result from crossing settings/identities.
+const serverQualityCache = new Map<string, Omit<QualityCacheEntry, 'timestamp'>>();
+
+function effectiveAudioPreference(): string {
+    return resolveEffectiveAudioLanguagePreference(
+        JC.currentSettings?.preferredAudioLanguage,
+        JC.pluginConfig?.PreferredAudioLanguage,
+    );
+}
+
+function audioSelectionKey(preference = effectiveAudioPreference()): string {
+    const identity = JC.identity?.capture?.();
+    const owner = identity ? `${identity.serverId}:${identity.userId}` : 'no-identity';
+    return `v${AUDIO_SELECTION_VERSION}:${owner}:${preference || 'automatic'}`;
+}
 
 /**
  * Creates a single quality tag element.
@@ -154,50 +180,6 @@ function normalizeQualityLabel(label: string): string {
     return label;
 }
 
-/**
- * Finds the richest channel layout available across audio streams.
- * @param audioStreams - Audio streams from item metadata.
- * @returns A channel tag such as "7.1", "5.1", or "2.0".
- */
-function getChannelTag(audioStreams: any[]): string | null {
-    if (!Array.isArray(audioStreams) || audioStreams.length === 0) return null;
-
-    const rank: Record<string, number> = { '7.1': 3, '5.1': 2, '2.0': 1 };
-    let maxChannels = 0;
-    let detectedLayoutTag: string | null = null;
-
-    for (const stream of audioStreams) {
-        const channels = stream.Channels || 0;
-        if (channels > maxChannels) {
-            maxChannels = channels;
-        }
-
-        const layoutSignals = `${stream.ChannelLayout || ''} ${stream.DisplayTitle || ''}`.toLowerCase();
-        let tag: string | null = null;
-        if (/\b7[. ]?1\b/.test(layoutSignals)) {
-            tag = '7.1';
-        } else if (/\b5[. ]?1\b/.test(layoutSignals)) {
-            tag = '5.1';
-        } else if (/\bstereo\b|\b2[. ]?0\b/.test(layoutSignals)) {
-            tag = '2.0';
-        }
-
-        if (tag && (!detectedLayoutTag || rank[tag] > rank[detectedLayoutTag])) {
-            detectedLayoutTag = tag;
-        }
-    }
-
-    if (detectedLayoutTag) {
-        return detectedLayoutTag;
-    }
-
-    if (maxChannels >= 8) return '7.1';
-    if (maxChannels >= 6) return '5.1';
-    if (maxChannels >= 2) return '2.0';
-
-    return null;
-}
-
 // --- CORE LOGIC ---
 /**
  * Analyzes media stream and source information to determine quality tags.
@@ -206,23 +188,25 @@ function getChannelTag(audioStreams: any[]): string | null {
  * @param itemData - Optional item metadata for filename/title signals.
  * @returns A list of detected quality tags.
  */
-function getEnhancedQuality(mediaStreams: any, mediaSources: any, itemData: any = null): string[] {
+export function getEnhancedQuality(
+    mediaStreams: any,
+    mediaSources: any,
+    itemData: any = null,
+    preferredAudioLanguage = effectiveAudioPreference(),
+): string[] {
     if (!mediaStreams && !mediaSources) return [];
 
     const qualities = new Set<string>();
     let videoStreams: any[] = [];
-    let audioStreams: any[] = [];
 
     if (mediaStreams) {
         videoStreams = mediaStreams.filter((s: any) => s.Type === 'Video');
-        audioStreams = mediaStreams.filter((s: any) => s.Type === 'Audio');
     }
 
     // Also check within MediaSources, as this can sometimes contain more accurate stream info
     if (mediaSources?.[0]?.MediaStreams) {
         const sourceStreams = mediaSources[0].MediaStreams;
         videoStreams = videoStreams.concat(sourceStreams.filter((s: any) => s.Type === 'Video'));
-        audioStreams = audioStreams.concat(sourceStreams.filter((s: any) => s.Type === 'Audio'));
     }
 
 
@@ -388,85 +372,16 @@ function getEnhancedQuality(mediaStreams: any, mediaSources: any, itemData: any 
     }
 
     // --- AUDIO LOGIC ---
-    let audioTag: string | null = null;
-
-    for (let i = 0; i < audioStreams.length; i++) {
-        const stream = audioStreams[i];
-
-        // Priority 1: DisplayTitle Scan
-        const displayTitle = stream.DisplayTitle || '';
-
-        const atmosRegex = /atmos/i;
-        const truehd = /truehd/i;
-        const dtsxRegex = /dts-x/i;
-        const dtsRegex = /\bdts\b/i;
-        const ddpRegex = /dolby\s*digital\+/i;
-
-        const atmosMatch = displayTitle.match(atmosRegex);
-        const truehdMatch = displayTitle.match(truehd);
-        const dtsxMatch = displayTitle.match(dtsxRegex);
-        const dtsMatch = displayTitle.match(dtsRegex);
-        const ddpMatch = displayTitle.match(ddpRegex);
-
-        if (atmosMatch) {
-            audioTag = 'ATMOS';
-            break; // Stop all further audio checks
-        } else if (truehdMatch) {
-            audioTag = 'TRUEHD';
-            break;
-        } else if (dtsxMatch) {
-            audioTag = 'DTS-X';
-            break;
-        } else if (dtsMatch) {
-            audioTag = 'DTS';
-            break;
-        } else if (ddpMatch) {
-            audioTag = 'Dolby Digital+';
-            break;
-        }
-    }
-
-    if (!audioTag) {
-
-        // Priority 2: Technical Metadata Fallback
-        for (let i = 0; i < audioStreams.length; i++) {
-            const stream = audioStreams[i];
-            const codec = (stream.Codec || '').toLowerCase();
-            const profile = (stream.Profile || '').toLowerCase();
-
-            if (codec.includes('truehd') || profile.includes('truehd')) {
-                if (codec.includes('atmos') || profile.includes('atmos')) {
-                    audioTag = 'ATMOS';
-                } else {
-                    audioTag = 'TRUEHD';
-                }
-                break;
-            } else if (codec.includes('dts')) {
-                if (codec.includes('x') || profile.includes('x')) {
-                    audioTag = 'DTS-X';
-                } else {
-                    audioTag = 'DTS';
-                }
-                break;
-            } else if (codec.includes('eac3') || codec.includes('ddp')) {
-                audioTag = 'Dolby Digital+';
-                break;
-            }
-        }
-    }
-
-    const channelTag = getChannelTag(audioStreams);
-
-    // Append channel layout to codec tag instead of creating a separate channel tag.
-    if (audioTag) {
-        if (channelTag && !audioTag.includes(channelTag)) {
-            audioTag = `${audioTag} ${channelTag}`;
-        }
-        qualities.add(audioTag);
-    } else if (channelTag === '7.1' || channelTag === '5.1') {
-        // Preserve previous fallback behavior when no codec tag is detected.
-        qualities.add(channelTag);
-    }
+    // Language/default/tie-break selection happens once; codec and channels
+    // are then derived from that exact track so impossible mixed badges cannot
+    // be synthesized from multilingual metadata (#664).
+    const selectedAudio = selectPreferredAudioTrack(
+        mediaStreams,
+        mediaSources,
+        preferredAudioLanguage,
+    );
+    const audioTag = describeSelectedAudioTrack(selectedAudio);
+    if (audioTag) qualities.add(audioTag);
 
     // --- 3D VIDEO LOGIC ---
     if (mediaSources) {
@@ -759,9 +674,11 @@ const spec: TagSpec = {
             if (el.closest('.jc-hidden')) return;
 
             const itemId = item.Id;
+            const selectionKey = audioSelectionKey();
             // Check hot cache first
-            const hot = ctx.hot?.get(itemId) as any;
-            if (hot && (Date.now() - hot.timestamp) < ctx.cacheTtl) {
+            const hot = ctx.hot?.get(itemId) as QualityCacheEntry | undefined;
+            if (hot && hot.audioSelectionKey === selectionKey
+                && (Date.now() - hot.timestamp) < ctx.cacheTtl) {
                 insertOverlay(ctx, el, hot.qualities);
                 return;
             }
@@ -776,8 +693,13 @@ const spec: TagSpec = {
             }
 
             if (qualities.length > 0) {
-                ctx.setPersistent(itemId, { qualities, timestamp: Date.now() });
-                ctx.hot?.set(itemId, { qualities, timestamp: Date.now() });
+                const cached: QualityCacheEntry = {
+                    qualities,
+                    timestamp: Date.now(),
+                    audioSelectionKey: selectionKey,
+                };
+                ctx.setPersistent(itemId, cached);
+                ctx.hot?.set(itemId, cached);
                 insertOverlay(ctx, el, qualities);
             }
         },
@@ -785,9 +707,10 @@ const spec: TagSpec = {
             if (ctx.isTagged(el)) return true;
             if (ctx.shouldIgnore(el)) return true;
             if (el.closest('.jc-hidden')) return true;
-            const hot = ctx.hot?.get(itemId) as any;
-            const cached = hot || (ctx.getPersistent(itemId) as any);
-            if (cached && cached.qualities && cached.qualities.length > 0) {
+            const hot = ctx.hot?.get(itemId) as QualityCacheEntry | undefined;
+            const cached = hot || (ctx.getPersistent(itemId) as QualityCacheEntry | undefined);
+            if (cached?.audioSelectionKey === audioSelectionKey()
+                && Array.isArray(cached.qualities) && cached.qualities.length > 0) {
                 insertOverlay(ctx, el, cached.qualities);
                 return true;
             }
@@ -796,16 +719,20 @@ const spec: TagSpec = {
         renderFromServerCache(ctx, el, entry: any, itemId) {
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
+            const selectionKey = audioSelectionKey();
             // Check local computed cache first (avoids re-running quality detection)
             const cached = serverQualityCache.get(itemId);
-            if (cached !== undefined) {
-                if (cached.length > 0) insertOverlay(ctx, el, cached);
+            if (cached?.audioSelectionKey === selectionKey) {
+                if (cached.qualities.length > 0) insertOverlay(ctx, el, cached.qualities);
                 return;
             }
             const sd = entry.StreamData;
-            if (!sd || !sd.Streams) { serverQualityCache.set(itemId, []); return; }
+            if (!sd || !sd.Streams) {
+                serverQualityCache.set(itemId, { audioSelectionKey: selectionKey, qualities: [] });
+                return;
+            }
             const qualities = getEnhancedQuality(sd.Streams, sd.Sources, { Name: sd.ItemName, Path: sd.ItemPath });
-            serverQualityCache.set(itemId, qualities);
+            serverQualityCache.set(itemId, { audioSelectionKey: selectionKey, qualities });
             if (qualities.length > 0) insertOverlay(ctx, el, qualities);
         },
         onServerCacheRefresh(ctx, updatedIds) {
@@ -843,5 +770,8 @@ export function installQualityTagsFacade(): () => void {
     });
     JC.initializeQualityTags = stableQualityTags.facade.initialize;
     JC.reinitializeQualityTags = stableQualityTags.facade.reinitialize;
-    return uninstall;
+    return () => {
+        serverQualityCache.clear();
+        uninstall();
+    };
 }

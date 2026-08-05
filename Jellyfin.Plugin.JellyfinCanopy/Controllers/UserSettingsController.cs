@@ -668,6 +668,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     }
                 }
 
+                if (candidate is UserSettings candidateSettings
+                    && !TryNormalizePreferredAudioLanguage(candidateSettings))
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = UserFileCommitStatus.Invalid,
+                        State = current,
+                        Message = "PreferredAudioLanguage must be null, empty, or a supported BCP-47 language tag no longer than 255 characters."
+                    };
+                }
+
                 if (string.Equals(ContentHash(current), ContentHash(candidate), StringComparison.Ordinal))
                 {
                     return new UserFileCommitResult<T> { Status = UserFileCommitStatus.Success, State = current };
@@ -872,6 +883,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             where T : class, IRevisionedUserConfiguration
             => PersistedPayloadPolicy.Validate(state).IsValid;
 
+        private static bool TryNormalizePreferredAudioLanguage(UserSettings settings)
+        {
+            if (!PreferredAudioLanguageNormalizer.TryNormalize(
+                    settings.PreferredAudioLanguage,
+                    preserveNull: true,
+                    out var normalized))
+            {
+                return false;
+            }
+
+            settings.PreferredAudioLanguage = normalized;
+            return true;
+        }
+
         private void StampServerManagedFields<T>(string authorizedUserId, T state)
             where T : class, IRevisionedUserConfiguration
         {
@@ -1067,6 +1092,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 ShowSpecialFormatTag = defaultConfig.ShowSpecialFormatTag,
                 ShowVideoCodecTag = defaultConfig.ShowVideoCodecTag,
                 ShowAudioInfoTag = defaultConfig.ShowAudioInfoTag,
+                // A new user inherits this administrator default dynamically.
+                // Empty is a separate, explicit Automatic override.
+                PreferredAudioLanguage = null,
                 ResolutionTagOrder = defaultConfig.ResolutionTagOrder,
                 SourceTagOrder = defaultConfig.SourceTagOrder,
                 DynamicRangeTagOrder = defaultConfig.DynamicRangeTagOrder,

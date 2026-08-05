@@ -86,4 +86,63 @@ describe('shortcut configuration migration', () => {
             ],
         });
     });
+
+    it('treats an empty named row as an intentional user disable', () => {
+        JC.pluginConfig = {
+            Shortcuts: [
+                { Name: 'Play', Key: 'P' },
+                { Name: 'JumpToPercentage', Key: '0-9' },
+            ],
+        };
+        JC.userConfig = {
+            shortcuts: {
+                Revision: 8,
+                Shortcuts: [
+                    { Name: 'Play', Key: '' },
+                    { Name: 'JumpToPercentage', Key: '' },
+                ],
+            },
+        };
+
+        JC.initializeShortcuts!();
+
+        expect(JC.state!.activeShortcuts).toEqual({
+            Play: '',
+            JumpToPercentage: '',
+        });
+        expect(JC.userConfig.shortcuts!.Shortcuts).toEqual([
+            { Name: 'Play', Key: '' },
+            { Name: 'JumpToPercentage', Key: '' },
+        ]);
+    });
+
+    it('allows a user sentinel to re-enable an admin-disabled percentage group', () => {
+        JC.pluginConfig = { Shortcuts: [{ Name: 'JumpToPercentage', Key: '' }] };
+        JC.userConfig = {
+            shortcuts: { Shortcuts: [{ Name: 'JumpToPercentage', Key: '0-9' }] },
+        };
+
+        JC.initializeShortcuts!();
+
+        expect(JC.state!.activeShortcuts.JumpToPercentage).toBe('0-9');
+    });
+
+    it('replaces A-only disabled and custom bindings when account B initializes', () => {
+        JC.pluginConfig = { Shortcuts: [{ Name: 'Play', Key: 'P' }] };
+        JC.userConfig = {
+            shortcuts: {
+                Shortcuts: [
+                    { Name: 'Play', Key: '' },
+                    { Name: 'OnlyA', Key: 'A' },
+                ],
+            },
+        };
+        JC.initializeShortcuts!();
+        expect(JC.state!.activeShortcuts).toEqual({ Play: '', OnlyA: 'A' });
+
+        JC.userConfig = { shortcuts: { Shortcuts: [] } };
+        JC.initializeShortcuts!();
+
+        expect(JC.state!.activeShortcuts).toEqual({ Play: 'P' });
+    });
 });

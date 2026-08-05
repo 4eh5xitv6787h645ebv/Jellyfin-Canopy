@@ -33,6 +33,7 @@
   "ShowSpecialFormatTag": true,
   "ShowVideoCodecTag": true,
   "ShowAudioInfoTag": true,
+  "PreferredAudioLanguage": null,
   "ResolutionTagOrder": 2,
   "SourceTagOrder": null,
   "DynamicRangeTagOrder": 0,

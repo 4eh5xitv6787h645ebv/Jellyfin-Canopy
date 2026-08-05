@@ -107,6 +107,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         }
 
         [Fact]
+        public void PreferredAudioLanguage_IsCanonicalizedBeforeAdminSave()
+        {
+            var html = ConfigPageSource.Html;
+            var js = ConfigPageSource.Js;
+
+            Assert.Matches(
+                "<input[^>]*id=\"preferredAudioLanguage\"[^>]*data-config-key=\"PreferredAudioLanguage\"[^>]*maxlength=\"255\"",
+                html);
+            Assert.Contains("PreferredAudioLanguage:", js, StringComparison.Ordinal);
+            Assert.Contains("Intl.getCanonicalLocales(value)[0]", js, StringComparison.Ordinal);
+            Assert.Contains("/^(?:und|root)$/i", js, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ArrInstanceEditor_PreservesOpaqueInstanceId()
         {
             var js = ConfigPageSource.Js;

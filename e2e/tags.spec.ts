@@ -4,7 +4,14 @@
 //
 // The spec skips itself when no tag renderer is enabled for the logged-in
 // user, so it stays meaningful across differently-configured servers.
-import { test, expect, loginAs } from './fixtures/auth';
+import {
+    test,
+    expect,
+    loginAs,
+    showRoute,
+    waitForHash,
+    assertNoRuntimeErrors,
+} from './fixtures/auth';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -220,6 +227,273 @@ test.describe('tags', () => {
         } finally {
             await page.unroute(routePattern);
         }
+    });
+
+    test('preferred audio language selects one real track and rerenders without a mixed badge', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await loginAs(page, 'admin', consoleErrors);
+        const settingKeys = [
+            'qualityTagsEnabled',
+            'showResolutionTag',
+            'showSourceTag',
+            'showDynamicRangeTag',
+            'showSpecialFormatTag',
+            'showVideoCodecTag',
+            'showAudioInfoTag',
+            'preferredAudioLanguage',
+        ];
+        const fixture = await page.evaluate(async (keys) => {
+            const api = (window as any).ApiClient;
+            const canopy = (window as any).JellyfinCanopy;
+            const userId = api.getCurrentUserId();
+            const result = await api.getItems(userId, {
+                IncludeItemTypes: 'Movie',
+                Recursive: true,
+                Fields: 'Path,MediaSources,MediaStreams',
+                Limit: 100,
+            });
+            const expectedPath = '/media/Movies/Echo Meridian (2025).mkv';
+            const matches = (result?.Items || []).filter((item: any) => item.Path === expectedPath);
+            const item = matches[0];
+            const snapshot: Record<string, { has: boolean; value: unknown }> = {};
+            for (const key of keys) {
+                snapshot[key] = {
+                    has: Object.prototype.hasOwnProperty.call(canopy.currentSettings, key),
+                    value: canopy.currentSettings[key],
+                };
+            }
+            const cache = item
+                ? await api.ajax({
+                    type: 'GET',
+                    url: api.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
+                    dataType: 'json',
+                })
+                : null;
+            const projected = (cache?.items?.[item?.Id]?.StreamData?.Streams || [])
+                .filter((stream: any) => stream?.Type === 'Audio')
+                .map((stream: any) => ({
+                    language: String(stream.Language || '').toLowerCase(),
+                    codec: String(stream.Codec || '').toLowerCase(),
+                    channels: stream.Channels,
+                    isDefault: stream.IsDefault === true,
+                    sourceIndex: stream.SourceIndex,
+                }))
+                .sort((a: any, b: any) => a.language.localeCompare(b.language));
+            return { matchCount: matches.length, itemId: item?.Id || '', projected, snapshot };
+        }, settingKeys);
+
+        expect(fixture.matchCount).toBe(1);
+        expect(fixture.itemId).not.toBe('');
+        expect(fixture.projected).toEqual([
+            { language: 'en-us', codec: 'aac', channels: 6, isDefault: true, sourceIndex: 0 },
+            { language: 'pt-br', codec: 'eac3', channels: 2, isDefault: false, sourceIndex: 0 },
+        ]);
+
+        const applyPreference = async (preference: string) => {
+            await page.evaluate(async ({ next }) => {
+                const canopy = (window as any).JellyfinCanopy;
+                Object.assign(canopy.currentSettings, {
+                    qualityTagsEnabled: true,
+                    showResolutionTag: false,
+                    showSourceTag: false,
+                    showDynamicRangeTag: false,
+                    showSpecialFormatTag: false,
+                    showVideoCodecTag: false,
+                    showAudioInfoTag: true,
+                    preferredAudioLanguage: next,
+                });
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeQualityTags();
+            }, { next: preference });
+        };
+
+        try {
+            await applyPreference('pt-BR');
+            await showRoute(page, `/details?id=${fixture.itemId}`);
+            await waitForHash(page, fixture.itemId);
+            const poster = page.locator(
+                '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+                + '#itemDetailPage:not(.hide) .detailImageContainer .card'
+            ).filter({ has: page.locator('.quality-overlay-container') }).first();
+            const soundBadge = poster.locator('.quality-overlay-label');
+            await expect(soundBadge).toHaveText(['Dolby Digital+ 2.0'], { timeout: 60_000 });
+
+            await applyPreference('');
+            await expect(soundBadge).toHaveText(['5.1'], { timeout: 60_000 });
+
+            await applyPreference('pt');
+            await expect(soundBadge).toHaveText(['Dolby Digital+ 2.0'], { timeout: 60_000 });
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            await page.evaluate(async ({ keys, snapshot }) => {
+                const canopy = (window as any).JellyfinCanopy;
+                for (const key of keys) {
+                    if (snapshot[key].has) canopy.currentSettings[key] = snapshot[key].value;
+                    else delete canopy.currentSettings[key];
+                }
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeQualityTags();
+            }, { keys: settingKeys, snapshot: fixture.snapshot });
+        }
+    });
+
+    test('regional audio metadata renders the same explicit flag on poster and details', async ({
+        page,
+        consoleErrors,
+    }) => {
+        await page.addInitScript(() => localStorage.setItem('layout', 'experimental'));
+        await loginAs(page, 'admin', consoleErrors);
+
+        const fixture = await page.evaluate(async () => {
+            const api = (window as any).ApiClient;
+            const canopy = (window as any).JellyfinCanopy;
+            const userId = api.getCurrentUserId();
+            const result = await api.getItems(userId, {
+                IncludeItemTypes: 'Movie',
+                Recursive: true,
+                Fields: 'Path,MediaSources,MediaStreams',
+                Limit: 100,
+            });
+            const expectedPath = '/media/Movies/Delta Horizon (2024).mkv';
+            const matches = (result?.Items || []).filter((item: any) => item.Path === expectedPath);
+            const item = matches[0];
+            const neutralPath = '/media/Movies/Alpha Adventure (2021).mp4';
+            const neutralMatches = (result?.Items || []).filter((candidate: any) =>
+                candidate.Path === neutralPath);
+            const neutralItem = neutralMatches[0];
+            const streams = item
+                ? [
+                    ...(Array.isArray(item.MediaStreams) ? item.MediaStreams : []),
+                    ...(Array.isArray(item.MediaSources)
+                        ? item.MediaSources.flatMap((source: any) =>
+                            Array.isArray(source?.MediaStreams) ? source.MediaStreams : [])
+                        : []),
+                ]
+                : [];
+            const neutralStreams = neutralItem
+                ? [
+                    ...(Array.isArray(neutralItem.MediaStreams) ? neutralItem.MediaStreams : []),
+                    ...(Array.isArray(neutralItem.MediaSources)
+                        ? neutralItem.MediaSources.flatMap((source: any) =>
+                            Array.isArray(source?.MediaStreams) ? source.MediaStreams : [])
+                        : []),
+                ]
+                : [];
+            const liveTags = [...new Set(streams
+                .filter((stream: any) => stream?.Type === 'Audio')
+                .map((stream: any) => String(stream.Language || '').toLowerCase())
+                .filter(Boolean))].sort();
+
+            let serverTags: string[] = [];
+            if (item) {
+                const url = api.getUrl(`/JellyfinCanopy/tag-cache/${userId}`);
+                const cache = await api.ajax({ type: 'GET', url, dataType: 'json' });
+                const entry = cache?.items?.[item.Id];
+                serverTags = (Array.isArray(entry?.AudioLanguages) ? entry.AudioLanguages : [])
+                    .map((tag: unknown) => String(tag).toLowerCase())
+                    .sort();
+            }
+
+            return {
+                matchCount: matches.length,
+                itemId: item?.Id || '',
+                liveTags,
+                neutralMatchCount: neutralMatches.length,
+                neutralItemId: neutralItem?.Id || '',
+                neutralLiveTags: [...new Set(neutralStreams
+                    .filter((stream: any) => stream?.Type === 'Audio')
+                    .map((stream: any) => String(stream.Language || '').toLowerCase())
+                    .filter(Boolean))].sort(),
+                serverTags,
+                languageTagsEnabled: canopy?.currentSettings?.languageTagsEnabled === true,
+                showAudioLanguages: canopy?.currentSettings?.showAudioLanguages === true,
+                serverCacheEnabled: canopy?.pluginConfig?.TagCacheServerMode === true,
+                modernLayout: document.documentElement.classList.contains('jc-modern-layout'),
+            };
+        });
+
+        expect(fixture).toMatchObject({
+            matchCount: 1,
+            liveTags: ['pt-br'],
+            neutralMatchCount: 1,
+            neutralLiveTags: ['eng'],
+            serverTags: ['pt-br'],
+            languageTagsEnabled: true,
+            showAudioLanguages: true,
+            serverCacheEnabled: true,
+            modernLayout: true,
+        });
+        expect(fixture.itemId).not.toBe('');
+        expect(fixture.neutralItemId).not.toBe('');
+
+        await showRoute(page, `/details?id=${fixture.itemId}`);
+        await waitForHash(page, fixture.itemId);
+
+        const posterCard = page.locator(
+            '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+            + '#itemDetailPage:not(.hide) .detailImageContainer .card'
+        ).filter({ has: page.locator('.language-overlay-container') }).first();
+        const posterLanguage = posterCard.locator(
+            '.language-tag-presentation[data-region="BR"]'
+        );
+        await expect(posterLanguage).toHaveCount(1, { timeout: 60_000 });
+        await expect(posterLanguage).toHaveAttribute('data-lang-tags', '["pt-BR"]');
+        await expect(posterLanguage).toHaveAttribute('aria-label', /\(pt-BR\)/);
+        const posterFlag = posterLanguage.locator('img.language-flag');
+        await expect(posterFlag).toHaveAttribute('src', /\/JellyfinCanopy\/assets\/flags\/4x3\/br\.svg$/);
+
+        const detailsLanguage = page.locator(
+            '#itemDetailPage:not(.hide) .itemMiscInfo-primary '
+            + '.mediaInfoItem-audioLanguage .audio-language-item[data-region="BR"]'
+        );
+        await expect(detailsLanguage).toHaveCount(1, { timeout: 60_000 });
+        await expect(detailsLanguage).toHaveAttribute('data-lang', 'pt-BR');
+        await expect(detailsLanguage).toHaveAttribute('data-lang-tags', '["pt-BR"]');
+        await expect(detailsLanguage).toHaveAttribute('title', /\(pt-BR\)/);
+        await expect(detailsLanguage).toHaveAttribute('aria-label', /\(pt-BR\)/);
+        const detailsFlag = detailsLanguage.locator('img');
+        await expect(detailsFlag).toHaveAttribute('src', /\/JellyfinCanopy\/assets\/flags\/4x3\/br\.svg$/);
+
+        expect(await detailsFlag.getAttribute('src')).toBe(await posterFlag.getAttribute('src'));
+
+        // Phone-width proof for the neutral fallback presentation. The normal
+        // English fixture has no explicit country and must remain a bounded
+        // text badge rather than inheriting a national flag.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await showRoute(page, `/details?id=${fixture.neutralItemId}`);
+        await waitForHash(page, fixture.neutralItemId);
+        const neutralPosterCard = page.locator(
+            '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+            + '#itemDetailPage:not(.hide) .detailImageContainer .card'
+        ).filter({ has: page.locator('.language-overlay-container') }).first();
+        const neutralBadge = neutralPosterCard.locator(
+            '.language-code-badge[data-region=""]'
+        );
+        await expect(neutralBadge).toHaveCount(1, { timeout: 60_000 });
+        await expect(neutralBadge).toHaveAttribute('data-lang-tags', '["en"]');
+        await expect(neutralBadge).toHaveAttribute('aria-label', /\(en\)/);
+        await expect(neutralBadge.locator('img')).toHaveCount(0);
+        const mobileMetrics = await neutralBadge.evaluate((element) => {
+            const badge = element as HTMLElement;
+            const overlay = badge.closest<HTMLElement>('.language-overlay-container');
+            const card = badge.closest<HTMLElement>('.card');
+            const badgeRect = badge.getBoundingClientRect();
+            const cardRect = card?.getBoundingClientRect();
+            return {
+                minWidth: Number.parseFloat(getComputedStyle(badge).minWidth),
+                insideCard: !!cardRect && badgeRect.left >= cardRect.left - 1
+                    && badgeRect.right <= cardRect.right + 1,
+                noHorizontalOverflow: !!overlay && overlay.scrollWidth <= overlay.clientWidth + 1,
+            };
+        });
+        expect(mobileMetrics).toEqual({
+            minWidth: 16,
+            insideCard: true,
+            noHorizontalOverflow: true,
+        });
+        assertNoRuntimeErrors(consoleErrors);
     });
 
     // Regression: "Hide Tags on Hover" must hide the tags on the detail-page

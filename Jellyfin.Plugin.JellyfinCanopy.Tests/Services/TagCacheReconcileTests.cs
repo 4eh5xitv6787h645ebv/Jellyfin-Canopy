@@ -124,6 +124,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.True(TagCacheService.ContentEquals(a, b));
         }
 
+        [Fact]
+        public void Reconcile_PreservesFullRegionalAudioLanguageTags()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var id = Guid.NewGuid();
+                var movie = new RegionalLanguageMovie
+                {
+                    Id = id,
+                    Name = "Regional languages",
+                    DateLastSaved = T0,
+                };
+                var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+
+                var entry = svc.GetEntryForTest(Key(id));
+                Assert.NotNull(entry);
+                var audioLanguages = Assert.IsType<string[]>(entry!.AudioLanguages);
+                Assert.Equal(
+                    new[] { "en-us", "es-mx", "pt-br" },
+                    audioLanguages.OrderBy(value => value, StringComparer.Ordinal));
+                Assert.DoesNotContain("en", audioLanguages);
+                Assert.DoesNotContain("es", audioLanguages);
+                Assert.DoesNotContain("pt", audioLanguages);
+                Assert.Equal(
+                    new[] { "en-US", "es-MX", "pt-BR" },
+                    entry.StreamData!.Streams!
+                        .Where(stream => stream.Type == "Audio")
+                        .Select(stream => stream.Language)
+                        .OrderBy(value => value, StringComparer.Ordinal));
+            }
+            finally { TryDelete(dir); }
+        }
+
         // ── Reconcile wiring, driven through a fake library ───────────────────────────────
 
         [Fact]
@@ -206,6 +243,49 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 var stream = Assert.Single(svc.GetEntryForTest(Key(movie.Id))!.StreamData!.Streams!);
                 Assert.Equal(8192, stream.Width);
                 Assert.Equal(4096, stream.Height);
+            }
+            finally { TryDelete(dir); }
+        }
+
+        [Fact]
+        public void Reconcile_ProjectsAudioSelectionIdentityForEveryMediaSource()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var movie = new AudioSelectionMovie
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Multilingual fixture",
+                    DateLastSaved = T0,
+                };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = _ => new List<BaseItem> { movie },
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+
+                var streams = svc.GetEntryForTest(Key(movie.Id))!.StreamData!.Streams!;
+                Assert.Collection(
+                    streams,
+                    first =>
+                    {
+                        Assert.Equal("Audio", first.Type);
+                        Assert.Equal("pt-BR", first.Language);
+                        Assert.True(first.IsDefault);
+                        Assert.Equal(4, first.Index);
+                        Assert.Equal(0, first.SourceIndex);
+                    },
+                    alternate =>
+                    {
+                        Assert.Equal("Audio", alternate.Type);
+                        Assert.Equal("en-US", alternate.Language);
+                        Assert.False(alternate.IsDefault);
+                        Assert.Equal(2, alternate.Index);
+                        Assert.Equal(1, alternate.SourceIndex);
+                    });
             }
             finally { TryDelete(dir); }
         }
@@ -539,6 +619,69 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                                 Type = MediaStreamType.Video,
                                 Width = 8192,
                                 Height = 4096,
+                            },
+                        },
+                    },
+                };
+        }
+
+        /// <summary>A Movie with explicit regional BCP-47 audio metadata.</summary>
+        private sealed class RegionalLanguageMovie : Movie
+        {
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution) =>
+                new[]
+                {
+                    new MediaSourceInfo
+                    {
+                        Name = "regional-source",
+                        MediaStreams = new[]
+                        {
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "pt-BR", Codec = "aac" },
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "en-US", Codec = "aac" },
+                            new MediaStream { Type = MediaStreamType.Audio, Language = "es-MX", Codec = "aac" },
+                        },
+                    },
+                };
+        }
+
+        private sealed class AudioSelectionMovie : Movie
+        {
+            public override string GetClientTypeName() => "Movie";
+
+            public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution) =>
+                new[]
+                {
+                    new MediaSourceInfo
+                    {
+                        Name = "primary",
+                        MediaStreams = new[]
+                        {
+                            new MediaStream
+                            {
+                                Type = MediaStreamType.Audio,
+                                Language = "pt-BR",
+                                Codec = "eac3",
+                                Channels = 6,
+                                IsDefault = true,
+                                Index = 4,
+                            },
+                        },
+                    },
+                    new MediaSourceInfo
+                    {
+                        Name = "alternate",
+                        MediaStreams = new[]
+                        {
+                            new MediaStream
+                            {
+                                Type = MediaStreamType.Audio,
+                                Language = "en-US",
+                                Codec = "truehd",
+                                Channels = 8,
+                                IsDefault = false,
+                                Index = 2,
                             },
                         },
                     },

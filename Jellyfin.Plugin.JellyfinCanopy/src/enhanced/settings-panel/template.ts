@@ -7,7 +7,11 @@
 
 import { JC } from '../../globals';
 import { assetUrl } from '../../core/asset-urls';
-import { formatShortcut } from '../shortcut-codec';
+import {
+    canonicalizeShortcut,
+    formatShortcut,
+    PERCENTAGE_SHORTCUT_NAME,
+} from '../shortcut-codec';
 import { escapeHtml } from '../../core/ui-kit';
 import { cssColorOr } from '../../core/css-safe';
 import { GITHUB_REPO } from './release-notes';
@@ -39,6 +43,46 @@ function tWithFallback(
     return result;
 }
 
+interface ShortcutTemplateEntry {
+    Name?: string;
+    Key?: string;
+    Label?: string;
+    Category?: string;
+}
+
+function shortcutRowHtml(
+    action: ShortcutTemplateEntry,
+    activeShortcuts: Record<string, string>,
+    userShortcutNames: ReadonlySet<string>,
+    kbdBackground: string,
+    primaryAccentColor: string,
+): string {
+    const name = action.Name || '';
+    if (!name) return '';
+    const label = tWithFallback(`shortcut_${name}`, action.Label || name);
+    const binding = canonicalizeShortcut(activeShortcuts[name]);
+    const disabled = binding === '';
+    const grouped = name === PERCENTAGE_SHORTCUT_NAME;
+    const display = disabled ? JC.t!('status_disabled') : formatShortcut(binding);
+    const targetState = disabled ? JC.t!('shortcut_enable') : JC.t!('shortcut_disable');
+    const resetLabel = JC.t!('discovery_customize_reset');
+    const modified = userShortcutNames.has(name);
+    const previewClasses = `shortcut-key${grouped ? ' shortcut-group-key' : ''}${disabled ? ' shortcut-disabled' : ''}`;
+
+    return `
+        <div class="jc-shortcut-row" style="display:grid; grid-template-columns:minmax(82px,auto) minmax(0,1fr) auto; align-items:center; gap:8px;">
+            <span class="${escapeHtml(previewClasses)}" tabindex="${grouped ? '-1' : '0'}" data-action="${escapeHtml(name)}" data-label="${escapeHtml(label)}" aria-label="${escapeHtml(`${label}: ${display}`)}" style="background:${kbdBackground}; padding:3px 8px; border:1px solid transparent; border-radius:3px; cursor:${grouped ? 'default' : 'pointer'}; transition:all 0.2s; opacity:${disabled ? '0.72' : '1'};">${escapeHtml(display)}</span>
+            <div class="jc-shortcut-label" style="display:flex; min-width:0; align-items:center; gap:8px;">
+                ${modified ? `<span title="Modified by user" class="modified-indicator" style="color:${primaryAccentColor}; font-size:20px; line-height:1;">•</span>` : ''}
+                <span>${escapeHtml(label)}${name === 'OpenEpisodePreview' ? ' <span style="font-size: 11px; opacity: 0.7;" title="Requires InPlayerEpisodePreview plugin from https://github.com/Namo2/InPlayerEpisodePreview/">ⓘ</span>' : ''}</span>
+            </div>
+            <div class="jc-shortcut-actions" style="display:flex; align-items:center; gap:5px;">
+                <button type="button" class="shortcut-state-button" data-action="${escapeHtml(name)}" data-operation="${disabled ? 'enable' : 'disable'}" aria-label="${escapeHtml(`${targetState}: ${label}`)}" ${!grouped && disabled ? 'disabled' : ''} style="font:inherit; font-size:11px; padding:4px 7px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.07); color:#fff; cursor:pointer;">${escapeHtml(targetState)}</button>
+                <button type="button" class="shortcut-reset-button" data-action="${escapeHtml(name)}" aria-label="${escapeHtml(`${resetLabel}: ${label}`)}" ${modified ? '' : 'disabled'} style="font:inherit; font-size:11px; padding:4px 7px; border-radius:4px; border:1px solid rgba(255,255,255,0.18); background:rgba(255,255,255,0.07); color:#fff; cursor:pointer;">${escapeHtml(resetLabel)}</button>
+            </div>
+        </div>`;
+}
+
 /**
  * Builds the panel's inner HTML.
  * @param {object} ctx Shared panel context (theme constants) assembled in settings-panel/panel.ts.
@@ -68,9 +112,11 @@ export function buildPanelHtml(ctx: PanelContext): string {
             if (type === 'style') {
                 previewStyle = `background-color: ${cssColorOr(preset.bgColor, 'transparent')}; color: ${cssColorOr(preset.textColor, '#ffffff')}; border: 1px solid rgba(255,255,255,0.3); text-shadow: #000000 0px 0px 3px;`;
             } else if (type === 'font-size') {
-                previewStyle = `font-size: ${preset.size}em; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);`;
+                previewStyle = `font-size: ${Number(preset.size) || 1}em; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);`;
             } else if (type === 'font-family') {
-                previewStyle = `font-family: ${preset.family}; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8); font-size: 1.5em;`;
+                const family = String(preset.family ?? '').trim();
+                const safeFamily = /^[A-Za-z0-9 ,_-]{1,128}$/.test(family) ? family : 'inherit';
+                previewStyle = `font-family: ${escapeHtml(safeFamily)}; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8); font-size: 1.5em;`;
             }
             return `
                     <div class="preset-box ${type}-preset" data-preset-index="${index}" title="${escapeHtml(preset.name)}" style="display: flex; justify-content: center; align-items: center; padding: 8px; border: 2px solid transparent; border-radius: 8px; cursor: pointer; transition: all 0.2s; background: ${presetBoxBackground}; min-height: 30px;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='${presetBoxBackground}'">
@@ -143,37 +189,22 @@ export function buildPanelHtml(ctx: PanelContext): string {
                         <div style="flex: 1; min-width: 400px;">
                             <h3 style="margin: 0 0 12px 0; font-size: 18px; color: ${primaryAccentColor}; font-family: inherit;">${JC.t!('panel_shortcuts_global')}</h3>
                             <div style="display: grid; gap: 8px; font-size: 14px;">
-                                ${((JC.pluginConfig.Shortcuts as any[]) || []).filter((s: any, index: number, self: any[]) => s.Category === 'Global' && index === self.findIndex((t: any) => t.Name === s.Name)).map((action: any) => `
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action.Name)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(activeShortcuts[action.Name]))}</span>
-                                        <div style="display: flex; align-items: center; gap: 8px;">
-                                            ${userShortcutNames.has(action.Name) ? `<span title="Modified by user" class="modified-indicator" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
-                                            <span>${escapeHtml(tWithFallback('shortcut_' + action.Name, action.Label))}</span>
-                                        </div>
-                                    </div>
-                                `).join('')}
+                                ${((JC.pluginConfig.Shortcuts as ShortcutTemplateEntry[]) || [])
+                                    .filter((s, index, self) => s.Category === 'Global' && index === self.findIndex(t => t.Name === s.Name))
+                                    .map(action => shortcutRowHtml(action, activeShortcuts, userShortcutNames, kbdBackground, primaryAccentColor))
+                                    .join('')}
                             </div>
                         </div>
                         <div style="flex: 1; min-width: 400px;">
                             <h3 style="margin: 0 0 12px 0; font-size: 18px; color: ${primaryAccentColor}; font-family: inherit;">${JC.t!('panel_shortcuts_player')}</h3>
                             <div style="display: grid; gap: 8px; font-size: 14px;">
-                                ${['CycleAspectRatio', 'ShowPlaybackInfo', 'SubtitleMenu', 'CycleSubtitleTracks', 'CycleAudioTracks', 'IncreasePlaybackSpeed', 'DecreasePlaybackSpeed', 'ResetPlaybackSpeed', 'BookmarkCurrentTime', 'OpenEpisodePreview', 'SkipIntroOutro', 'FrameStepBack', 'FrameStepForward', 'JumpToLastPosition'].map((action: string) => {
-                                    const a = ((JC.pluginConfig.Shortcuts as any[]) || []).find((s: any) => s.Name === action);
-                                    const fallbackLabel = a?.Label || action;
-                                    return `
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span class="shortcut-key" tabindex="0" data-action="${escapeHtml(action)}" style="background:${kbdBackground}; padding:2px 8px; border-radius:3px; cursor:pointer; transition: all 0.2s;">${escapeHtml(formatShortcut(activeShortcuts[action]))}</span>
-                                        <div style="display: flex; align-items: center; gap: 8px;">
-                                            ${userShortcutNames.has(action) ? `<span class="modified-indicator" title="Modified by user" style="color:${primaryAccentColor}; font-size: 20px; line-height: 1;">•</span>` : ''}
-                                            <span>${escapeHtml(tWithFallback('shortcut_' + action, fallbackLabel))}${action === 'OpenEpisodePreview' ? ' <span style="font-size: 11px; opacity: 0.7;" title="Requires InPlayerEpisodePreview plugin from https://github.com/Namo2/InPlayerEpisodePreview/">ⓘ</span>' : ''}</span>
-                                        </div>
-                                    </div>
-                                `;
-                                }).join('')}
-                                <div style="display: flex; justify-content: space-between;">
-                                    <span style="background:${kbdBackground}; padding:2px 8px; border-radius:3px;">0-9</span>
-                                    <span>${JC.t!('shortcut_JumpToPercentage')}</span>
-                                </div>
+                                ${['CycleAspectRatio', 'ShowPlaybackInfo', 'SubtitleMenu', 'CycleSubtitleTracks', 'CycleAudioTracks', 'IncreasePlaybackSpeed', 'DecreasePlaybackSpeed', 'ResetPlaybackSpeed', 'BookmarkCurrentTime', 'OpenEpisodePreview', 'SkipIntroOutro', 'FrameStepBack', 'FrameStepForward', 'JumpToLastPosition', PERCENTAGE_SHORTCUT_NAME]
+                                    .map(action => {
+                                        const entry = ((JC.pluginConfig.Shortcuts as ShortcutTemplateEntry[]) || [])
+                                            .find(shortcut => shortcut.Name === action)
+                                            || { Name: action, Label: action, Category: 'Player' };
+                                        return shortcutRowHtml(entry, activeShortcuts, userShortcutNames, kbdBackground, primaryAccentColor);
+                                    }).join('')}
                             </div>
                         </div>
                     </div>
@@ -361,6 +392,26 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <span>${JC.t!('panel_settings_ui_quality_tags_categories_label')}</span>
                                     </button>
                                 </div>
+                                ${(() => {
+                                    const raw = settings.preferredAudioLanguage;
+                                    const mode = raw === null || raw === undefined
+                                        ? 'inherit'
+                                        : String(raw).trim() === '' ? 'automatic' : 'custom';
+                                    const value = mode === 'custom' ? String(raw) : '';
+                                    return `
+                                        <div style="margin-top:12px;">
+                                            <label for="preferredAudioLanguageMode" style="display:block; font-size:13px; font-weight:600; margin-bottom:6px;">${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language'))}</label>
+                                            <select id="preferredAudioLanguageMode" style="width:100%; padding:10px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; font-family:inherit;">
+                                                <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_inherit'))}</option>
+                                                <option value="automatic" ${mode === 'automatic' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_automatic'))}</option>
+                                                <option value="custom" ${mode === 'custom' ? 'selected' : ''}>${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_custom'))}</option>
+                                            </select>
+                                            <div class="jc-preferred-audio-custom" style="margin-top:8px; display:${mode === 'custom' ? 'block' : 'none'};">
+                                                <input id="preferredAudioLanguageInput" type="text" maxlength="255" inputmode="text" value="${escapeHtml(value)}" placeholder="en-US" aria-label="${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_custom'))}" style="box-sizing:border-box; width:100%; padding:10px; background:${presetBoxBackground}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px; font-family:inherit;" />
+                                            </div>
+                                            <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:6px;">${escapeHtml(JC.t!('panel_settings_ui_preferred_audio_language_desc'))}</div>
+                                        </div>`;
+                                })()}
                                 <div id="qualityTagsSubToggles" class="jc-quality-cat-list" style="display: none;">
                                     ${(() => {
                                         const cats = [

@@ -63,6 +63,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private readonly Services.Arr.ArrDownloadActivityService? _downloadActivity;
         private readonly ISeerrParentalFilter _parentalFilter;
         private readonly IItemLookupService _itemLookup;
+        private readonly Services.Arr.CalendarRequesterTagResolver? _calendarRequesterTags;
 
         private bool IsReadConfigurationCurrent(SeerrMutationConfigStamp stamp)
             => stamp.Matches(
@@ -87,7 +88,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Services.Arr.ArrFetchService arrFetch,
             IItemLookupService itemLookup,
             ISeerrParentalFilter parentalFilter,
-            Services.Arr.ArrDownloadActivityService? downloadActivity = null)
+            Services.Arr.ArrDownloadActivityService? downloadActivity = null,
+            Services.Arr.CalendarRequesterTagResolver? calendarRequesterTags = null)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _seerr = seerr;
@@ -95,6 +97,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             _downloadActivity = downloadActivity;
             _parentalFilter = parentalFilter;
             _itemLookup = itemLookup;
+            _calendarRequesterTags = calendarRequesterTags;
         }
 
         [HttpGet("arr/queue")]
@@ -1044,9 +1047,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         [Authorize]
         public async Task<IActionResult> GetCompleteUserRequestSnapshot([FromQuery] bool userOnly = false)
         {
-            var integration = SeerrIntegrationPolicy.Capture(_configProvider);
-            var config = integration.Configuration;
-            if (config == null)
+            var liveConfiguration = _configProvider.ConfigurationOrNull;
+            var configurationRevision = _configProvider.ConfigurationRevision;
+            if (liveConfiguration == null)
             {
                 return StatusCode(500, new
                 {
@@ -1057,28 +1060,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            var configurationRevision = integration.ConfigurationRevision;
-            var configStamp = SeerrMutationConfigStamp.Capture(config, configurationRevision);
+            PluginConfiguration config;
+            SeerrMutationConfigStamp configStamp;
+            try
+            {
+                (config, configStamp) = SeerrMutationConfigStamp.CaptureOwnedSnapshot(
+                    liveConfiguration,
+                    configurationRevision);
+            }
+            catch
+            {
+                return ReadConfigurationChanged("the request snapshot");
+            }
+
             var seerrEnabled = SeerrIntegrationPolicy.HasUsableSavedConfiguration(config);
-            var seerrApiKey = config.SeerrApiKey;
-            var configuredUrls = SeerrClient.GetConfiguredUrls(config.SeerrUrls);
+            var fallbackEnabled = config.CalendarRequesterTagFallbackEnabled;
             if (!IsReadConfigurationCurrent(configStamp))
                 return ReadConfigurationChanged("the request snapshot");
 
-            if (!seerrEnabled
-                || configuredUrls.Length == 0
-                || string.IsNullOrWhiteSpace(seerrApiKey))
+            if (!seerrEnabled && !fallbackEnabled)
             {
-                return Ok(new
-                {
-                    requests = Array.Empty<object>(),
-                    requestKeyCount = 0,
-                    complete = true,
-                });
+                return CompleteRequestSnapshot(Array.Empty<Services.Arr.CalendarRequesterMediaKey>());
             }
 
-            var jellyfinUserId = UserHelper.GetCurrentUserId(User)?.ToString();
-            if (string.IsNullOrEmpty(jellyfinUserId))
+            var jellyfinUserGuid = UserHelper.GetCurrentUserId(User);
+            if (!jellyfinUserGuid.HasValue)
             {
                 return BadRequest(new
                 {
@@ -1089,233 +1095,586 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 });
             }
 
-            var userResolution = await _seerr.ResolveSeerrUser(
-                jellyfinUserId,
-                bypassCache: true,
-                allowAutoImport: false,
-                cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
-            if (!IsReadConfigurationCurrent(configStamp))
-                return ReadConfigurationChanged("the request snapshot");
-
-            var seerrUser = userResolution.User;
-            if (seerrUser == null)
+            var currentUser = _userManager.GetUserById(jellyfinUserGuid.Value);
+            if (currentUser == null)
             {
-                if (userResolution.Status is SeerrUserResolutionStatus.Incomplete or SeerrUserResolutionStatus.Unavailable)
-                {
-                    return StatusCode(502, new
-                    {
-                        error = true,
-                        code = "user_lookup_incomplete",
-                        message = "Seerr user lookup was incomplete. No partial request snapshot was published.",
-                        requests = Array.Empty<object>(),
-                    });
-                }
-
-                return NotFound(new
+                return StatusCode(403, new
                 {
                     error = true,
-                    code = "user_unlinked",
-                    message = "Current Jellyfin user is not linked to a Seerr user.",
+                    code = "jellyfin_user_unavailable",
+                    message = "The authenticated Jellyfin user is not available.",
                     requests = Array.Empty<object>(),
                 });
             }
 
-            var jellyfinAdmin = IsAdminUser();
-            var canViewAllRequests = jellyfinAdmin || SeerrPermissionHelper.HasAnyPermission(
-                seerrUser.Permissions,
-                SeerrPermission.ADMIN | SeerrPermission.MANAGE_REQUESTS | SeerrPermission.REQUEST_VIEW);
-            var selfScoped = userOnly || !canViewAllRequests;
+            var initialJellyfinIdentity = JellyfinReadIdentitySnapshot.Capture(currentUser);
+            var projectedKeys = new Dictionary<string, Services.Arr.CalendarRequesterMediaKey>(
+                StringComparer.Ordinal);
+            var authoritativeOwnerKeys = new HashSet<string>(StringComparer.Ordinal);
+            SeerrUserResolution? initialResolution = null;
+            SeerrUser? initialSeerrUser = null;
 
-            // Seerr user ids are instance-local. A missing source, or one that
-            // was removed/replaced after resolution, must not fall back to a
-            // different configured identity domain with the same numeric id.
-            var normalizedResolvedSource = SeerrUrlIdentity.Normalize(seerrUser.SourceUrl);
-            var configuredSource = configuredUrls.FirstOrDefault(url => string.Equals(
-                    url,
-                    normalizedResolvedSource,
-                    StringComparison.Ordinal));
-            if (configuredSource == null)
+            if (seerrEnabled)
+            {
+                var integration = SeerrIntegrationPolicy.Capture(_configProvider);
+                var activeConfiguration = integration.Configuration;
+                if (!integration.IsActive || activeConfiguration == null)
+                {
+                    return ReadConfigurationChanged("the request snapshot");
+                }
+
+                config = activeConfiguration;
+                configStamp = integration.ConfigurationStamp;
+                fallbackEnabled = config.CalendarRequesterTagFallbackEnabled;
+                var configuredUrls = integration.Urls;
+                var seerrApiKey = integration.ApiKey;
+                if (!IsReadConfigurationCurrent(configStamp))
+                    return ReadConfigurationChanged("the request snapshot");
+
+                initialResolution = await _seerr.ResolveSeerrUser(
+                    jellyfinUserGuid.Value.ToString(),
+                    bypassCache: true,
+                    allowAutoImport: false,
+                    cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsReadConfigurationCurrent(configStamp))
+                    return ReadConfigurationChanged("the request snapshot");
+
+                initialSeerrUser = initialResolution.User;
+                if (initialSeerrUser == null
+                    && initialResolution.Status is SeerrUserResolutionStatus.Incomplete
+                        or SeerrUserResolutionStatus.Unavailable)
+                {
+                    return IncompleteUserLookup();
+                }
+
+                if (initialSeerrUser == null && !fallbackEnabled)
+                {
+                    return NotFound(new
+                    {
+                        error = true,
+                        code = "user_unlinked",
+                        message = "Current Jellyfin user is not linked to a Seerr user.",
+                        requests = Array.Empty<object>(),
+                    });
+                }
+
+                if (initialSeerrUser == null
+                    && initialResolution.Status is not (SeerrUserResolutionStatus.NotFound
+                        or SeerrUserResolutionStatus.Blocked))
+                {
+                    return IncompleteUserLookup();
+                }
+
+                if (initialSeerrUser == null && configuredUrls.Length > MaxRequestSnapshotSeerrSources)
+                {
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "source_bound_exceeded",
+                        message = "Too many Seerr identity domains were configured to prove requester ownership safely.",
+                        requests = Array.Empty<object>(),
+                    });
+                }
+
+                var jellyfinAdmin = IsAdminUser();
+                var canViewAllRequests = initialSeerrUser != null
+                    && (jellyfinAdmin || SeerrPermissionHelper.HasAnyPermission(
+                        initialSeerrUser.Permissions,
+                        SeerrPermission.ADMIN | SeerrPermission.MANAGE_REQUESTS | SeerrPermission.REQUEST_VIEW));
+                var selfScoped = userOnly || !canViewAllRequests;
+                var client = SeerrHttpHelper.CreateClient(_httpClientFactory);
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var dispatchFence = integration
+                    .CreateDispatchFence(_configProvider)
+                    .Restrict(() => IsReadConfigurationCurrent(configStamp));
+                var snapshots = new List<SeerrPagedCollectionResult>();
+
+                if (initialSeerrUser != null)
+                {
+                    var normalizedResolvedSource = SeerrUrlIdentity.Normalize(initialSeerrUser.SourceUrl);
+                    var configuredSource = configuredUrls.FirstOrDefault(url => string.Equals(
+                        url,
+                        normalizedResolvedSource,
+                        StringComparison.Ordinal));
+                    if (configuredSource == null)
+                    {
+                        return SourceAffinityUnavailable();
+                    }
+
+                    var snapshot = await FetchUserRequestSnapshotAsync(
+                        client,
+                        new[] { configuredSource },
+                        seerrApiKey,
+                        initialSeerrUser.Id.ToString(CultureInfo.InvariantCulture),
+                        dispatchFence,
+                        HttpContext.RequestAborted,
+                        // Fallback precedence requires the complete all-owner ledger.
+                        // With fallback off, retain the existing optimized self scope.
+                        selfScoped: fallbackEnabled ? false : selfScoped,
+                        includeApiUserHeader: fallbackEnabled
+                            ? false
+                            : selfScoped || !jellyfinAdmin).ConfigureAwait(false);
+                    snapshots.Add(snapshot);
+                }
+                else
+                {
+                    // A conclusively unlinked/blocked user has no source affinity. To prove
+                    // that a tag does not override any authoritative owner, every configured
+                    // Seerr identity domain must complete independently.
+                    foreach (var configuredSource in configuredUrls)
+                    {
+                        HttpContext.RequestAborted.ThrowIfCancellationRequested();
+                        var snapshot = await FetchUserRequestSnapshotAsync(
+                            client,
+                            new[] { configuredSource },
+                            seerrApiKey,
+                            string.Empty,
+                            dispatchFence,
+                            HttpContext.RequestAborted,
+                            selfScoped: false,
+                            includeApiUserHeader: false).ConfigureAwait(false);
+                        snapshots.Add(snapshot);
+                    }
+                }
+
+                if (!IsReadConfigurationCurrent(configStamp))
+                    return ReadConfigurationChanged("the request snapshot");
+
+                var selectedRows = new JsonArray();
+                foreach (var snapshot in snapshots)
+                {
+                    if (!snapshot.IsComplete)
+                    {
+                        _logger.LogWarning(
+                            "Calendar request ownership collection was incomplete: {Reason}",
+                            snapshot.FailureReason);
+                        return UpstreamCollectionIncomplete();
+                    }
+
+                    var seenRequestIds = new HashSet<int>();
+                    foreach (var row in snapshot.Items)
+                    {
+                        if (!TryParseRequestSnapshotRow(row, out var parsedRow)
+                            || !seenRequestIds.Add(parsedRow.RequestId))
+                        {
+                            return InvalidRequestKeyCollection();
+                        }
+
+                        var canonicalKey = CanonicalRequestKey(parsedRow.TmdbId, parsedRow.Type);
+                        authoritativeOwnerKeys.Add(canonicalKey);
+                        var selected = initialSeerrUser != null
+                            && (!selfScoped || parsedRow.OwnerId == initialSeerrUser.Id);
+                        if (selected)
+                        {
+                            selectedRows.Add(JsonNode.Parse(row.GetRawText()));
+                        }
+                    }
+                }
+
+                if (selectedRows.Count > 0)
+                {
+                    var completeJson = JsonSerializer.Serialize(new
+                    {
+                        results = selectedRows,
+                        pageInfo = new
+                        {
+                            page = 1,
+                            pages = 1,
+                            pageSize = selectedRows.Count,
+                            results = selectedRows.Count,
+                        },
+                    });
+                    SeerrParentalResult parental;
+                    try
+                    {
+                        parental = await _parentalFilter.ApplyAsync(
+                            completeJson,
+                            "/api/v1/request",
+                            SeerrCaller()).ConfigureAwait(false);
+                        if (!IsReadConfigurationCurrent(configStamp))
+                            return ReadConfigurationChanged("the request snapshot");
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!IsReadConfigurationCurrent(configStamp))
+                            return ReadConfigurationChanged("the request snapshot");
+
+                        _logger.LogWarning(ex, "Strict request-snapshot parental filtering threw; refusing unfiltered output.");
+                        return ParentalFilterIncomplete();
+                    }
+
+                    if (!parental.Succeeded || parental.Block)
+                    {
+                        return ParentalFilterIncomplete();
+                    }
+
+                    JsonArray? results;
+                    try
+                    {
+                        results = (JsonNode.Parse(parental.Body) as JsonObject)?["results"] as JsonArray;
+                    }
+                    catch (JsonException)
+                    {
+                        return InvalidRequestKeyCollection();
+                    }
+
+                    if (results == null)
+                    {
+                        return InvalidRequestKeyCollection();
+                    }
+
+                    var seenFilteredRequestIds = new HashSet<int>();
+                    foreach (var row in results)
+                    {
+                        if (!TryParseRequestSnapshotRow(row as JsonObject, out var parsedRow)
+                            || !seenFilteredRequestIds.Add(parsedRow.RequestId)
+                            || (selfScoped && parsedRow.OwnerId != initialSeerrUser!.Id))
+                        {
+                            return InvalidRequestKeyCollection();
+                        }
+
+                        AddProjectedKey(projectedKeys, parsedRow.TmdbId, parsedRow.Type);
+                    }
+                }
+            }
+
+            if (fallbackEnabled)
+            {
+                if (_calendarRequesterTags == null)
+                {
+                    return StatusCode(500, new
+                    {
+                        error = true,
+                        code = "requester_tag_resolver_unavailable",
+                        message = "Calendar requester-tag attribution is not available.",
+                        requests = Array.Empty<object>(),
+                    });
+                }
+
+                var tagResolution = _calendarRequesterTags.Resolve(
+                    config,
+                    currentUser,
+                    HttpContext.RequestAborted);
+                if (!tagResolution.IsComplete)
+                {
+                    _logger.LogWarning(
+                        "Calendar requester-tag resolution was incomplete: {Reason}",
+                        tagResolution.FailureReason);
+                    return StatusCode(502, new
+                    {
+                        error = true,
+                        code = "requester_tag_collection_incomplete",
+                        message = "Requester tags could not be resolved completely. Check the Calendar requester-tag configuration and retry.",
+                        requests = Array.Empty<object>(),
+                    });
+                }
+
+                foreach (var key in tagResolution.Keys)
+                {
+                    var canonicalKey = CanonicalRequestKey(key.TmdbId, key.Type);
+                    if (!authoritativeOwnerKeys.Contains(canonicalKey))
+                    {
+                        projectedKeys.TryAdd(canonicalKey, key);
+                    }
+                }
+            }
+
+            if (projectedKeys.Count > RequestKeyMaxItems)
             {
                 return StatusCode(502, new
+                {
+                    error = true,
+                    code = "request_key_bound_exceeded",
+                    message = "The complete request-key collection exceeded its safe bound.",
+                    requests = Array.Empty<object>(),
+                });
+            }
+
+            if (!IsReadConfigurationCurrent(configStamp))
+                return ReadConfigurationChanged("the request snapshot");
+
+            if (seerrEnabled && initialResolution != null)
+            {
+                var freshResolution = await _seerr.ResolveSeerrUser(
+                    jellyfinUserGuid.Value.ToString(),
+                    bypassCache: true,
+                    allowAutoImport: false,
+                    cancellationToken: HttpContext.RequestAborted).ConfigureAwait(false);
+                if (!IsReadConfigurationCurrent(configStamp))
+                    return ReadConfigurationChanged("the request snapshot");
+
+                if (!SameSeerrIdentity(initialResolution, freshResolution))
+                {
+                    return StatusCode(409, new
+                    {
+                        error = true,
+                        code = "read_identity_changed",
+                        message = "The linked Seerr identity changed while preparing the request snapshot. Retry the request.",
+                        requests = Array.Empty<object>(),
+                    });
+                }
+            }
+
+            var freshUser = _userManager.GetUserById(jellyfinUserGuid.Value);
+            if (freshUser == null
+                || !initialJellyfinIdentity.Matches(freshUser))
+            {
+                return StatusCode(409, new
+                {
+                    error = true,
+                    code = "read_identity_changed",
+                    message = "The Jellyfin user identity or access policy changed while preparing the request snapshot. Retry the request.",
+                    requests = Array.Empty<object>(),
+                });
+            }
+
+            if (!IsReadConfigurationCurrent(configStamp))
+                return ReadConfigurationChanged("the request snapshot");
+
+            return CompleteRequestSnapshot(projectedKeys.Values);
+
+            ObjectResult IncompleteUserLookup()
+                => StatusCode(502, new
+                {
+                    error = true,
+                    code = "user_lookup_incomplete",
+                    message = "Seerr user lookup was incomplete. No partial request snapshot was published.",
+                    requests = Array.Empty<object>(),
+                });
+
+            ObjectResult SourceAffinityUnavailable()
+                => StatusCode(502, new
                 {
                     error = true,
                     code = "source_affinity_unavailable",
                     message = "The linked Seerr instance could not be verified. No request snapshot was published.",
                     requests = Array.Empty<object>(),
                 });
-            }
 
-            var urls = new[] { configuredSource };
-            var client = SeerrHttpHelper.CreateClient(_httpClientFactory);
-            client.Timeout = TimeSpan.FromSeconds(15);
-            SeerrDispatchFence dispatchFence = integration
-                .CreateDispatchFence(_configProvider)
-                .Restrict(() => IsReadConfigurationCurrent(configStamp));
-            var snapshot = await FetchUserRequestSnapshotAsync(
-                client,
-                urls,
-                seerrApiKey,
-                seerrUser.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                dispatchFence,
-                HttpContext.RequestAborted,
-                selfScoped: selfScoped,
-                includeApiUserHeader: selfScoped || !jellyfinAdmin).ConfigureAwait(false);
-            if (!IsReadConfigurationCurrent(configStamp))
-                return ReadConfigurationChanged("the request snapshot");
-
-            if (!snapshot.IsComplete)
-            {
-                _logger.LogWarning(
-                    "Calendar request-key collection from {Url} was incomplete: {Reason}",
-                    snapshot.SourceUrl,
-                    snapshot.FailureReason);
-                return StatusCode(502, new
+            ObjectResult UpstreamCollectionIncomplete()
+                => StatusCode(502, new
                 {
                     error = true,
                     code = "upstream_collection_incomplete",
                     message = "Seerr returned an incomplete request collection. Please try again.",
                     requests = Array.Empty<object>(),
                 });
-            }
-
-            // Apply the caller's parental policy once to the complete collection.
-            // This avoids publishing a successfully filtered prefix when a later
-            // upstream page fails and keeps the post-filter key set authoritative.
-            var completeJson = JsonSerializer.Serialize(new
-            {
-                results = snapshot.Items,
-                pageInfo = new
-                {
-                    page = 1,
-                    pages = snapshot.Items.Count == 0 ? 0 : 1,
-                    pageSize = snapshot.Items.Count,
-                    results = snapshot.Items.Count,
-                },
-            });
-            SeerrParentalResult parental;
-            try
-            {
-                parental = await _parentalFilter.ApplyAsync(
-                    completeJson,
-                    "/api/v1/request",
-                    SeerrCaller()).ConfigureAwait(false);
-                if (!IsReadConfigurationCurrent(configStamp))
-                    return ReadConfigurationChanged("the request snapshot");
-            }
-            catch (Exception ex)
-            {
-                if (!IsReadConfigurationCurrent(configStamp))
-                    return ReadConfigurationChanged("the request snapshot");
-
-                _logger.LogWarning(ex, "Strict request-snapshot parental filtering threw; refusing unfiltered output.");
-                return ParentalFilterIncomplete();
-            }
-
-            if (!parental.Succeeded || parental.Block)
-            {
-                _logger.LogWarning(
-                    "Strict request-snapshot parental filtering did not produce a usable filtered collection (Succeeded={Succeeded}, Block={Block}).",
-                    parental.Succeeded,
-                    parental.Block);
-                return ParentalFilterIncomplete();
-            }
-
-            JsonArray? results;
-            try
-            {
-                var data = JsonNode.Parse(parental.Body) as JsonObject;
-                results = data?["results"] as JsonArray;
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Strict request-snapshot parental filtering returned malformed JSON; refusing output.");
-                return InvalidRequestKeyCollection();
-            }
-
-            if (results == null)
-            {
-                return InvalidRequestKeyCollection();
-            }
-
-            var keys = new List<object>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var seenRequestIds = new HashSet<int>();
-            foreach (var row in results)
-            {
-                var request = row as JsonObject;
-                var requestedBy = request?["requestedBy"] as JsonObject;
-                var ownerId = ReadPositiveJsonInt(requestedBy?["id"]);
-                if (ownerId is not > 0)
-                {
-                    return InvalidRequestKeyCollection();
-                }
-
-                if (selfScoped && ownerId != seerrUser.Id)
-                {
-                    // The admin-key request is upstream-scoped, but keep a local
-                    // privacy backstop in case that query parameter is ignored.
-                    continue;
-                }
-
-                var requestId = ReadPositiveJsonInt(request?["id"]);
-                if (requestId is not > 0 || !seenRequestIds.Add(requestId.Value))
-                {
-                    return InvalidRequestKeyCollection();
-                }
-
-                var media = request?["media"] as JsonObject;
-                var tmdbId = ReadPositiveJsonInt(media?["tmdbId"]);
-                var requestMediaType = ReadJsonString(request?["type"])?.Trim().ToLowerInvariant();
-                var nestedMediaType = ReadJsonString(media?["mediaType"])?.Trim().ToLowerInvariant();
-                var mediaType = requestMediaType ?? nestedMediaType;
-                if (tmdbId is not > 0 || (mediaType != "movie" && mediaType != "tv"))
-                {
-                    return InvalidRequestKeyCollection();
-                }
-
-                if (nestedMediaType != null
-                    && (nestedMediaType is not ("movie" or "tv")
-                        || !string.Equals(mediaType, nestedMediaType, StringComparison.Ordinal)))
-                {
-                    return InvalidRequestKeyCollection();
-                }
-
-                var key = $"{mediaType}:{tmdbId.Value}";
-                if (seen.Add(key))
-                {
-                    keys.Add(new { tmdbId = tmdbId.Value, type = mediaType });
-                }
-            }
-
-            if (!IsReadConfigurationCurrent(configStamp))
-                return ReadConfigurationChanged("the request snapshot");
-
-            return Ok(new
-            {
-                // This is an output allowlist, not a redaction pass. Unknown
-                // upstream fields (including raw download-status payloads) have
-                // no path into the calendar response.
-                requests = keys,
-                requestKeyCount = keys.Count,
-                complete = true,
-            });
 
             ObjectResult InvalidRequestKeyCollection()
-            {
-                _logger.LogWarning(
-                    "Complete calendar request-key collection from {Url} contained an invalid visible row or response shape; refusing a partial result.",
-                    snapshot.SourceUrl);
-                return StatusCode(502, new
+                => StatusCode(502, new
                 {
                     error = true,
                     code = "upstream_collection_invalid",
                     message = "Seerr returned an invalid request collection. Please try again.",
                     requests = Array.Empty<object>(),
                 });
-            }
         }
+
+        private OkObjectResult CompleteRequestSnapshot(
+            IEnumerable<Services.Arr.CalendarRequesterMediaKey> mediaKeys)
+        {
+            var requests = mediaKeys
+                .Distinct()
+                .OrderBy(key => key.Type, StringComparer.Ordinal)
+                .ThenBy(key => key.TmdbId)
+                .Select(key => new { tmdbId = key.TmdbId, type = key.Type })
+                .ToList();
+            return Ok(new
+            {
+                // This is an output allowlist, not a redaction pass. Raw tags,
+                // mappings, owner identities, URLs, and upstream rows have no path
+                // into the Calendar response.
+                requests,
+                requestKeyCount = requests.Count,
+                complete = true,
+            });
+        }
+
+        private static string CanonicalRequestKey(int tmdbId, string type)
+            => $"{type}:{tmdbId.ToString(CultureInfo.InvariantCulture)}";
+
+        private static void AddProjectedKey(
+            IDictionary<string, Services.Arr.CalendarRequesterMediaKey> destination,
+            int tmdbId,
+            string type)
+        {
+            var canonicalKey = CanonicalRequestKey(tmdbId, type);
+            destination.TryAdd(
+                canonicalKey,
+                new Services.Arr.CalendarRequesterMediaKey(tmdbId, type));
+        }
+
+        private static bool TryParseRequestSnapshotRow(
+            JsonElement row,
+            out ParsedRequestSnapshotRow parsed)
+        {
+            parsed = default;
+            if (row.ValueKind != JsonValueKind.Object
+                || !TryReadPositiveJsonInt(row, "id", out var requestId)
+                || !row.TryGetProperty("requestedBy", out var requestedBy)
+                || requestedBy.ValueKind != JsonValueKind.Object
+                || !TryReadPositiveJsonInt(requestedBy, "id", out var ownerId)
+                || !row.TryGetProperty("media", out var media)
+                || media.ValueKind != JsonValueKind.Object
+                || !TryReadPositiveJsonInt(media, "tmdbId", out var tmdbId))
+            {
+                return false;
+            }
+
+            var requestType = TryReadJsonString(row, "type")?.Trim().ToLowerInvariant();
+            var nestedType = TryReadJsonString(media, "mediaType")?.Trim().ToLowerInvariant();
+            var type = requestType ?? nestedType;
+            if (type is not ("movie" or "tv")
+                || (nestedType != null
+                    && (nestedType is not ("movie" or "tv")
+                        || !string.Equals(type, nestedType, StringComparison.Ordinal))))
+            {
+                return false;
+            }
+
+            parsed = new ParsedRequestSnapshotRow(requestId, ownerId, tmdbId, type);
+            return true;
+        }
+
+        private static bool TryParseRequestSnapshotRow(
+            JsonObject? row,
+            out ParsedRequestSnapshotRow parsed)
+        {
+            parsed = default;
+            if (row == null)
+            {
+                return false;
+            }
+
+            var requestId = ReadPositiveJsonInt(row["id"]);
+            var requestedBy = row["requestedBy"] as JsonObject;
+            var ownerId = ReadPositiveJsonInt(requestedBy?["id"]);
+            var media = row["media"] as JsonObject;
+            var tmdbId = ReadPositiveJsonInt(media?["tmdbId"]);
+            var requestType = ReadJsonString(row["type"])?.Trim().ToLowerInvariant();
+            var nestedType = ReadJsonString(media?["mediaType"])?.Trim().ToLowerInvariant();
+            var type = requestType ?? nestedType;
+            if (requestId is not > 0
+                || ownerId is not > 0
+                || tmdbId is not > 0
+                || type is not ("movie" or "tv")
+                || (nestedType != null
+                    && (nestedType is not ("movie" or "tv")
+                        || !string.Equals(type, nestedType, StringComparison.Ordinal))))
+            {
+                return false;
+            }
+
+            parsed = new ParsedRequestSnapshotRow(
+                requestId.Value,
+                ownerId.Value,
+                tmdbId.Value,
+                type);
+            return true;
+        }
+
+        private static string? TryReadJsonString(JsonElement owner, string propertyName)
+            => owner.TryGetProperty(propertyName, out var value)
+                && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+
+        private static bool SameSeerrIdentity(
+            SeerrUserResolution initial,
+            SeerrUserResolution current)
+        {
+            if (initial.Status != current.Status)
+            {
+                return false;
+            }
+
+            if (initial.User == null || current.User == null)
+            {
+                return initial.User == null
+                    && current.User == null
+                    && initial.Status is SeerrUserResolutionStatus.NotFound
+                        or SeerrUserResolutionStatus.Blocked;
+            }
+
+            return initial.User.Id == current.User.Id
+                && initial.User.Permissions == current.User.Permissions
+                && string.Equals(
+                    SeerrUrlIdentity.Normalize(initial.User.SourceUrl),
+                    SeerrUrlIdentity.Normalize(current.User.SourceUrl),
+                    StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Immutable caller identity/access projection for one request snapshot. Jellyfin's
+        /// whole User.RowVersion also changes for ordinary LastActivityDate heartbeats, so it
+        /// is too broad for a retry fence. These are the stable identity and policy inputs used
+        /// by authentication, ConfigureUserAccess, and InternalItemsQuery.SetUser.
+        /// </summary>
+        private sealed class JellyfinReadIdentitySnapshot
+        {
+            private readonly Guid _id;
+            private readonly long _internalId;
+            private readonly string _username;
+            private readonly int? _maxParentalRatingScore;
+            private readonly int? _maxParentalRatingSubScore;
+            private readonly (PermissionKind Kind, bool Value)[] _permissions;
+            private readonly (PreferenceKind Kind, string Value)[] _preferences;
+            private readonly (DynamicDayOfWeek Day, double Start, double End)[] _accessSchedules;
+
+            private JellyfinReadIdentitySnapshot(JUser user)
+            {
+                _id = user.Id;
+                _internalId = user.InternalId;
+                _username = user.Username;
+                _maxParentalRatingScore = user.MaxParentalRatingScore;
+                _maxParentalRatingSubScore = user.MaxParentalRatingSubScore;
+                _permissions = user.Permissions
+                    .Select(permission => (permission.Kind, permission.Value))
+                    .OrderBy(permission => permission.Kind)
+                    .ThenBy(permission => permission.Value)
+                    .ToArray();
+                _preferences = user.Preferences
+                    .Select(preference => (preference.Kind, preference.Value))
+                    .OrderBy(preference => preference.Kind)
+                    .ThenBy(preference => preference.Value, StringComparer.Ordinal)
+                    .ToArray();
+                _accessSchedules = user.AccessSchedules
+                    .Select(schedule => (schedule.DayOfWeek, schedule.StartHour, schedule.EndHour))
+                    .OrderBy(schedule => schedule.DayOfWeek)
+                    .ThenBy(schedule => schedule.StartHour)
+                    .ThenBy(schedule => schedule.EndHour)
+                    .ToArray();
+            }
+
+            public static JellyfinReadIdentitySnapshot Capture(JUser user)
+                => new(user);
+
+            public bool Matches(JUser user)
+                => user.Id == _id
+                    && user.InternalId == _internalId
+                    && string.Equals(user.Username, _username, StringComparison.Ordinal)
+                    && user.MaxParentalRatingScore == _maxParentalRatingScore
+                    && user.MaxParentalRatingSubScore == _maxParentalRatingSubScore
+                    && _permissions.SequenceEqual(user.Permissions
+                        .Select(permission => (permission.Kind, permission.Value))
+                        .OrderBy(permission => permission.Kind)
+                        .ThenBy(permission => permission.Value))
+                    && _preferences.SequenceEqual(user.Preferences
+                        .Select(preference => (preference.Kind, preference.Value))
+                        .OrderBy(preference => preference.Kind)
+                        .ThenBy(preference => preference.Value, StringComparer.Ordinal))
+                    && _accessSchedules.SequenceEqual(user.AccessSchedules
+                        .Select(schedule => (schedule.DayOfWeek, schedule.StartHour, schedule.EndHour))
+                        .OrderBy(schedule => schedule.DayOfWeek)
+                        .ThenBy(schedule => schedule.StartHour)
+                        .ThenBy(schedule => schedule.EndHour));
+        }
+
+        private readonly record struct ParsedRequestSnapshotRow(
+            int RequestId,
+            int OwnerId,
+            int TmdbId,
+            string Type);
 
         private ObjectResult ParentalFilterIncomplete()
             => StatusCode(502, new
@@ -1381,6 +1740,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         internal const int RequestKeyPageSize = 200;
         internal const int RequestKeyMaxItems = 5000;
         internal const int RequestKeyMaxPages = 1000;
+        internal const int MaxRequestSnapshotSeerrSources = 8;
 
         /// <summary>
         /// Reads one complete, stable request-list snapshot for the caller's pinned

@@ -92,6 +92,7 @@
             const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
 
             let shortcutOverrides = [];
+            let shortcutPersistedRows = [];
 
             const tabs = document.querySelectorAll('.jellyfin-tab-button');
             const tabContents = document.querySelectorAll('.jellyfin-tab-content');
@@ -870,17 +871,127 @@
             { Name: "SkipIntroOutro", Key: "O", Label: "Skip Intro/Outro", Category: "Player" },
             { Name: "FrameStepBack", Key: ",", Label: "Step Back One Frame", Category: "Player" },
             { Name: "FrameStepForward", Key: ".", Label: "Step Forward One Frame", Category: "Player" },
-            { Name: "JumpToLastPosition", Key: "Z", Label: "Jump to Last Position", Category: "Player" }
+            { Name: "JumpToLastPosition", Key: "Z", Label: "Jump to Last Position", Category: "Player" },
+            { Name: "JumpToPercentage", Key: "0-9", Label: "Jump to Percentage", Category: "Player" }
         ];
+
+        function jcNormalizeAdminShortcut(value) {
+            if (typeof value !== 'string') return '';
+            if (value === ' ') return 'Space';
+            var aliases = {
+                meta: 'Meta', cmd: 'Meta', command: 'Meta', os: 'Meta', super: 'Meta', win: 'Meta', windows: 'Meta',
+                ctrl: 'Ctrl', control: 'Ctrl', alt: 'Alt', option: 'Alt', shift: 'Shift'
+            };
+            var legacySpacePrefix = value.endsWith('+ ') ? value.slice(0, -1) : '';
+            var legacySpaceTokens = legacySpacePrefix.endsWith('+')
+                ? legacySpacePrefix.slice(0, -1).split('+').map(function (token) { return token.trim(); })
+                : [];
+            var hasLegacySpace = legacySpaceTokens.length > 0 && legacySpaceTokens.every(function (token) {
+                return token && aliases[token.toLowerCase()];
+            });
+            var source = hasLegacySpace ? legacySpacePrefix + 'Space' : value.trim();
+            if (!source) return '';
+            if (source === '0-9') return '0-9';
+            var order = ['Meta', 'Ctrl', 'Alt', 'Shift'];
+            var tokens;
+            if (source.endsWith('+')) {
+                tokens = source.slice(0, -1).split('+').map(function (token) { return token.trim(); }).filter(Boolean);
+                tokens.push('+');
+            } else {
+                tokens = source.split('+').map(function (token) { return token.trim(); }).filter(Boolean);
+            }
+            var modifiers = {};
+            var keys = [];
+            tokens.forEach(function (token) {
+                var modifier = aliases[token.toLowerCase()];
+                if (modifier) modifiers[modifier] = true;
+                else keys.push(token);
+            });
+            if (keys.length !== 1) return '';
+            var key = keys[0];
+            if (key === ' ') key = 'Space';
+            else if (/^[a-z]$/i.test(key)) key = key.toUpperCase();
+            else {
+                var named = {
+                    esc: 'Escape', escape: 'Escape', space: 'Space', spacebar: 'Space',
+                    arrowup: 'ArrowUp', arrowdown: 'ArrowDown', arrowleft: 'ArrowLeft', arrowright: 'ArrowRight',
+                    backspace: 'Backspace', delete: 'Delete', enter: 'Enter', tab: 'Tab', home: 'Home', end: 'End',
+                    pageup: 'PageUp', pagedown: 'PageDown'
+                };
+                if (key.length > 1) key = named[key.toLowerCase()] || key;
+            }
+            if (key.length === 1 && !/[A-Za-z0-9]/.test(key)) delete modifiers.Shift;
+            return order.filter(function (modifier) { return modifiers[modifier]; }).concat([key]).join('+');
+        }
+
+        function jcAdminShortcutBindingsConflict(left, right) {
+            var a = jcNormalizeAdminShortcut(left);
+            var b = jcNormalizeAdminShortcut(right);
+            if (!a || !b) return false;
+            if (a.toLowerCase() === b.toLowerCase()) return true;
+            return (a === '0-9' && /^[0-9]$/.test(b)) || (b === '0-9' && /^[0-9]$/.test(a));
+        }
+
+        function jcAdminEffectiveShortcuts(defaults, overrides) {
+            var lastOverride = new Map();
+            (overrides || []).forEach(function (shortcut) {
+                if (shortcut && shortcut.Name) lastOverride.set(shortcut.Name, shortcut);
+            });
+            var known = new Set();
+            var result = (defaults || []).map(function (shortcut) {
+                known.add(shortcut.Name);
+                return Object.assign({}, shortcut, lastOverride.get(shortcut.Name) || {});
+            });
+            lastOverride.forEach(function (shortcut, name) {
+                if (!known.has(name)) result.push(Object.assign({}, shortcut));
+            });
+            return result;
+        }
+
+        function jcSetAdminShortcutOverride(overrides, defaults, action, binding) {
+            var preserved = null;
+            var next = (overrides || []).filter(function (shortcut) {
+                if (!shortcut || shortcut.Name !== action) return true;
+                preserved = shortcut;
+                return false;
+            });
+            if (binding !== null) {
+                var product = (defaults || []).find(function (shortcut) { return shortcut.Name === action; }) || { Name: action };
+                next.push(Object.assign({}, product, preserved || {}, { Name: action, Key: binding }));
+            }
+            return next;
+        }
+
+        function jcAdminShortcutConflict(defaults, overrides, action, binding) {
+            return jcAdminEffectiveShortcuts(defaults, overrides).find(function (shortcut) {
+                return shortcut.Name !== action && jcAdminShortcutBindingsConflict(shortcut.Key, binding);
+            });
+        }
+
+        function jcMergeAdminShortcutRows(defaults, overrides, persistedRows) {
+            var persistedByName = new Map();
+            (persistedRows || []).forEach(function (shortcut) {
+                if (shortcut && shortcut.Name) persistedByName.set(shortcut.Name, shortcut);
+            });
+            return jcAdminEffectiveShortcuts(defaults, overrides).map(function (effective) {
+                return Object.assign({}, persistedByName.get(effective.Name) || {}, effective, {
+                    Name: effective.Name,
+                    Key: jcNormalizeAdminShortcut(effective.Key)
+                });
+            });
+        }
 
         function renderOverrides() {
             shortcutListContainer.innerHTML = '';
-            if (shortcutOverrides.length === 0) {
-                shortcutListContainer.innerHTML = '<p class="fieldDescription" style="text-align: center;">No overrides configured. All shortcuts are using default values.</p>';
-            }
-            shortcutOverrides.forEach((shortcut, index) => {
+            const effectiveShortcuts = jcAdminEffectiveShortcuts(defaultShortcuts, shortcutOverrides)
+                .filter(shortcut => defaultShortcuts.some(item => item.Name === shortcut.Name));
+            effectiveShortcuts.forEach((shortcut) => {
+                const hasOverride = shortcutOverrides.some(item => item.Name === shortcut.Name);
+                const isGroup = shortcut.Name === 'JumpToPercentage';
+                const normalizedKey = jcNormalizeAdminShortcut(shortcut.Key);
+                const isDisabled = normalizedKey === '';
                 const row = document.createElement('div');
-                row.className = 'inputContainer';
+                row.className = 'inputContainer jc-admin-shortcut-row';
                 row.style.display = 'flex';
                 row.style.alignItems = 'center';
                 row.style.gap = '1em';
@@ -890,40 +1001,87 @@
                 label.textContent = shortcut.Label;
                 label.style.flex = '1';
 
-                const input = document.createElement('input');
-                input.setAttribute('is', 'emby-input');
-                input.type = 'text';
-                input.value = shortcut.Key;
-                input.style.flex = '1';
-                input.style.textAlign = 'center';
-                input.addEventListener('input', (e) => {
-                    let value = e.target.value;
-                    // Automatically convert single lowercase letters to uppercase ***
-                    if (value.match(/^[a-z]$/)) {
-                        value = value.toUpperCase();
-                        e.target.value = value;
-                    }
-                    shortcutOverrides[index].Key = value;
-                });
-
-
                 const buttonContainer = document.createElement('div');
-                const removeBtn = document.createElement('button');
-                removeBtn.setAttribute('is', 'emby-button');
-                removeBtn.type = 'button';
-                removeBtn.textContent = 'Remove';
-                removeBtn.className = 'raised button-cancel';
-                removeBtn.style.marginLeft = '1em';
-                removeBtn.addEventListener('click', () => {
-                    shortcutOverrides.splice(index, 1);
+                buttonContainer.style.display = 'flex';
+                buttonContainer.style.gap = '0.5em';
+
+                if (isGroup) {
+                    const state = document.createElement('span');
+                    state.className = 'jc-admin-shortcut-state';
+                    state.textContent = isDisabled ? 'Disabled' : '0–9';
+                    state.style.flex = '1';
+                    state.style.textAlign = 'center';
+                    state.setAttribute('role', 'status');
+                    row.appendChild(label);
+                    row.appendChild(state);
+                } else {
+                    const input = document.createElement('input');
+                    input.setAttribute('is', 'emby-input');
+                    input.type = 'text';
+                    input.value = normalizedKey;
+                    input.placeholder = isDisabled ? 'Disabled' : '';
+                    input.setAttribute('aria-label', shortcut.Label + ' binding');
+                    input.style.flex = '1';
+                    input.style.textAlign = 'center';
+                    input.addEventListener('change', (event) => {
+                        const newKey = jcNormalizeAdminShortcut(event.target.value);
+                        if (!newKey) {
+                            // Clearing an input is not Disable; restore the last
+                            // acknowledged value and require the explicit button.
+                            renderOverrides();
+                            return;
+                        }
+                        const conflict = jcAdminShortcutConflict(defaultShortcuts, shortcutOverrides, shortcut.Name, newKey);
+                        if (conflict) {
+                            showValidationError(input.parentElement, "The key '" + newKey + "' is already used by '" + conflict.Label + "'.");
+                            renderOverrides();
+                            return;
+                        }
+                        shortcutOverrides = jcSetAdminShortcutOverride(shortcutOverrides, defaultShortcuts, shortcut.Name, newKey);
+                        jcMarkConfigDirty();
+                        renderOverrides();
+                        populateAddShortcutDropdown();
+                    });
+                    row.appendChild(label);
+                    row.appendChild(input);
+                }
+
+                const stateBtn = document.createElement('button');
+                stateBtn.setAttribute('is', 'emby-button');
+                stateBtn.type = 'button';
+                stateBtn.textContent = isDisabled && isGroup ? 'Enable' : 'Disable';
+                stateBtn.className = 'raised button-cancel';
+                stateBtn.disabled = isDisabled && !isGroup;
+                stateBtn.addEventListener('click', () => {
+                    const nextKey = isDisabled ? '0-9' : '';
+                    if (nextKey) {
+                        const conflict = jcAdminShortcutConflict(defaultShortcuts, shortcutOverrides, shortcut.Name, nextKey);
+                        if (conflict) {
+                            showValidationError(stateBtn, "The 0–9 group conflicts with '" + conflict.Label + "'.");
+                            return;
+                        }
+                    }
+                    shortcutOverrides = jcSetAdminShortcutOverride(shortcutOverrides, defaultShortcuts, shortcut.Name, nextKey);
                     jcMarkConfigDirty();
                     renderOverrides();
                     populateAddShortcutDropdown();
                 });
 
-                buttonContainer.appendChild(removeBtn);
-                row.appendChild(label);
-                row.appendChild(input);
+                const resetBtn = document.createElement('button');
+                resetBtn.setAttribute('is', 'emby-button');
+                resetBtn.type = 'button';
+                resetBtn.textContent = 'Reset';
+                resetBtn.className = 'raised';
+                resetBtn.disabled = !hasOverride;
+                resetBtn.addEventListener('click', () => {
+                    shortcutOverrides = jcSetAdminShortcutOverride(shortcutOverrides, defaultShortcuts, shortcut.Name, null);
+                    jcMarkConfigDirty();
+                    renderOverrides();
+                    populateAddShortcutDropdown();
+                });
+
+                buttonContainer.appendChild(stateBtn);
+                buttonContainer.appendChild(resetBtn);
                 row.appendChild(buttonContainer);
                 shortcutListContainer.appendChild(row);
             });
@@ -932,7 +1090,7 @@
         function populateAddShortcutDropdown() {
             addShortcutSelect.innerHTML = '';
             const overriddenNames = shortcutOverrides.map(s => s.Name);
-            const availableShortcuts = defaultShortcuts.filter(s => !overriddenNames.includes(s.Name));
+            const availableShortcuts = defaultShortcuts.filter(s => s.Name !== 'JumpToPercentage' && !overriddenNames.includes(s.Name));
 
             availableShortcuts.forEach(shortcut => {
                 const option = document.createElement('option');
@@ -970,27 +1128,22 @@
                 return;
             }
 
-            // Check 1: See if the key is already used in another custom override.
-            const overrideConflict = shortcutOverrides.find(s => s.Key.toLowerCase() === newKey.toLowerCase());
-
-            if (overrideConflict) {
-                const errorMessage = "The key '" + newKey + "' is already assigned to '" + overrideConflict.Label + "' as an override.";
-                showValidationError(addShortcutKeyInput.parentElement, errorMessage);
+            newKey = jcNormalizeAdminShortcut(newKey);
+            if (!newKey) {
+                showValidationError(addShortcutKeyInput.parentElement, 'Please enter one key with optional modifiers.');
                 return;
             }
-
-            // Check 2: See if the key is used by another default shortcut.
-            const defaultConflict = defaultShortcuts.find(s => s.Key.toLowerCase() === newKey.toLowerCase() && s.Name !== selectedName);
-
-            if (defaultConflict) {
-                const errorMessage = "The key '" + newKey + "' is already used by '" + defaultConflict.Label + "'.";
+            const conflict = jcAdminShortcutConflict(defaultShortcuts, shortcutOverrides, selectedName, newKey);
+            if (conflict) {
+                const errorMessage = "The key '" + newKey + "' is already used by '" + conflict.Label + "'.";
                 showValidationError(addShortcutKeyInput.parentElement, errorMessage);
                 return;
             }
 
             const defaultConfig = defaultShortcuts.find(s => s.Name === selectedName);
             if (defaultConfig) {
-                shortcutOverrides.push({ ...defaultConfig, Key: newKey });
+                shortcutOverrides = jcSetAdminShortcutOverride(shortcutOverrides, defaultShortcuts, selectedName, newKey);
+                jcMarkConfigDirty();
                 renderOverrides();
                 populateAddShortcutDropdown();
                 addShortcutKeyInput.value = '';
@@ -2494,6 +2647,23 @@
                     return isNaN(v) || v < 5 ? 40 : Math.min(v, 100);
                 }
             },
+            PreferredAudioLanguage: {
+                load: function (el, v) {
+                    el.value = v || '';
+                },
+                save: function (el) {
+                    const value = el.value.trim();
+                    if (!value) return '';
+                    try {
+                        const canonical = Intl.getCanonicalLocales(value)[0];
+                        if (!canonical || /^(?:und|root)$/i.test(canonical)) throw new Error('unsupported language');
+                        el.value = canonical;
+                        return canonical;
+                    } catch (_) {
+                        throw new Error('Preferred audio language must be a valid BCP-47 tag (for example, en-US).');
+                    }
+                }
+            },
         };
 
         function configBoundFields() {
@@ -2548,9 +2718,10 @@
             checkInstalledPlugins();
             ApiClient.getPluginConfiguration(pluginId).then((config) => {
                 const savedShortcuts = (config.Shortcuts && config.Shortcuts.length > 0) ? config.Shortcuts : defaultShortcuts;
+                shortcutPersistedRows = savedShortcuts.slice();
                 shortcutOverrides = savedShortcuts.filter(saved => {
                     const def = defaultShortcuts.find(d => d.Name === saved.Name);
-                    return !def || saved.Key !== def.Key;
+                    return !def || jcNormalizeAdminShortcut(saved.Key) !== jcNormalizeAdminShortcut(def.Key);
                 });
 
                 renderOverrides();
@@ -2703,12 +2874,11 @@
             if (_maintenanceActionLoadError) {
                 throw new Error('Cannot save while the persisted maintenance action is invalid.');
             }
-            const finalShortcuts = [...defaultShortcuts];
-            shortcutOverrides.forEach(override => {
-                const index = finalShortcuts.findIndex(s => s.Name === override.Name);
-                if (index !== -1) finalShortcuts[index] = override;
-            });
-            config.Shortcuts = finalShortcuts;
+            config.Shortcuts = jcMergeAdminShortcutRows(
+                defaultShortcuts,
+                shortcutOverrides,
+                (config.Shortcuts && config.Shortcuts.length > 0) ? config.Shortcuts : shortcutPersistedRows
+            );
 
             // Simple fields: one generic, type-aware pass over every
             // [data-config-key] element (see readBoundFieldsIntoConfig above).
@@ -3931,7 +4101,8 @@
             { parent: 'arrLinksEnabled', label: 'Enable *arr Links', children: ['showArrLinksAsText', 'arrLinksShowStatusSingle'] },
             { parent: 'arrTagsSyncEnabled', label: 'Enable *arr Tags Sync', children: ['arrTagsPrefix', 'arrTagsClearOldTags', 'arrTagsShowAsLinks', 'arrTagsSyncFilter'] },
             { parent: 'arrTagsShowAsLinks', label: 'Show synced tags as links', children: ['arrTagsLinksFilter', 'arrTagsLinksHideFilter'] },
-            { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested'] },
+            { parent: 'calendarPageEnabled', label: 'Enable Calendar Page', children: ['calendarFirstDayOfWeek', 'calendarTimeFormat', 'calendarHighlightFavorites', 'calendarHighlightWatchedSeries', 'calendarFilterByLibraryAccess', 'calendarShowOnlyRequested', 'calendarForceOnlyRequested', 'calendarRequesterTagFallbackEnabled'] },
+            { parent: 'calendarRequesterTagFallbackEnabled', label: 'Recover requester attribution from media tags', children: ['calendarRequesterTagPrefix', 'calendarRequesterTagMappings'] },
             { parent: 'autoMovieRequestEnabled', label: 'Enable Automatic Movie Requests', children: ['autoMovieRequestTriggerOnStart', 'autoMovieRequestTriggerOnMinutesWatched', 'autoMovieRequestMinutesWatched', 'autoMovieRequestCheckReleaseDate', 'autoMovieRequestQualityMode', 'autoMovieRequestFallbackOn4k'] },
             { parent: 'autoSeasonRequestEnabled', label: 'Enable Automatic Season Requests', children: ['autoSeasonRequestRequireAllWatched', 'autoSeasonRequestThresholdValue'] },
             { parent: 'preventWatchlistReAddition', label: 'Prevent re-adding removed items', children: ['watchlistMemoryRetentionDays'] },

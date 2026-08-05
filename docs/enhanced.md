@@ -70,7 +70,7 @@ These features make the player itself better — faster to drive from the keyboa
 
 ### Advanced keyboard shortcuts
 
-Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback, and every shortcut is remappable per user.
+Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys covers navigation and playback. Ordinary shortcuts can be remapped or individually disabled per user; the `0`–`9` percentage-seek group can be enabled or disabled as one policy.
 
 ![Canopy User Settings — Shortcuts tab](images/enhanced-panel-shortcuts.png)
 
@@ -112,8 +112,9 @@ menu is opening, and leaving playback cancels the pending action.
 
 1. Press `?` to open Canopy User Settings.
 2. Go to the **Shortcuts** tab.
-3. Click any key to set a custom binding.
-4. Changes save automatically, per user.
+3. Click any ordinary key to set a custom binding, or use **Disable** beside an action to turn only that action off.
+4. Use **Reset to defaults** to remove your override and reveal the administrator's current value. The percentage-seek row is a fixed `0`–`9` group with Enable/Disable and Reset controls rather than a rebindable single key.
+5. Changes save automatically, per user and follow that Jellyfin account across browsers.
 
 Modifier combinations work in any pressed order and are displayed consistently
 as `Meta+Ctrl+Alt+Shift+Key` (only the modifiers you use are shown). On macOS,
@@ -121,6 +122,10 @@ the Command key is stored as `Meta`; existing `Cmd`, `Command`, and differently
 ordered legacy bindings are normalized automatically without changing what the
 physical shortcut does. The editor rejects another binding with the same
 semantic key combination, even when its stored spelling or order differs.
+Bare number keys are reserved while the percentage-seek group is enabled;
+modified number combinations such as `Ctrl+5` remain available as ordinary
+bindings. Disabling the group also prevents Jellyfin's native player listener
+from seeking behind Canopy's setting.
 
 !!! note "Admin: disabling shortcuts server-wide"
 
@@ -128,6 +133,12 @@ semantic key combination, even when its stored spelling or order differs.
     the **Disable Keyboard Shortcuts** toggle in **Dashboard** → **Plugins** →
     **Jellyfin Canopy** → **Keyboard** tab. When enabled, the shortcuts stop
     working and the **Shortcuts** tab is removed from Canopy User Settings.
+
+    The same Keyboard tab lists every compiled shortcut. **Disable** stores an
+    explicit server-wide disabled value for that action, while **Reset** restores
+    the compiled product default. A user's own override still has the final say:
+    user Reset reveals the administrator value, including an administrator-disabled
+    action, and a deliberate user binding can re-enable an action for that user.
 
 ### Customizable subtitles
 
@@ -259,6 +270,20 @@ width alone, and the 480p/LOW-RES boundary remains short-edge based.
 
 Quality Tags break down into **six independently toggleable categories** — **Resolution** (4K/1080p…), **Source** (BluRay/DVD/HDTV…), **HDR** (HDR10+/Dolby Vision), **Special format** (IMAX/3D), **Video format** (HEVC/H264/AV1…), and **Sound** (Atmos/DTS/5.1/7.1…). Each category can be enabled, disabled, and reordered on its own. The config-page values are admin defaults; each user can override which categories show and in what order.
 
+For a title with multiple audio tracks, the **Preferred audio language** control
+under Quality Tags chooses which one supplies the Sound badge. A user can
+inherit the administrator's default, select **Automatic**, or enter a BCP-47
+language such as `pt-BR`. Canopy tries an exact language and region first, then
+the same base language, Jellyfin's default track, and finally a deterministic
+fallback. Selection is limited to the primary media version, and codec and
+channel layout always come from the same selected track—so a badge cannot mix
+the codec of one language with the channel count of another. Changing the
+preference rerenders visible tags immediately.
+
+| Setting | Scope | Default | What it does |
+| --- | --- | --- | --- |
+| **Preferred audio language** (`PreferredAudioLanguage`) | Per-user + admin default | **Automatic** | Selects the primary-version audio track used for the Sound badge. A per-user **Inherit administrator default** choice follows later admin changes dynamically; **Automatic** remains an explicit user override. |
+
 #### Genre Tags
 
 ![Genre tags on posters](images/genre-tags.png)
@@ -267,9 +292,11 @@ Identify genres at a glance with themed icons. Genre Tags use Material Design ic
 
 #### Language Tags
 
-![Language tags (country flags) on posters](images/language-tags.png)
+![A Brazilian Portuguese regional-language flag shown consistently on a poster and its details row](images/language-tags.png)
 
-Show which audio languages a title has as country flags. Language Tags display up to **3** unique languages, sit bottom-left by default, and also appear on item detail pages. The flag icons are served from the plugin's **local asset cache** (mirrored from the flag-icons / flagcdn sets), so no third-party request is made.
+Show which audio languages a title has without guessing a nationality. Language Tags display up to **3** deterministic presentations and sit bottom-left by default. A valid explicit BCP-47 country region uses that country's flag — for example, `pt-BR`, `pt-PT`, `en-US`, `en-GB`, and `es-MX` remain distinct. A base language, script-only tag, numeric macroregion, or unknown region uses a neutral language-code badge such as **PT**, **ZH-HANT**, or **ES-419** instead. Canopy never infers a country from a filename, title, release group, script, viewer locale, or likely-language data.
+
+Poster and detail-page language displays use the same canonical resolver. Full canonical tags remain in accessible labels and cache data, while malformed and undetermined values are omitted rather than producing a broken or misleading flag. Older browser language-tag cache entries are discarded once because previous versions had already removed their regional subtags; current metadata then refills them. Flag icons are served from the plugin's **local asset cache** (mirrored from the flag-icons / flagcdn sets), so no third-party request is made while local asset caching is enabled.
 
 !!! note "Language Tags vs. Show Audio Languages"
 
@@ -364,7 +391,7 @@ Poster tags are computed once on the server and served in a single request, so t
 Beyond poster overlays, a few per-user toggles add useful facts to a title's detail page.
 
 - **Show File Sizes** — displays each item's file size on its detail and collection pages. Per-user, in the **Settings** tab.
-- **Show Audio Languages** — lists a title's available audio languages on its detail page. Per-user, in the **Settings** tab. (This is the text list on the detail page — distinct from the poster [Language Tags](#language-tags) overlay.)
+- **Show Audio Languages** — lists a title's available audio languages on its detail page. Explicit BCP-47 country regions use the same validated flag as poster Language Tags; ambiguous tags stay as descriptive text without an inferred national flag. Per-user, in the **Settings** tab. (This is the text list on the detail page — distinct from the poster [Language Tags](#language-tags) overlay.)
 
 There's also an admin-only chip for release dates:
 
