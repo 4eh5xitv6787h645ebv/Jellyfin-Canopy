@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Seed a throwaway dockerized Jellyfin 12 for the E2E suite:
 #   1. install the freshly built plugin DLL into a clean config volume,
-#   2. generate a handful of tiny valid movies, one dedicated 40-second
-#      Auto-Skip movie, and a 2×2-episode TV series with ffmpeg (testsrc2 clips),
+#   2. generate a handful of tiny valid movies (including one regional-language
+#      Matroska fixture), one dedicated 40-second Auto-Skip movie, and a 2×2-
+#      episode TV series with ffmpeg (testsrc2 clips),
 #   3. boot the compose stack and complete the startup wizard via the API,
 #   4. create the Movies + Shows libraries and the two test users the specs
 #      expect,
@@ -263,6 +264,9 @@ AUTOSKIP_FILENAME="${AUTOSKIP_FILE_PREFIX}.mp4"
 AUTOSKIP_RELATIVE_DIR="Movies/JC-Auto-Skip-Seed-${SEED_NONCE}"
 AUTOSKIP_RELATIVE_PATH="${AUTOSKIP_RELATIVE_DIR}/${AUTOSKIP_FILENAME}"
 AUTOSKIP_CONTAINER_PATH="/media/${AUTOSKIP_RELATIVE_PATH}"
+REGIONAL_LANGUAGE_NAME="Delta Horizon"
+REGIONAL_LANGUAGE_RELATIVE_PATH="Movies/Delta Horizon (2024).mkv"
+REGIONAL_LANGUAGE_CONTAINER_PATH="/media/${REGIONAL_LANGUAGE_RELATIVE_PATH}"
 
 # ── 1. clean state + plugin install ─────────────────────────────────────────
 log "resetting project ${E2E_PROJECT} state under ${STATE_DIR} (config/cache/media/mock)"
@@ -328,26 +332,29 @@ fi
 # shared by both collection types would misidentify episode files as movies.
 mkdir -p "${MEDIA_DIR}/Movies" "${MEDIA_DIR}/Shows"
 
-make_clip() { # <relative-path> <tone-hz> [duration-seconds]
+make_clip() { # <relative-path> <tone-hz> [duration-seconds] [audio-language]
     local duration="${3:-5}"
+    local audio_language="${4:-eng}"
     jq -en --argjson duration "${duration}" '$duration > 0' >/dev/null \
         || fail "invalid clip duration '${duration}' for $1"
-    # Tag the audio stream as English so the language-tags renderer has a real
-    # language to stamp (a bare testsrc clip reports "und", which the renderer
-    # skips). Genres + a community rating are added post-scan via the API below.
+    # Tag the audio stream so the language renderer has real metadata (a bare
+    # testsrc clip reports "und", which the renderer skips). English remains
+    # the default; the regional Matroska fixture supplies pt-BR explicitly.
     run_ffmpeg \
         -f lavfi -i "testsrc2=duration=${duration}:size=640x360:rate=24" \
         -f lavfi -i "sine=frequency=$2:duration=${duration}" \
         -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
         -threads "${JF_FFMPEG_THREADS}" \
-        -metadata:s:a:0 language=eng -y "$1"
+        -metadata:s:a:0 language="${audio_language}" -y "$1"
 }
 
 log "generating test movies"
 make_clip "Movies/Alpha Adventure (2021).mp4" 440
 make_clip "Movies/Beta Voyage (2022).mp4" 550
 make_clip "Movies/Gamma Quest (2023).mp4" 660
-make_clip "Movies/Delta Horizon (2024).mp4" 770
+# Matroska retains full BCP-47 LanguageIETF tags; the scan gate below proves
+# the pinned Jellyfin 12 image exposes the regional tag before Playwright runs.
+make_clip "${REGIONAL_LANGUAGE_RELATIVE_PATH}" 770 5 pt-BR
 log "generating dedicated Auto-Skip movie (${AUTOSKIP_DURATION}s, seed ${SEED_NONCE})"
 mkdir -p "${MEDIA_DIR}/${AUTOSKIP_RELATIVE_DIR}"
 make_clip "${AUTOSKIP_RELATIVE_PATH}" 880 "${AUTOSKIP_DURATION}"
@@ -655,8 +662,10 @@ AUTOSKIP_SCAN_JSON=''
 AUTOSKIP_MATCH_COUNT=0
 AUTOSKIP_SCAN_TICKS=0
 AUTOSKIP_SCAN_SOURCE_COUNT=0
+REGIONAL_LANGUAGE_MATCH_COUNT=0
+REGIONAL_LANGUAGE_TAGS='[]'
 for _ in $(seq 1 60); do
-    AUTOSKIP_SCAN_JSON="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Fields=Path,MediaSources")"
+    AUTOSKIP_SCAN_JSON="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Fields=Path,MediaSources,MediaStreams")"
     MOVIES="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r '.TotalRecordCount // 0')"
     AUTOSKIP_MATCH_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
         --arg path "${AUTOSKIP_CONTAINER_PATH}" \
@@ -669,10 +678,23 @@ for _ in $(seq 1 60); do
     AUTOSKIP_SCAN_SOURCE_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
         --arg path "${AUTOSKIP_CONTAINER_PATH}" \
         'first(.Items[]? | select(.Path == $path) | (.MediaSources // [] | length)) // 0')"
+    REGIONAL_LANGUAGE_MATCH_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
+        --arg path "${REGIONAL_LANGUAGE_CONTAINER_PATH}" \
+        '[.Items[]? | select(.Path == $path)] | length')"
+    REGIONAL_LANGUAGE_TAGS="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -c \
+        --arg path "${REGIONAL_LANGUAGE_CONTAINER_PATH}" \
+        '[first(.Items[]? | select(.Path == $path)) as $item
+          | (($item.MediaStreams // [])
+             + (($item.MediaSources // []) | map(.MediaStreams // []) | add // []))[]?
+          | select(.Type == "Audio")
+          | (.Language // "" | ascii_downcase)
+          | select(length > 0)] | unique | sort')"
     if [ "${MOVIES}" -ge 5 ] 2>/dev/null \
         && [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
-        && [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null; then
+        && [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null \
+        && [ "${REGIONAL_LANGUAGE_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
+        && [ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ]; then
         break
     fi
     sleep 5
@@ -684,6 +706,11 @@ done
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' at ${AUTOSKIP_CONTAINER_PATH} has no probed media source after the scan wait"
 [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null \
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' at ${AUTOSKIP_CONTAINER_PATH} has ${AUTOSKIP_SCAN_TICKS} ticks; ${AUTOSKIP_MIN_TICKS} required"
+[ "${REGIONAL_LANGUAGE_MATCH_COUNT}" -eq 1 ] \
+    || fail "regional-language fixture '${REGIONAL_LANGUAGE_NAME}' was not indexed at ${REGIONAL_LANGUAGE_CONTAINER_PATH}"
+[ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ] \
+    || fail "regional-language fixture exposed ${REGIONAL_LANGUAGE_TAGS}; expected [\"pt-br\"]"
+log "verified regional-language fixture tags: ${REGIONAL_LANGUAGE_TAGS}"
 
 log "waiting for the explicit library scan to complete before metadata writes"
 LIBRARY_SCAN_STATE=""
@@ -734,6 +761,24 @@ done
     && [ "${LIBRARY_SCAN_END}" != "${LIBRARY_SCAN_START}" ] \
     || fail "explicit Scan Media Library task did not complete after trigger=${LIBRARY_SCAN_TRIGGERED_AT} (state=${LIBRARY_SCAN_STATE:-missing}, status=${LIBRARY_SCAN_STATUS:-missing}, start=${LIBRARY_SCAN_START:-missing}, end=${LIBRARY_SCAN_END:-missing})"
 log "explicit library scan completed at ${LIBRARY_SCAN_END}"
+
+# The poster assertion intentionally exercises the server-cache path. Wait for
+# the scan event worker to publish the same full regional tag before Playwright
+# starts, so a slow cache reconcile cannot turn the test into a live-fetch race.
+REGIONAL_LANGUAGE_ID="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -er \
+    --arg path "${REGIONAL_LANGUAGE_CONTAINER_PATH}" \
+    'first(.Items[]? | select(.Path == $path) | .Id) // empty')"
+REGIONAL_TAG_CACHE_TAGS='[]'
+for _ in $(seq 1 60); do
+    REGIONAL_TAG_CACHE_TAGS="$(api GET "/JellyfinCanopy/tag-cache/${ADMIN_ID}" | jq -c \
+        --arg id "${REGIONAL_LANGUAGE_ID}" \
+        '[.items[$id].AudioLanguages[]? | ascii_downcase] | unique | sort')"
+    [ "${REGIONAL_TAG_CACHE_TAGS}" = '["pt-br"]' ] && break
+    sleep 1
+done
+[ "${REGIONAL_TAG_CACHE_TAGS}" = '["pt-br"]' ] \
+    || fail "regional-language tag cache exposed ${REGIONAL_TAG_CACHE_TAGS}; expected [\"pt-br\"]"
+log "verified regional-language server-cache tags: ${REGIONAL_TAG_CACHE_TAGS}"
 
 # Resolve by the physical path owned by this seed, validate the media metadata,
 # then apply the stable logical name used by the spec. Re-read after the update

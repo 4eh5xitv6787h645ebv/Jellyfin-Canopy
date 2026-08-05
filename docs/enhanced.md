@@ -267,9 +267,11 @@ Identify genres at a glance with themed icons. Genre Tags use Material Design ic
 
 #### Language Tags
 
-![Language tags (country flags) on posters](images/language-tags.png)
+![A Brazilian Portuguese regional-language flag shown consistently on a poster and its details row](images/language-tags.png)
 
-Show which audio languages a title has as country flags. Language Tags display up to **3** unique languages, sit bottom-left by default, and also appear on item detail pages. The flag icons are served from the plugin's **local asset cache** (mirrored from the flag-icons / flagcdn sets), so no third-party request is made.
+Show which audio languages a title has without guessing a nationality. Language Tags display up to **3** deterministic presentations and sit bottom-left by default. A valid explicit BCP-47 country region uses that country's flag — for example, `pt-BR`, `pt-PT`, `en-US`, `en-GB`, and `es-MX` remain distinct. A base language, script-only tag, numeric macroregion, or unknown region uses a neutral language-code badge such as **PT**, **ZH-HANT**, or **ES-419** instead. Canopy never infers a country from a filename, title, release group, script, viewer locale, or likely-language data.
+
+Poster and detail-page language displays use the same canonical resolver. Full canonical tags remain in accessible labels and cache data, while malformed and undetermined values are omitted rather than producing a broken or misleading flag. Older browser language-tag cache entries are discarded once because previous versions had already removed their regional subtags; current metadata then refills them. Flag icons are served from the plugin's **local asset cache** (mirrored from the flag-icons / flagcdn sets), so no third-party request is made while local asset caching is enabled.
 
 !!! note "Language Tags vs. Show Audio Languages"
 
@@ -364,7 +366,7 @@ Poster tags are computed once on the server and served in a single request, so t
 Beyond poster overlays, a few per-user toggles add useful facts to a title's detail page.
 
 - **Show File Sizes** — displays each item's file size on its detail and collection pages. Per-user, in the **Settings** tab.
-- **Show Audio Languages** — lists a title's available audio languages on its detail page. Per-user, in the **Settings** tab. (This is the text list on the detail page — distinct from the poster [Language Tags](#language-tags) overlay.)
+- **Show Audio Languages** — lists a title's available audio languages on its detail page. Explicit BCP-47 country regions use the same validated flag as poster Language Tags; ambiguous tags stay as descriptive text without an inferred national flag. Per-user, in the **Settings** tab. (This is the text list on the detail page — distinct from the poster [Language Tags](#language-tags) overlay.)
 
 There's also an admin-only chip for release dates:
 

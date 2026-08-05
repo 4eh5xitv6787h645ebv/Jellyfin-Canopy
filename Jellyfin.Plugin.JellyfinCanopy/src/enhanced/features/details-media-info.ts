@@ -7,6 +7,11 @@
 import { JC } from '../../globals';
 import { flagSvgUrl } from '../../core/asset-urls';
 import { createBoundedCache } from '../../core/bounded-cache';
+import {
+    buildMediaLanguagePresentations,
+    resolveMediaLanguageIdentities,
+} from '../../core/media-language';
+import type { MediaLanguageIdentity } from '../../core/media-language';
 import { injectCss } from '../../core/ui-kit';
 import { getItemCached } from '../helpers';
 import type { IdentityContext } from '../../types/jc';
@@ -56,7 +61,7 @@ interface WatchProgressEntry {
 // the util now also caps size and expires entries so nothing leaks per session.
 const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
 const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
-const audioLanguageCache = createBoundedCache<string, { languages: { name: string; code: string }[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { languages, unavailable, ts }>
+const audioLanguageCache = createBoundedCache<string, { languages: MediaLanguageIdentity[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { canonical identities, unavailable, ts }>
 const retryTimers = new Set<number>();
 
 function isActive(context: IdentityContext, placeholder?: HTMLElement): boolean {
@@ -435,20 +440,6 @@ export function displayItemSize(itemId: string, container: HTMLElement): void {
 }
 
 /**
- * A map of language names/codes to country codes for flag display.
- */
-const languageToCountryMap: Record<string, string> = {English:"gb",eng:"gb",Japanese:"jp",jpn:"jp",Spanish:"es",spa:"es",French:"fr",fre:"fr",fra:"fr",German:"de",ger:"de",deu:"de",Italian:"it",ita:"it",Korean:"kr",kor:"kr",
-                            Chinese:"cn",chi:"cn",zho:"cn",Russian:"ru",rus:"ru",Portuguese:"pt",por:"pt",Hindi:"in",hin:"in",Dutch:"nl",dut:"nl",nld:"nl",Arabic:"sa",ara:"sa",Bengali:"in",ben:"in",
-                            Czech:"cz",ces:"cz",Danish:"dk",dan:"dk",Greek:"gr",ell:"gr",Finnish:"fi",fin:"fi",Hebrew:"il",heb:"il",Hungarian:"hu",hun:"hu",Indonesian:"id",ind:"id",Norwegian:"no",nor:"no",
-                            Polish:"pl",pol:"pl",Persian:"ir",per:"ir",fas:"ir",Romanian:"ro",ron:"ro",rum:"ro",Swedish:"se",swe:"se",Thai:"th",tha:"th",Turkish:"tr",tur:"tr",Ukrainian:"ua",ukr:"ua",
-                            Vietnamese:"vn",vie:"vn",Malay:"my",msa:"my",may:"my",Swahili:"ke",swa:"ke",Tagalog:"ph",tgl:"ph",Filipino:"ph",Tamil:"in",tam:"in",Telugu:"in",tel:"in",Marathi:"in",mar:"in",
-                            Punjabi:"in",pan:"in",Urdu:"pk",urd:"pk",Gujarati:"in",guj:"in",Kannada:"in",kan:"in",Malayalam:"in",mal:"in",Sinhala:"lk",sin:"lk",Nepali:"np",nep:"np",Pashto:"af",pus:"af",
-                            Kurdish:"iq",kur:"iq",Slovak:"sk",slk:"sk",Slovenian:"si",slv:"si",Serbian:"rs",srp:"rs",Croatian:"hr",hrv:"hr",Bulgarian:"bg",bul:"bg",Macedonian:"mk",mkd:"mk",Albanian:"al",
-                            sqi:"al",Estonian:"ee",est:"ee",Latvian:"lv",lav:"lv",Lithuanian:"lt",lit:"lt",Icelandic:"is",isl:"is",Georgian:"ge",kat:"ge",Armenian:"am",hye:"am",Mongolian:"mn",mon:"mn",
-                            Kazakh:"kz",kaz:"kz",Uzbek:"uz",uzb:"uz",Azerbaijani:"az",aze:"az",Belarusian:"by",bel:"by",Amharic:"et",amh:"et",Zulu:"za",zul:"za",Afrikaans:"za",afr:"za",Hausa:"ng",hau:"ng",
-                            Yoruba:"ng",yor:"ng",Igbo:"ng",ibo:"ng",Brazilian:"br",bra:"br",Catalan:"es-ct",cat:"es-ct",ca:"es-ct",Galician:"es-ga",glg:"es-ga",gl:"es-ga",Basque:"es-pv",eus:"es-pv",baq:"es-pv",eu:"es-pv"};
-
-/**
  * Fetches the first episode of a series or season for language detection.
  * Throws on transport failure — PERF(R9): a transient error must reach
  * displayAudioLanguages' catch (short error TTL + in-place retry), not
@@ -536,8 +527,13 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     };
 
     // Helper to render language items with proper DOM elements
-    const renderLanguages = (languages: { name: string; code: string }[]): void => {
+    const renderLanguages = (languages: MediaLanguageIdentity[]): void => {
         if (!isActive(context, placeholder)) return;
+        const presentations = buildMediaLanguagePresentations(languages);
+        if (presentations.length === 0) {
+            renderUnavailable();
+            return;
+        }
         // Clear the loading indicator
         placeholder.innerHTML = '';
         placeholder.style.display = 'flex';
@@ -561,7 +557,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         scrollContainer.style.alignItems = 'center';
         scrollContainer.style.overflowY = 'hidden';
 
-        if (languages.length > 3) { //if there are more than 3 languages, make it scrollable
+        if (presentations.length > 3) { //if there are more than 3 languages, make it scrollable
             ensureAudioLanguagesScrollStyles();
             scrollContainer.classList.add('jc-audio-languages-scroll');
             scrollContainer.style.overflowX = 'auto';
@@ -589,20 +585,25 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             placeholder.appendChild(indicator);
         }
 
-        languages.forEach((lang, index) => {
-            // Create container span with data-lang attribute
+        presentations.forEach((language, index) => {
+            // Canonical language tags and explicit region remain available to
+            // automation and accessibility without conflating either with text.
             const langSpan = document.createElement('span');
             langSpan.className = 'audio-language-item';
-            langSpan.dataset.lang = lang.code;
-            langSpan.dataset.langName = lang.name;
+            langSpan.dataset.lang = language.canonicalTags[0] || '';
+            langSpan.dataset.langTags = JSON.stringify(language.canonicalTags);
+            langSpan.dataset.langName = language.displayNames.join(', ');
+            langSpan.dataset.region = language.flagRegion || '';
+            langSpan.title = language.accessibleLabel;
+            langSpan.setAttribute('aria-label', language.accessibleLabel);
             langSpan.style.whiteSpace = 'nowrap';
 
-            const countryCode = languageToCountryMap[lang.name] || languageToCountryMap[lang.code];
-            if (countryCode) {
+            if (language.kind === 'flag' && language.flagRegion) {
                 const flag = document.createElement('img');
                 // PERF(R6): no remote assets — flag served from the local asset cache.
-                flag.src = flagSvgUrl(countryCode);
-                flag.alt = `${lang.name} flag`;
+                flag.src = flagSvgUrl(language.flagRegion);
+                flag.alt = '';
+                flag.setAttribute('aria-hidden', 'true');
                 // PERF(R1): explicit width AND height (attributes + styles) so the
                 // slot is fully reserved before the SVG loads — no row reflow
                 // when the flag image arrives. 4x3 flags at 18px wide = 13.5px.
@@ -615,12 +616,12 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                 langSpan.appendChild(flag);
             }
 
-            const text = document.createTextNode(lang.name);
+            const text = document.createTextNode(language.displayNames.join(' / '));
             langSpan.appendChild(text);
 
             scrollContainer.appendChild(langSpan);
 
-            if (index < languages.length - 1) {
+            if (index < presentations.length - 1) {
                 const separator = document.createElement('span');
                 separator.style.margin = '0 0.25em';
                 separator.textContent = ', ';
@@ -668,26 +669,21 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                 }
             }
 
-            const languages = new Set<string>();
+            const languages: string[] = [];
             sourceItem?.MediaSources?.forEach((source: any) => {
                 source.MediaStreams?.filter((stream: any) => stream.Type === 'Audio').forEach((stream: any) => {
                     const langCode = stream.Language;
                     if (langCode && !['und', 'root'].includes(langCode.toLowerCase())) {
-                        try {
-                            const langName = new Intl.DisplayNames(['en'], { type: 'language' }).of(langCode);
-                            languages.add(JSON.stringify({ name: langName, code: langCode }));
-                        } catch (e) {
-                            languages.add(JSON.stringify({ name: langCode.toUpperCase(), code: langCode }));
-                        }
+                        languages.push(langCode);
                     }
                 });
             });
 
-            const uniqueLanguages: { name: string; code: string }[] = Array.from(languages).map((s) => JSON.parse(s));
-            if (uniqueLanguages.length > 0) {
-                renderLanguages(uniqueLanguages);
+            const identities = resolveMediaLanguageIdentities(languages);
+            if (identities.length > 0) {
+                renderLanguages(identities);
                 // Cache the successful result
-                audioLanguageCache.set(itemId, { languages: uniqueLanguages, unavailable: false, ts: Date.now() });
+                audioLanguageCache.set(itemId, { languages: identities, unavailable: false, ts: Date.now() });
             } else {
                 renderUnavailable();
                 audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now() });
