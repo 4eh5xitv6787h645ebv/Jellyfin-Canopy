@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2811,
-        "totalLines": 3196
+        "coveredLines": 2919,
+        "totalLines": 3304
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2811,
-        "maximumCoveredLines": 2811
+        "minimumCoveredLines": 2919,
+        "maximumCoveredLines": 2919
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "The issue-682 client changes add critic-rating parsing helpers and OSD/tag-pipeline coverage. The official CI client coverage gate measured 2,811/3,196 (87.954%) on this exact tree."
+        "rationale": "Issue #664 adds preferred-audio-language selection on top of the shared BCP-47 resolver, including exact-region/base-language fallbacks, per-user inheritance, acknowledgement-safe whole-file persistence, and server-cache identity fencing. Two clean full client runs on this exact 3,304-line core scope and 2,314-test tree both passed every test and measured 2,919/3,304 (88.347%), advancing the prior 2,918-line high-water by one covered line with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,919/3,304 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
@@ -31,13 +31,13 @@
         "totalLines": 53973
       },
       "observations": {
-        "cleanRuns": 1,
-        "minimumCoveredLines": 44215,
+        "cleanRuns": 2,
+        "minimumCoveredLines": 44212,
         "maximumCoveredLines": 44215
       },
       "tolerance": {
         "missingCoveredLines": 11,
-        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. One clean Release run on the merged tree observed 44,215 covered lines (81.921%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
+        "rationale": "Post-merge scope: main's language-coverage / seerr-poster / shortcuts work plus the advanced per-category Spoiler Guard reveals settle the instrumented scope at 53,973 lines. Two clean Release runs on the merged tree observed 44,215 and 44,212 covered lines (81.916%-81.921%). The eleven-line tolerance carries over this branch's directly-observed full-gate-context variance, proven by cobertura diffs to live exclusively in pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) plus the background boundary-fill worker's scheduling-dependent no-op branches. The floor 44,204/53,973 = 81.900% far exceeds the pre-branch required floor 81.750%, so the ratchet moves upward; 0.020pp is far inside the 0.15pp policy bound."
       }
     }
   }
