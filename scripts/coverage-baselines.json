@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 43642,
+        "coveredLines": 43644,
         "totalLines": 53344
       },
       "observations": {
-        "cleanRuns": 2,
+        "cleanRuns": 3,
         "minimumCoveredLines": 43642,
-        "maximumCoveredLines": 43642
+        "maximumCoveredLines": 43644
       },
       "tolerance": {
         "missingCoveredLines": 8,
-        "rationale": "The advanced per-category Spoiler Guard reveals (SpoilerNextUnwatchedService with its fail-closed background boundary fill, the CategoryReveal mask in SpoilerFieldStripFilter, and seven admin config keys) settle the instrumented scope at 53,344 lines (from 53,174 on main). Two clean Release coverage runs on this exact tree both observed 43,642 covered lines (81.812%). The eight-line tolerance carries over the directly-observed full-gate-context variance from this branch's earlier scopes, where cobertura diffs proved the flapping lines are exclusively pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) untouched by this diff. The floor 43,634/53,344 = 81.797% exceeds the previous required floor 43,470/53,174 = 81.750%, so the ratchet moves upward; 0.015pp is far inside the 0.15pp policy bound."
+        "rationale": "The advanced per-category Spoiler Guard reveals (SpoilerNextUnwatchedService with its fail-closed background boundary fill, the CategoryReveal mask in SpoilerFieldStripFilter, and seven admin config keys) settle the instrumented scope at 53,344 lines (from 53,174 on main). Three clean Release coverage runs on this exact tree observed 43,642, 43,642 and (inside the full gate) 43,644 covered lines. The eight-line tolerance carries over the directly-observed full-gate-context variance from this branch's earlier scopes, where cobertura diffs proved the flapping lines are exclusively pre-existing timing-dependent async paths (Platform manifest reader / provider invocation / registry orchestrator, Seerr pending promoter) untouched by this diff. The floor 43,636/53,344 = 81.801% exceeds the previous required floor 43,470/53,174 = 81.750%, so the ratchet moves upward; 0.015pp is far inside the 0.15pp policy bound."
       }
     }
   }
