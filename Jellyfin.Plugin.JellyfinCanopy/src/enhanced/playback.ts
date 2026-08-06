@@ -803,15 +803,27 @@ interface TrackPressOwnership {
     readonly capturedAt: number;
 }
 
+// A command's stream restart lands within moments of the POST completing;
+// beyond this window a surface change is presumed to be something else
+// (e.g. a natural episode transition) even when a command also just ran.
+const OWN_RESTART_EXPLANATION_MS = 2_500;
+
 /**
  * True when OUR OWN track command for the same item completed at or after
- * `since` — local, lag-immune knowledge that a surface restart was caused by
- * that command rather than a next episode.
+ * `since` and recently enough that its stream restart plausibly produced the
+ * current surface — local, lag-immune knowledge that the restart was caused
+ * by that command rather than a next episode. The tight window deliberately
+ * bounds the residual double-transition ambiguity (command restart AND a
+ * natural transition inside the same moments) that no probe could resolve.
  */
 function ownCommandExplainsRestart(itemIdNorm: string, since: number): boolean {
+    const now = performance.now();
     return (['subtitle', 'audio'] as const).some((k) => {
         const last = _lastCommandedTrack[k];
-        return !!last && normalizeTrackItemId(last.itemId) === itemIdNorm && last.at >= since;
+        return !!last
+            && normalizeTrackItemId(last.itemId) === itemIdNorm
+            && last.at >= since
+            && now - last.at <= OWN_RESTART_EXPLANATION_MS;
     });
 }
 
