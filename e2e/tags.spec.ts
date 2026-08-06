@@ -238,8 +238,7 @@ test.describe('tags', () => {
                 await showRoute(page, `/details?id=${fixture.seriesId}`);
                 await waitForHash(page, fixture.seriesId);
                 const poster = page.locator(
-                    '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
-                    + '#itemDetailPage:not(.hide) .detailImageContainer .card',
+                    '#itemDetailPage:not(.hide) .detailImageContainer .card',
                 ).filter({ has: page.locator('.language-coverage-partial') }).first();
                 const full = poster.locator('.language-coverage-full');
                 const partial = poster.locator('.language-coverage-partial');
@@ -251,7 +250,7 @@ test.describe('tags', () => {
                 const partialLabel = await partial.getAttribute('aria-label');
                 const fullCount = fullLabel?.match(/full coverage across (\d+) eligible episodes/)?.[1];
                 const partialCount = partialLabel?.match(/partial coverage across (\d+) eligible episodes/)?.[1];
-                expect(fullCount).toBe('2');
+                expect(fullCount).toBe(String(coverage.series.EligibleEpisodeCount));
                 expect(partialCount).toBe(fullCount);
                 expect(await full.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('"✓"');
                 expect(await partial.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('"◐"');
@@ -271,6 +270,22 @@ test.describe('tags', () => {
                 });
                 expect(bounds).toEqual({ insideCard: true, noHorizontalOverflow: true });
                 await poster.screenshot({ path: testInfo.outputPath('issue-667-modern.png') });
+
+                await showRoute(page, `/details?id=${fixture.seasonOneId}`);
+                await waitForHash(page, fixture.seasonOneId);
+                const seasonPoster = page.locator(
+                    '#itemDetailPage:not(.hide) .detailImageContainer .card',
+                ).filter({ has: page.locator('.language-coverage-partial') }).first();
+                const seasonCount = String(coverage.seasonOne.EligibleEpisodeCount);
+                await expect(seasonPoster.locator('.language-coverage-full')).toHaveAttribute(
+                    'aria-label',
+                    new RegExp(`full coverage across ${seasonCount} eligible episodes`),
+                    { timeout: 60_000 },
+                );
+                await expect(seasonPoster.locator('.language-coverage-partial')).toHaveAttribute(
+                    'aria-label',
+                    new RegExp(`partial coverage across ${seasonCount} eligible episodes`),
+                );
                 assertNoRuntimeErrors(consoleErrors);
             } finally {
                 if (!page.isClosed()) {
