@@ -826,6 +826,12 @@ async function cycleTrackViaApi(
     const position = candidates.indexOf(current);
     const next = candidates[(position + 1) % candidates.length]; // unknown current (-1 lookup miss) → first candidate
     const commandName = kind === 'subtitle' ? 'SetSubtitleStreamIndex' : 'SetAudioStreamIndex';
+    // Pre-POST recheck against the CURRENT surface: the probe response itself
+    // can be stale (produced for the press item while the next episode landed
+    // in flight). When the current source carries a derivable item id that
+    // disagrees with the press item, the press is stale — swallow.
+    const itemBeforeCommand = currentTrackPressItemHint();
+    if (itemBeforeCommand && itemBeforeCommand !== pressItemId) return true;
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',

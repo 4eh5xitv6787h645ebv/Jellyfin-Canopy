@@ -437,6 +437,34 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).toHaveBeenCalledTimes(1); // surface-guarded DOM fallback instead
         });
 
+        it('a STALE probe response (still reporting the press item) cannot command after the next episode lands', async () => {
+            const mounted = mountItemVideo(ITEM_A);
+            const commands: string[] = [];
+            let resolveSessions!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            // Next episode lands while the probe is in flight — but the probe
+            // response was produced earlier and still reports the PRESS item.
+            mounted.setSrc(`http://jf.test/Videos/${ITEM_B}/stream?MediaSourceId=1`);
+            resolveSessions([sessionForItem(ITEM_A)]);
+            await flushPromises();
+
+            expect(commands).toHaveLength(0); // pre-POST surface recheck swallowed it
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
         it('a queued rapid press is swallowed when the NEXT EPISODE lands before it runs', async () => {
             const mounted = mountItemVideo(ITEM_A);
             const commands: Array<Record<string, unknown>> = [];
