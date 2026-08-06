@@ -753,6 +753,80 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).not.toHaveBeenCalled();
         });
 
+        it('BLOB rapid pair: a queued press survives OUR OWN command restart (probe resolves BEFORE the restart)', async () => {
+            const video = mountVideo();
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (v: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([sessionForItem(ITEM_A)]);
+                commands.push({ path, ...options });
+                return new Promise((r) => { resolveCommand = r; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!(); // press A: POST pending
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+            JC.cycleSubtitleTrack!(); // press B queued; its probe resolves while surface intact
+            await flushPromises();
+            // Press A's success restarts the stream: element replaced.
+            video.remove();
+            mountVideo();
+            resolveCommand({});
+            await flushPromises();
+            await flushPromises();
+
+            expect(commands).toHaveLength(2); // B advanced the cycle across our own restart
+            expect((commands[1].body as { Arguments: { Index: string } }).Arguments.Index).toBe('-1');
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('BLOB rapid pair: a queued press survives OUR OWN command restart (probe resolves AFTER the restart)', async () => {
+            const video = mountVideo();
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (v: unknown) => void;
+            const pendingProbes: Array<(v: unknown) => void> = [];
+            let probeCount = 0;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) {
+                    probeCount += 1;
+                    // Press A's two probes resolve immediately; press B's press-time
+                    // probe (3rd) and op probe (4th) stay pending until after the restart.
+                    if (probeCount <= 2) return Promise.resolve([sessionForItem(ITEM_A)]);
+                    return new Promise((r) => { pendingProbes.push(r); });
+                }
+                commands.push({ path, ...options });
+                return new Promise((r) => { resolveCommand = r; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!(); // press A: POST pending
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+            JC.cycleSubtitleTrack!(); // press B queued; its probe still pending
+            await Promise.resolve();
+            // Press A's success restarts the stream BEFORE B's probe resolves.
+            video.remove();
+            mountVideo();
+            resolveCommand({});
+            await flushPromises();
+            pendingProbes.forEach((r) => r([sessionForItem(ITEM_A)]));
+            await flushPromises();
+            await flushPromises();
+
+            expect(commands).toHaveLength(2); // own-restart knowledge rescues the press
+            expect((commands[1].body as { Arguments: { Index: string } }).Arguments.Index).toBe('-1');
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
         it('overlay: an item change behind a STABLE blob source (route id) also discards the sample', async () => {
             window.history.replaceState(null, '', `/web/index.html#/video?id=${ITEM_A}`);
             mountVideo(); // stable blob source and element throughout

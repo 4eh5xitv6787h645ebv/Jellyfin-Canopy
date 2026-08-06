@@ -799,6 +799,20 @@ interface TrackPressOwnership {
     /** Element/source snapshot at the keypress (id-less presses only). */
     readonly video: HTMLVideoElement | null;
     readonly src: string;
+    /** performance.now() at the keypress. */
+    readonly capturedAt: number;
+}
+
+/**
+ * True when OUR OWN track command for the same item completed at or after
+ * `since` — local, lag-immune knowledge that a surface restart was caused by
+ * that command rather than a next episode.
+ */
+function ownCommandExplainsRestart(itemIdNorm: string, since: number): boolean {
+    return (['subtitle', 'audio'] as const).some((k) => {
+        const last = _lastCommandedTrack[k];
+        return !!last && normalizeTrackItemId(last.itemId) === itemIdNorm && last.at >= since;
+    });
 }
 
 function pressSurfaceUnchanged(press: TrackPressOwnership): boolean {
@@ -871,12 +885,14 @@ async function cycleTrackViaApi(
     const itemBeforeCommand = currentTrackPressItemHint();
     if (itemBeforeCommand && itemBeforeCommand !== pressItemId) return true;
     // Id-less presses can't be checked by source id, and a lagging server can
-    // keep reporting the old item after a transition — no probe can PROVE the
-    // moved surface still plays the press item. The only sound rule is to
-    // swallow the press outright when an id-less surface moved. (Cost: a
-    // rapid blob-source press queued across our own command's restart is
-    // dropped; the user presses again.)
-    if (press.idless && !pressSurfaceUnchanged(press)) return true;
+    // keep reporting the old item after a transition — no probe can PROVE a
+    // moved surface still plays the press item. The single exception is a
+    // restart OUR OWN just-completed command caused (local knowledge via the
+    // command memory, immune to server lag); anything else swallows.
+    if (press.idless && !pressSurfaceUnchanged(press)
+        && !ownCommandExplainsRestart(pressItemId, press.capturedAt)) {
+        return true;
+    }
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
@@ -951,6 +967,7 @@ function cycleTrack(kind: TrackSheetKind): void {
         idless: !pressItemHint,
         video: pressVideo,
         src: pressVideo?.currentSrc || pressVideo?.src || '',
+        capturedAt: performance.now(),
         item: pressItemHint
             ? Promise.resolve(pressItemHint)
             : probeOwnSession(context)
@@ -959,8 +976,13 @@ function cycleTrack(kind: TrackSheetKind): void {
     };
     if (press.idless) {
         const raw = press.item;
-        (press as { item: Promise<string | null> }).item =
-            raw.then((id) => (pressSurfaceUnchanged(press) ? id : null));
+        (press as { item: Promise<string | null> }).item = raw.then((id) => {
+            if (pressSurfaceUnchanged(press)) return id;
+            // Our own command's same-item restart may land before the probe
+            // resolves — that restart never invalidates the press.
+            if (id && ownCommandExplainsRestart(id, press.capturedAt)) return id;
+            return null;
+        });
     }
     _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
