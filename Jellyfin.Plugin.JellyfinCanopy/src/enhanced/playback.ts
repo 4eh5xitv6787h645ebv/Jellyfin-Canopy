@@ -803,30 +803,6 @@ interface TrackPressOwnership {
     readonly capturedAt: number;
 }
 
-// A command's stream restart lands within moments of the POST completing;
-// beyond this window a surface change is presumed to be something else
-// (e.g. a natural episode transition) even when a command also just ran.
-const OWN_RESTART_EXPLANATION_MS = 2_500;
-
-/**
- * True when OUR OWN track command for the same item completed at or after
- * `since` and recently enough that its stream restart plausibly produced the
- * current surface — local, lag-immune knowledge that the restart was caused
- * by that command rather than a next episode. The tight window deliberately
- * bounds the residual double-transition ambiguity (command restart AND a
- * natural transition inside the same moments) that no probe could resolve.
- */
-function ownCommandExplainsRestart(itemIdNorm: string, since: number): boolean {
-    const now = performance.now();
-    return (['subtitle', 'audio'] as const).some((k) => {
-        const last = _lastCommandedTrack[k];
-        return !!last
-            && normalizeTrackItemId(last.itemId) === itemIdNorm
-            && last.at >= since
-            && now - last.at <= OWN_RESTART_EXPLANATION_MS;
-    });
-}
-
 function pressSurfaceUnchanged(press: TrackPressOwnership): boolean {
     const video = getVideo();
     return video === press.video && (video?.currentSrc || video?.src || '') === press.src;
@@ -898,13 +874,12 @@ async function cycleTrackViaApi(
     if (itemBeforeCommand && itemBeforeCommand !== pressItemId) return true;
     // Id-less presses can't be checked by source id, and a lagging server can
     // keep reporting the old item after a transition — no probe can PROVE a
-    // moved surface still plays the press item. The single exception is a
-    // restart OUR OWN just-completed command caused (local knowledge via the
-    // command memory, immune to server lag); anything else swallows.
-    if (press.idless && !pressSurfaceUnchanged(press)
-        && !ownCommandExplainsRestart(pressItemId, press.capturedAt)) {
-        return true;
-    }
+    // moved surface still plays the press item, and even our own command's
+    // restart cannot be told apart from a simultaneous episode change. The
+    // only sound rule: a moved id-less surface swallows the press. (Accepted
+    // P3 cost: a rapid blob-source press queued across our own command's
+    // restart drops; the user presses again.)
+    if (press.idless && !pressSurfaceUnchanged(press)) return true;
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
@@ -988,13 +963,8 @@ function cycleTrack(kind: TrackSheetKind): void {
     };
     if (press.idless) {
         const raw = press.item;
-        (press as { item: Promise<string | null> }).item = raw.then((id) => {
-            if (pressSurfaceUnchanged(press)) return id;
-            // Our own command's same-item restart may land before the probe
-            // resolves — that restart never invalidates the press.
-            if (id && ownCommandExplainsRestart(id, press.capturedAt)) return id;
-            return null;
-        });
+        (press as { item: Promise<string | null> }).item =
+            raw.then((id) => (pressSurfaceUnchanged(press) ? id : null));
     }
     _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
