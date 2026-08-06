@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45022,
+        "coveredLines": 45023,
         "totalLines": 54817
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 45012,
-        "maximumCoveredLines": 45022
+        "maximumCoveredLines": 45023
       },
       "tolerance": {
-        "missingCoveredLines": 10,
-        "rationale": "Issue #668 adds caller-scoped direct-BoxSet Movie language-coverage projection, bounded membership indexing and invalidation, response-only sidecars, and focused server regressions, including off-publication-lock batch preparation, one reverse-membership rebuild per batch, chronological same-ID rollback restoration, lifecycle-generation fencing, and O(1) pending-container handoff so scan-thread recording never waits behind batch drain/replay. Three clean full-suite runs on this exact 54,817-line source and 4,292-test scope passed every test: two local .NET 10.0.9 runs measured 45,012 and 45,018 covered lines, and the first hosted GitHub Actions run measured 45,022. The reviewed high-water is therefore 45,022/54,817 (82.131%) and the exact observed floor is 45,012/54,817 (82.113%); the ten-line timing-dependent instrumentation spread is 0.018 percentage points, far inside the 0.15pp policy bound. An intervening local 4,291/4,292 run was excluded rather than counted as clean evidence. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 11,
+        "rationale": "Issue #668 adds caller-scoped direct-BoxSet Movie language-coverage projection, bounded membership indexing and invalidation, response-only sidecars, and focused server regressions, including off-publication-lock batch preparation, one reverse-membership rebuild per batch, chronological same-ID rollback restoration, lifecycle-generation fencing, and O(1) pending-container handoff so scan-thread recording never waits behind batch drain/replay. Four clean full-suite runs on this exact 54,817-line source and 4,292-test scope passed every test: two local .NET 10.0.9 runs measured 45,012 and 45,018 covered lines, and two hosted GitHub Actions runs measured 45,022 and 45,023. The reviewed high-water is therefore 45,023/54,817 (82.133%) and the exact observed floor is 45,012/54,817 (82.113%); the eleven-line timing-dependent instrumentation spread is 0.020 percentage points, far inside the 0.15pp policy bound. An intervening local 4,291/4,292 run was excluded rather than counted as clean evidence. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
