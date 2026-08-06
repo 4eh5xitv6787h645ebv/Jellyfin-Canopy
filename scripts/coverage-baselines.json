@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45107,
+        "coveredLines": 45111,
         "totalLines": 54905
       },
       "observations": {
-        "cleanRuns": 4,
+        "cleanRuns": 5,
         "minimumCoveredLines": 45101,
-        "maximumCoveredLines": 45107
+        "maximumCoveredLines": 45111
       },
       "tolerance": {
-        "missingCoveredLines": 6,
-        "rationale": "Issue #669 adds the versioned rating-tag scope policy, canonical admin and per-user persistence, malformed-payload rejection, public configuration projection, and focused server contract/snapshot coverage. Four clean full-suite runs on this exact 54,905-line source and 4,300-test scope passed every test: two local .NET 10.0.9 runs measured 45,102 and 45,101 covered lines, and two hosted GitHub Actions runs measured 45,106 and 45,107. The reviewed high-water is therefore 45,107/54,905 (82.155%) and the exact observed floor is 45,101/54,905 (82.144%); the six-line timing-dependent instrumentation spread is 0.011 percentage points, far inside the 0.15pp policy bound and improves the prior reviewed ratio. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 10,
+        "rationale": "Issue #669 adds the versioned rating-tag scope policy, canonical admin and per-user persistence, malformed-payload rejection, public configuration projection, and focused server contract/snapshot coverage. Five clean full-suite runs on this exact 54,905-line source and 4,300-test scope passed every test: two local .NET 10.0.9 runs measured 45,102 and 45,101 covered lines, and three hosted GitHub Actions runs measured 45,106, 45,107, and 45,111. The reviewed high-water is therefore 45,111/54,905 (82.162%) and the exact observed floor is 45,101/54,905 (82.144%); the ten-line timing-dependent instrumentation spread is 0.018 percentage points, far inside the 0.15pp policy bound and improves the prior reviewed ratio. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
