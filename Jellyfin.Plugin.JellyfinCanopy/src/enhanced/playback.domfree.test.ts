@@ -5,10 +5,9 @@ import { JC } from '../globals';
 import { installPlayback } from './playback';
 
 async function flushPromises(): Promise<void> {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Enough microtask rounds for the press-time probe, the per-kind chain
+    // hop, the op probe (Promise.all), the POST, and publication.
+    for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
 function mountVideo(): HTMLVideoElement {
@@ -240,8 +239,8 @@ describe('DOM-free player shortcuts', () => {
 
         it('an identity change while the probe is in flight swallows the press entirely', async () => {
             mountVideo();
-            let resolveSessions!: (v: unknown) => void;
-            const jf = vi.fn((() => new Promise((r) => { resolveSessions = r; })));
+            const resolvers: Array<(v: unknown) => void> = [];
+            const jf = vi.fn((() => new Promise((r) => { resolvers.push(r); })));
             JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
             const trigger = document.createElement('button');
             trigger.className = 'btnAudio';
@@ -249,14 +248,14 @@ describe('DOM-free player shortcuts', () => {
             document.body.appendChild(trigger);
 
             JC.cycleAudioTrack!();
-            await Promise.resolve(); // let the serialized press start its probe
+            await Promise.resolve(); // let the press-time and op probes start
             await Promise.resolve();
-            expect(jf).toHaveBeenCalledTimes(1); // probe in flight
+            expect(jf).toHaveBeenCalledTimes(2); // press-time probe + op probe in flight
             JC.identity.transition('df-server-b', 'df-user-b', 'domfree-test');
-            resolveSessions([ownSession()]);
+            resolvers.forEach((resolve) => resolve([ownSession()]));
             await flushPromises();
 
-            expect(jf).toHaveBeenCalledTimes(1); // probe only — no command, no fallback
+            expect(jf).toHaveBeenCalledTimes(2); // probes only — no command, no fallback
             expect(triggerClick).not.toHaveBeenCalled();
         });
     });
@@ -353,6 +352,61 @@ describe('DOM-free player shortcuts', () => {
             expect(commands).toHaveLength(2); // B continued the cycle
             expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
             expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('BLOB source: a queued press is swallowed when the session item changes before it runs', async () => {
+            mountVideo(); // blob source — item id only derivable via the press-time probe
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (v: unknown) => void;
+            let currentItem = ITEM_A;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([sessionForItem(currentItem)]);
+                commands.push({ path, ...options });
+                return new Promise((r) => { resolveCommand = r; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!(); // press A: POST pending
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+            JC.cycleSubtitleTrack!(); // press B: press-time probe fires NOW (item A)
+            await Promise.resolve();
+            await Promise.resolve();
+            currentItem = ITEM_B; // next episode lands while B waits
+            resolveCommand({});
+            await flushPromises();
+            await flushPromises();
+
+            expect(commands).toHaveLength(1); // B swallowed via press-time probe identity
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('BLOB source: a rejected POST after an item transition swallows instead of menu fallback', async () => {
+            mountVideo();
+            let rejectCommand!: (e: unknown) => void;
+            let currentItem = ITEM_A;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([sessionForItem(currentItem)]);
+                return new Promise((_r, reject) => { rejectCommand = reject; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            currentItem = ITEM_B; // item moved, then the command fails
+            rejectCommand(new Error('504'));
+            await flushPromises();
+            await flushPromises();
+
+            expect(triggerClick).not.toHaveBeenCalled(); // fresh probe proves the moved item
         });
 
         it('a queued rapid press is swallowed when the NEXT EPISODE lands before it runs', async () => {

@@ -772,7 +772,7 @@ async function cycleTrackViaApi(
     kind: TrackSheetKind,
     context: IdentityContext,
     expectedGeneration: number,
-    pressItemHint: string | null,
+    pressItem: Promise<string | null>,
 ): Promise<boolean> {
     const api = JC.core?.api;
     if (!api || typeof api.jf !== 'function') return false;
@@ -784,7 +784,7 @@ async function cycleTrackViaApi(
     const baselineStale = (): boolean =>
         !isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true;
     if (baselineStale()) return true;
-    const session = await probeOwnSession(context);
+    const [pressItemId, session] = await Promise.all([pressItem, probeOwnSession(context)]);
     if (baselineStale()) return true; // stale press — swallow
     const sessionId = session?.Id;
     const itemId = session?.NowPlayingItem?.Id;
@@ -793,7 +793,7 @@ async function cycleTrackViaApi(
     // the keypress. When both sides are determinable and disagree (next
     // episode landed while this press was queued or probing), swallow.
     const sessionItem = normalizeTrackItemId(itemId);
-    if (pressItemHint && sessionItem && pressItemHint !== sessionItem) return true;
+    if (pressItemId && sessionItem && pressItemId !== sessionItem) return true;
 
     const type = kind === 'subtitle' ? 'Subtitle' : 'Audio';
     const streams = (session.NowPlayingItem?.MediaStreams ?? [])
@@ -830,10 +830,13 @@ async function cycleTrackViaApi(
     } catch (err) {
         // On a rejected command, the DOM fallback is only valid while the
         // press still belongs to the current playback surface: identity/
-        // generation/route plus item identity (when derivable). A moved item
-        // swallows the press instead of driving the menu on the wrong item.
-        const itemNow = currentTrackPressItemHint();
-        if (baselineStale() || (pressItemHint && itemNow && itemNow !== pressItemHint)) return true;
+        // generation/route plus item identity. For id-less sources the fresh
+        // owner comes from another session probe — a moved item swallows the
+        // press instead of driving the menu on the wrong item.
+        if (baselineStale()) return true;
+        const itemNow = currentTrackPressItemHint()
+            ?? normalizeTrackItemId((await probeOwnSession(context))?.NowPlayingItem?.Id);
+        if (baselineStale() || (pressItemId && itemNow && itemNow !== pressItemId)) return true;
         console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }
@@ -872,12 +875,21 @@ function cycleTrack(kind: TrackSheetKind): void {
         return;
     }
     const expectedGeneration = playbackGeneration;
-    const pressItemHint = currentTrackPressItemHint(); // at the keypress, before queueing
+    // Press-time ownership, captured BEFORE queueing. Id-bearing sources
+    // resolve synchronously; id-less (hls.js blob) sources fire an
+    // authoritative own-session probe at the keypress itself, so a press
+    // queued behind a pending command still owns the item the user saw.
+    const pressItemHint = currentTrackPressItemHint();
+    const pressItem: Promise<string | null> = pressItemHint
+        ? Promise.resolve(pressItemHint)
+        : probeOwnSession(context)
+            .then((s) => normalizeTrackItemId(s?.NowPlayingItem?.Id))
+            .catch(() => null);
     _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
         let handled = false;
         try {
-            handled = await cycleTrackViaApi(kind, context, expectedGeneration, pressItemHint);
+            handled = await cycleTrackViaApi(kind, context, expectedGeneration, pressItem);
         } catch (err) {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
         }
