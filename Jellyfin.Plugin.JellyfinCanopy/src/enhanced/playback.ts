@@ -786,14 +786,19 @@ async function cycleTrackViaApi(
     if (baselineStale()) return true;
     const [pressItemId, session] = await Promise.all([pressItem, probeOwnSession(context)]);
     if (baselineStale()) return true; // stale press — swallow
+    // Unproven press ownership never commands: every press resolves an item
+    // id (source-parsed or press-time probe), so a null here means the
+    // ownership capture failed. The DOM sheet fallback is safe — it operates
+    // on the visible current surface and stays behind the outer guards.
+    if (!pressItemId) return false;
     const sessionId = session?.Id;
     const itemId = session?.NowPlayingItem?.Id;
     if (!session || !sessionId || !itemId) return false;
     // Item-identity gate: the press belongs to the item that was playing at
-    // the keypress. When both sides are determinable and disagree (next
-    // episode landed while this press was queued or probing), swallow.
+    // the keypress. If the session disagrees (next episode landed while this
+    // press was queued or probing), swallow.
     const sessionItem = normalizeTrackItemId(itemId);
-    if (pressItemId && sessionItem && pressItemId !== sessionItem) return true;
+    if (sessionItem && pressItemId !== sessionItem) return true;
 
     const type = kind === 'subtitle' ? 'Subtitle' : 'Audio';
     const streams = (session.NowPlayingItem?.MediaStreams ?? [])

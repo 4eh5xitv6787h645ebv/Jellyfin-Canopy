@@ -409,6 +409,34 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).not.toHaveBeenCalled(); // fresh probe proves the moved item
         });
 
+        it('BLOB source: an unresolved press-time ownership probe falls back to the DOM path, never commands', async () => {
+            mountVideo(); // blob source
+            const commands: string[] = [];
+            let sessionCalls = 0;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCalls += 1;
+                    // Press-time probe fails; the op probe succeeds.
+                    if (sessionCalls === 1) return Promise.reject(new Error('probe down'));
+                    return Promise.resolve([sessionForItem(ITEM_A)]);
+                }
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            trigger.setAttribute('title', 'Audio');
+            const triggerClick = vi.spyOn(trigger, 'click').mockImplementation(() => undefined);
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await flushPromises();
+
+            expect(commands).toHaveLength(0); // unproven ownership never commands
+            expect(triggerClick).toHaveBeenCalledTimes(1); // surface-guarded DOM fallback instead
+        });
+
         it('a queued rapid press is swallowed when the NEXT EPISODE lands before it runs', async () => {
             const mounted = mountItemVideo(ITEM_A);
             const commands: Array<Record<string, unknown>> = [];
