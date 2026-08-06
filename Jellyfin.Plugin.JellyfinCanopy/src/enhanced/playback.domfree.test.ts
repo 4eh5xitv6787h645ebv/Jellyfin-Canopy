@@ -465,6 +465,34 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).not.toHaveBeenCalled();
         });
 
+        it('BLOB source: a failed command with an UNPROVABLE ownership recheck swallows (no fallback)', async () => {
+            mountVideo(); // blob source
+            let sessionCalls = 0;
+            let rejectCommand!: (e: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCalls += 1;
+                    // Press + op probes succeed; the post-failure recheck probe fails.
+                    if (sessionCalls <= 2) return Promise.resolve([sessionForItem(ITEM_A)]);
+                    return Promise.reject(new Error('probe down'));
+                }
+                return new Promise((_r, reject) => { rejectCommand = reject; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            rejectCommand(new Error('503'));
+            await flushPromises();
+            await flushPromises();
+
+            expect(triggerClick).not.toHaveBeenCalled(); // unprovable ownership → swallow
+        });
+
         it('a queued rapid press is swallowed when the NEXT EPISODE lands before it runs', async () => {
             const mounted = mountItemVideo(ITEM_A);
             const commands: Array<Record<string, unknown>> = [];

@@ -839,15 +839,15 @@ async function cycleTrackViaApi(
             body: { Name: commandName, Arguments: { Index: String(next) } }
         });
     } catch (err) {
-        // On a rejected command, the DOM fallback is only valid while the
-        // press still belongs to the current playback surface: identity/
-        // generation/route plus item identity. For id-less sources the fresh
-        // owner comes from another session probe — a moved item swallows the
-        // press instead of driving the menu on the wrong item.
+        // On a rejected command, the DOM fallback requires PROVEN ownership:
+        // the press must still belong to the current item (identity/
+        // generation/route plus a positively matching item id — for id-less
+        // sources via a fresh session probe). Unprovable or moved ownership
+        // swallows the press instead of driving the menu on the wrong item.
         if (baselineStale()) return true;
         const itemNow = currentTrackPressItemHint()
             ?? normalizeTrackItemId((await probeOwnSession(context))?.NowPlayingItem?.Id);
-        if (baselineStale() || (pressItemId && itemNow && itemNow !== pressItemId)) return true;
+        if (baselineStale() || itemNow !== pressItemId) return true;
         console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }
