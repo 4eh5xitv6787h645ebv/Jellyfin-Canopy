@@ -30,18 +30,23 @@ const containerClass = 'language-overlay-container';
 const flagClass = 'language-flag';
 const neutralClass = 'language-code-badge';
 const presentationClass = 'language-tag-presentation';
-const LANGUAGE_CACHE_SCHEMA_VERSION = 4;
+// v5 retires untyped v4 snapshots. The hot-cache path runs before item type is
+// known, so a legacy BoxSet leaf payload could otherwise suppress its new
+// response-only member projection.
+const LANGUAGE_CACHE_SCHEMA_VERSION = 5;
 
 type LanguageCoverageState = 'full' | 'partial' | 'unknown';
 
 interface LanguageCoverageProjection {
-    eligibleEpisodeCount: number | null;
-    observedEpisodeCount: number | null;
+    eligibleMemberCount: number | null;
+    observedMemberCount: number | null;
     complete: boolean;
     full: MediaLanguageIdentity[];
     partial: MediaLanguageIdentity[];
     unknown: MediaLanguageIdentity[];
     truncated: boolean;
+    omittedLanguageCount: number | null;
+    memberNoun: 'episode' | 'member';
 }
 
 /** Versioned browser-cache shape. Pre-version caches lost regional subtags. */
@@ -73,7 +78,7 @@ export function readLanguageCachePayload(value: unknown): LanguageCachePayload |
     const validated = record.languages.map(validateMediaLanguageIdentity);
     if (validated.some((language) => language === null)) return null;
     const languages = resolveMediaLanguageIdentities(validated);
-    // Schema-v3 payloads are already canonical and deduplicated. Any dropped,
+    // Current payloads are already canonical and deduplicated. Any dropped,
     // duplicated, forged or malformed member invalidates the whole snapshot.
     if (languages.length === 0 || languages.length !== record.languages.length) return null;
     if (JSON.stringify(languages) !== JSON.stringify(validated)) return null;
@@ -178,8 +183,11 @@ function safeCount(value: unknown): number | null {
     return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
 }
 
-/** Validate the server-owned, caller-scoped coverage sidecar fail closed. */
-function readLanguageCoverage(value: unknown): LanguageCoverageProjection | null {
+/** Validate one server-owned, caller-scoped coverage projection fail closed. */
+function readLanguageCoverage(
+    value: unknown,
+    memberNoun: 'episode' | 'member',
+): LanguageCoverageProjection | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     if (typeof record.Complete !== 'boolean'
@@ -187,16 +195,29 @@ function readLanguageCoverage(value: unknown): LanguageCoverageProjection | null
         || !Array.isArray(record.FullLanguages)
         || !Array.isArray(record.PartialLanguages)
         || !Array.isArray(record.UnknownLanguages)) return null;
-    const eligibleEpisodeCount = record.EligibleEpisodeCount === null
+    const eligibleCountField = memberNoun === 'episode' ? 'EligibleEpisodeCount' : 'EligibleMemberCount';
+    const observedCountField = memberNoun === 'episode' ? 'ObservedEpisodeCount' : 'ObservedMemberCount';
+    const eligibleMemberCount = record[eligibleCountField] === null
         ? null
-        : safeCount(record.EligibleEpisodeCount);
-    const observedEpisodeCount = record.ObservedEpisodeCount === null
+        : safeCount(record[eligibleCountField]);
+    const observedMemberCount = record[observedCountField] === null
         ? null
-        : safeCount(record.ObservedEpisodeCount);
-    if ((record.EligibleEpisodeCount !== null && eligibleEpisodeCount === null)
-        || (record.ObservedEpisodeCount !== null && observedEpisodeCount === null)
-        || (eligibleEpisodeCount !== null && observedEpisodeCount !== null
-            && observedEpisodeCount > eligibleEpisodeCount)) return null;
+        : safeCount(record[observedCountField]);
+    const omittedLanguageCount = memberNoun === 'member'
+        ? (record.OmittedLanguageCount === null ? null : safeCount(record.OmittedLanguageCount))
+        : null;
+    if ((record[eligibleCountField] !== null && eligibleMemberCount === null)
+        || (record[observedCountField] !== null && observedMemberCount === null)
+        || (eligibleMemberCount !== null && observedMemberCount !== null
+            && observedMemberCount > eligibleMemberCount)
+        || (memberNoun === 'member' && record.OmittedLanguageCount !== null
+            && omittedLanguageCount === null)
+        || (memberNoun === 'member' && omittedLanguageCount === null
+            && (record.Complete || eligibleMemberCount !== null || observedMemberCount !== null
+                || record.FullLanguages.length > 0 || record.PartialLanguages.length > 0
+                || record.UnknownLanguages.length > 0))
+        || (memberNoun === 'member' && !record.Truncated
+            && omittedLanguageCount !== null && omittedLanguageCount !== 0)) return null;
 
     const rawIdentityCount = record.FullLanguages.length
         + record.PartialLanguages.length
@@ -230,16 +251,18 @@ function readLanguageCoverage(value: unknown): LanguageCoverageProjection | null
     const full = byTier('full');
     const partial = byTier('partial');
     const unknown = byTier('unknown');
-    if (record.Complete && (eligibleEpisodeCount === null || observedEpisodeCount !== eligibleEpisodeCount)) return null;
+    if (record.Complete && (eligibleMemberCount === null || observedMemberCount !== eligibleMemberCount)) return null;
     if ((record.Complete && unknown.length > 0) || (!record.Complete && full.length > 0)) return null;
     return {
-        eligibleEpisodeCount,
-        observedEpisodeCount,
+        eligibleMemberCount,
+        observedMemberCount,
         complete: record.Complete,
         full,
         partial,
         unknown,
         truncated: record.Truncated,
+        omittedLanguageCount,
+        memberNoun,
     };
 }
 
@@ -273,8 +296,10 @@ function insertLanguageCoverage(
         const tag = document.createElement('span');
         tag.className = `${presentationClass} language-coverage-${state}`;
         tag.setAttribute('role', 'img');
-        const count = coverage.eligibleEpisodeCount;
-        const countLabel = count === null ? '' : ` across ${count} eligible episode${count === 1 ? '' : 's'}`;
+        const count = coverage.eligibleMemberCount;
+        const countLabel = count === null
+            ? ''
+            : ` across ${count} eligible ${coverage.memberNoun}${count === 1 ? '' : 's'}`;
         tag.setAttribute('aria-label', `${presentation.accessibleLabel} — ${state} coverage${countLabel}`);
         tag.dataset.langTags = JSON.stringify(presentation.canonicalTags);
         tag.dataset.coverage = state;
@@ -300,19 +325,24 @@ function insertLanguageCoverage(
         state.className = `${presentationClass} ${neutralClass} language-coverage-state`;
         state.setAttribute('role', 'img');
         state.dataset.region = '';
-        if (coverage.complete && coverage.eligibleEpisodeCount === 0) {
+        if (coverage.complete && coverage.eligibleMemberCount === 0) {
             state.textContent = '0';
-            state.setAttribute('aria-label', 'No eligible episodes for language coverage');
+            state.setAttribute('aria-label', `No eligible ${coverage.memberNoun}s for language coverage`);
         } else if (coverage.complete) {
             state.textContent = '—';
-            const count = coverage.eligibleEpisodeCount;
+            const count = coverage.eligibleMemberCount;
             state.setAttribute(
                 'aria-label',
-                `No recognized audio languages across ${count} eligible episode${count === 1 ? '' : 's'}`,
+                `No recognized audio languages across ${count} eligible ${coverage.memberNoun}${count === 1 ? '' : 's'}`,
             );
         } else {
             state.textContent = '?';
-            state.setAttribute('aria-label', 'Language coverage incomplete');
+            state.setAttribute(
+                'aria-label',
+                coverage.memberNoun === 'member'
+                    ? 'Collection language coverage incomplete'
+                    : 'Language coverage incomplete',
+            );
         }
         wrap.appendChild(state);
     }
@@ -427,13 +457,28 @@ const spec: TagSpec = {
             if (el.closest('.jc-hidden')) return;
 
             const itemId = item.Id;
-            const isContainer = item.Type === 'Series' || item.Type === 'Season';
-            if (isContainer && item.LanguageCoverage !== undefined) {
-                const coverage = readLanguageCoverage(item.LanguageCoverage);
+            const isEpisodeContainer = item.Type === 'Series' || item.Type === 'Season';
+            const isCollection = item.Type === 'BoxSet';
+            const isContainer = isEpisodeContainer || isCollection;
+            const coverageValue = isCollection
+                ? item.CollectionLanguageCoverage
+                : item.LanguageCoverage;
+            if (isContainer && coverageValue !== undefined) {
+                const coverage = readLanguageCoverage(
+                    coverageValue,
+                    isCollection ? 'member' : 'episode',
+                );
                 // Coverage is policy-scoped, so never retain it in browser storage.
                 ctx.hot?.delete(itemId);
                 ctx.setPersistent(itemId, undefined);
                 if (coverage) insertLanguageCoverage(ctx, el, coverage);
+                return;
+            }
+            if (isCollection) {
+                // A legacy leaf cache entry must never become representative
+                // collection evidence after a server downgrade or upgrade.
+                ctx.hot?.delete(itemId);
+                ctx.setPersistent(itemId, undefined);
                 return;
             }
             // Check hot cache first
@@ -449,7 +494,7 @@ const spec: TagSpec = {
             }
 
             let sourceItem = item;
-            if (isContainer) {
+            if (isEpisodeContainer) {
                 if (extras.firstEpisode) {
                     sourceItem = extras.firstEpisode;
                 } else {
@@ -503,11 +548,20 @@ const spec: TagSpec = {
         renderFromServerCache(ctx, el, entry: any) {
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
-            if (entry.LanguageCoverage !== undefined) {
-                const coverage = readLanguageCoverage(entry.LanguageCoverage);
+            const isCollection = entry.Type === 'BoxSet'
+                || entry.CollectionLanguageCoverage !== undefined;
+            const coverageValue = isCollection
+                ? entry.CollectionLanguageCoverage
+                : entry.LanguageCoverage;
+            if (coverageValue !== undefined) {
+                const coverage = readLanguageCoverage(
+                    coverageValue,
+                    isCollection ? 'member' : 'episode',
+                );
                 if (coverage) insertLanguageCoverage(ctx, el, coverage);
                 return;
             }
+            if (isCollection) return;
             const codes = entry.AudioLanguages;
             if (!codes || codes.length === 0) return;
             insertLanguageTags(ctx, el, codes);

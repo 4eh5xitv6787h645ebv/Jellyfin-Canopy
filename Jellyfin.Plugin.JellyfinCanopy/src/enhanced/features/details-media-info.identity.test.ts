@@ -13,9 +13,9 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 }
 
 async function flushPromises(): Promise<void> {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Collection details add one response-only /tag-data hop after the native
+    // item lookup; drain both promise chains deterministically.
+    for (let index = 0; index < 8; index++) await Promise.resolve();
 }
 
 function mountContainer(): HTMLElement {
@@ -259,5 +259,157 @@ describe('details media-info identity lifecycle', () => {
 
         resetDetailsMediaInfo();
         expect(document.getElementById('jc-audio-languages-scroll')).toBeNull();
+    });
+
+    it('renders collection coverage with member labels, deterministic states, and no result cache', async () => {
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'collection-details',
+            Type: 'BoxSet',
+        });
+        const plugin = vi.fn().mockResolvedValue({
+            Items: [{
+                Id: 'collection-details',
+                Type: 'BoxSet',
+                CollectionLanguageCoverage: {
+                    EligibleMemberCount: 5,
+                    ObservedMemberCount: 4,
+                    Complete: false,
+                    FullLanguages: [],
+                    PartialLanguages: ['jpn', 'spa'],
+                    UnknownLanguages: ['eng', 'fra'],
+                    Truncated: true,
+                    OmittedLanguageCount: 1,
+                },
+            }],
+        });
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+
+        const first = mountContainer();
+        displayAudioLanguages('collection-details', first);
+        await flushPromises();
+
+        const rendered = Array.from(first.querySelectorAll<HTMLElement>('.audio-language-item'));
+        expect(rendered).toHaveLength(3);
+        expect(rendered.map((entry) => entry.dataset.coverage)).toEqual([
+            'partial', 'partial', 'unknown',
+        ]);
+        expect(rendered.map((entry) => entry.getAttribute('aria-label'))).toEqual([
+            expect.stringContaining('partial coverage across 5 eligible members'),
+            expect.stringContaining('partial coverage across 5 eligible members'),
+            expect.stringContaining('unknown coverage across 5 eligible members'),
+        ]);
+
+        const second = mountContainer();
+        displayAudioLanguages('collection-details', second);
+        await flushPromises();
+        expect(getItem).toHaveBeenCalledTimes(1);
+        expect(plugin).toHaveBeenCalledTimes(2);
+        expect(plugin).toHaveBeenLastCalledWith('/tag-data/detailsusera', {
+            method: 'POST',
+            body: ['collection-details'],
+            skipCache: true,
+            skipRetry: true,
+        });
+    });
+
+    it.each([
+        [
+            'empty',
+            {
+                EligibleMemberCount: 0, ObservedMemberCount: 0, Complete: true,
+                FullLanguages: [], PartialLanguages: [], UnknownLanguages: [],
+                Truncated: false, OmittedLanguageCount: 0,
+            },
+            '0',
+            'No eligible members for language coverage',
+        ],
+        [
+            'known-none',
+            {
+                EligibleMemberCount: 2, ObservedMemberCount: 2, Complete: true,
+                FullLanguages: [], PartialLanguages: [], UnknownLanguages: [],
+                Truncated: false, OmittedLanguageCount: 0,
+            },
+            '—',
+            'No recognized audio languages across 2 eligible members',
+        ],
+        [
+            'incomplete',
+            {
+                EligibleMemberCount: null, ObservedMemberCount: null, Complete: false,
+                FullLanguages: [], PartialLanguages: [], UnknownLanguages: [],
+                Truncated: true, OmittedLanguageCount: null,
+            },
+            '?',
+            'Collection language coverage incomplete',
+        ],
+    ])('renders the explicit collection %s state', async (_name, coverage, text, label) => {
+        const id = `collection-${_name}`;
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Id: id, Type: 'BoxSet' });
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({
+                Items: [{ Id: id, Type: 'BoxSet', CollectionLanguageCoverage: coverage }],
+            }),
+        } as unknown as NonNullable<typeof JC.core.api>;
+        const container = mountContainer();
+
+        displayAudioLanguages(id, container);
+        await flushPromises();
+
+        const state = container.querySelector<HTMLElement>('.audio-language-coverage-state');
+        expect(state?.textContent).toBe(text);
+        expect(state?.getAttribute('aria-label')).toBe(label);
+    });
+
+    it('fails closed when an old server returns a BoxSet without collection coverage', async () => {
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'legacy-collection',
+            Type: 'BoxSet',
+            MediaSources: [{ MediaStreams: [{ Type: 'Audio', Language: 'eng' }] }],
+        });
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({
+                Items: [{ Id: 'legacy-collection', Type: 'BoxSet' }],
+            }),
+        } as unknown as NonNullable<typeof JC.core.api>;
+        const container = mountContainer();
+
+        displayAudioLanguages('legacy-collection', container);
+        await flushPromises();
+
+        expect(container.querySelector('.audio-language-item')).toBeNull();
+        expect(container.textContent).toContain('-');
+    });
+
+    it('rejects withheld collection counts that still carry language evidence', async () => {
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'contradictory-collection',
+            Type: 'BoxSet',
+        });
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({
+                Items: [{
+                    Id: 'contradictory-collection',
+                    Type: 'BoxSet',
+                    CollectionLanguageCoverage: {
+                        EligibleMemberCount: null,
+                        ObservedMemberCount: null,
+                        Complete: false,
+                        FullLanguages: [],
+                        PartialLanguages: [],
+                        UnknownLanguages: ['eng'],
+                        Truncated: true,
+                        OmittedLanguageCount: null,
+                    },
+                }],
+            }),
+        } as unknown as NonNullable<typeof JC.core.api>;
+        const container = mountContainer();
+
+        displayAudioLanguages('contradictory-collection', container);
+        await flushPromises();
+
+        expect(container.querySelector('.audio-language-item')).toBeNull();
+        expect(container.textContent).toContain('-');
     });
 });

@@ -16,6 +16,7 @@ import { addCSS, clearItemCache, getItemCached } from './helpers';
 import { onBodyMutation } from '../core/dom-observer';
 import { onNavigate } from '../core/navigation';
 import { createStableMethodFacade } from '../core/feature-loader';
+import { getVisibleDetailsPage } from '../core/details-view';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -118,14 +119,26 @@ export interface ContentApplyResult {
     changedIds: string[];
 }
 
-/** Attach one response-scoped language sidecar without mutating caller data. */
+/** Attach response-scoped language sidecars without mutating caller data. */
 function projectResponseEntry(response: any, id: string, entry: any): any {
-    const coverage = response?.languageCoverage && typeof response.languageCoverage === 'object'
+    const episodeCoverage = response?.languageCoverage && typeof response.languageCoverage === 'object'
         ? response.languageCoverage[id]
         : undefined;
-    return coverage && typeof coverage === 'object'
-        ? { ...entry, LanguageCoverage: coverage }
-        : entry;
+    const collectionCoverage = response?.collectionLanguageCoverage
+        && typeof response.collectionLanguageCoverage === 'object'
+        ? response.collectionLanguageCoverage[id]
+        : undefined;
+    if ((!episodeCoverage || typeof episodeCoverage !== 'object')
+        && (!collectionCoverage || typeof collectionCoverage !== 'object')) return entry;
+    return {
+        ...entry,
+        ...(episodeCoverage && typeof episodeCoverage === 'object'
+            ? { LanguageCoverage: episodeCoverage }
+            : {}),
+        ...(collectionCoverage && typeof collectionCoverage === 'object'
+            ? { CollectionLanguageCoverage: collectionCoverage }
+            : {}),
+    };
 }
 
 /**
@@ -1650,7 +1663,7 @@ function runScan(): void {
  * @param el - Card image container element.
  * @returns The item ID or null if not found.
  */
-function getItemId(el: HTMLElement): string | null {
+export function getItemId(el: HTMLElement): string | null {
     // From background image URL
     if (el.style?.backgroundImage) {
         const match = el.style.backgroundImage.match(/Items\/([a-f0-9]{32})\//i);
@@ -1659,7 +1672,20 @@ function getItemId(el: HTMLElement): string | null {
     // From parent data-id or data-itemid attribute (normalize to 32-char lowercase hex)
     const parent = el.closest('[data-id]') || el.closest('[data-itemid]');
     const attrId = parent?.getAttribute('data-id') || parent?.getAttribute('data-itemid');
-    return attrId ? attrId.replace(/-/g, '').toLowerCase() : null;
+    if (attrId) return attrId.replace(/-/g, '').toLowerCase();
+
+    // Jellyfin renders an image-less details poster without data-id, data-itemid,
+    // or an /Items/{id}/ image URL. Bind only the visible, route-owned details
+    // view so a cached hidden sibling can never inherit the incoming route's id.
+    const details = getVisibleDetailsPage();
+    if (details
+        && details.page.contains(el)
+        && el.closest('.detailImageContainer')) {
+        const routeId = normalizeProjectionKey(details.itemId);
+        if (routeId && /^[a-f0-9]{32}$/.test(routeId)) return routeId;
+    }
+
+    return null;
 }
 
 /**

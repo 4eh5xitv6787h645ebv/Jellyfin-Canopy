@@ -8,9 +8,9 @@ import {
 } from './details-page';
 
 async function flushPromises(): Promise<void> {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // The BoxSet path dispatches through native item lookup and then the
+    // response-only collection coverage request.
+    for (let index = 0; index < 8; index++) await Promise.resolve();
 }
 
 function mountDetailsPage(itemId: string): HTMLElement {
@@ -58,6 +58,7 @@ describe('details-page identity dispatcher', () => {
         JC.identity.transition('page-server-a', 'page-user-a', 'details-page-test');
         JC.currentSettings = {};
         JC.pluginConfig = {};
+        JC.t = (key: string) => key;
         JC.hiddenContent = undefined;
         JC.spoilerGuard = undefined;
     });
@@ -71,6 +72,7 @@ describe('details-page identity dispatcher', () => {
         disposeInstall?.();
         disposeInstall = undefined;
         resetDetailsPage();
+        JC.core.api = undefined;
         vi.restoreAllMocks();
         vi.clearAllTimers();
         vi.useRealTimers();
@@ -257,5 +259,47 @@ describe('details-page identity dispatcher', () => {
         publishSpoilerReady();
         await flushPromises();
         expect(addSpoilerBlurButton).not.toHaveBeenCalled();
+    });
+
+    it('dispatches collection language coverage into the BoxSet details row', async () => {
+        mountDetailsPage('collection-dispatch');
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'collection-dispatch',
+            Type: 'BoxSet',
+        });
+        const plugin = vi.fn().mockResolvedValue({
+            Items: [{
+                Id: 'collection-dispatch',
+                Type: 'BoxSet',
+                CollectionLanguageCoverage: {
+                    EligibleMemberCount: 0,
+                    ObservedMemberCount: 0,
+                    Complete: true,
+                    FullLanguages: [],
+                    PartialLanguages: [],
+                    UnknownLanguages: [],
+                    Truncated: false,
+                    OmittedLanguageCount: 0,
+                },
+            }],
+        });
+        JC.core.api = { plugin } as unknown as NonNullable<typeof JC.core.api>;
+        JC.currentSettings = { showAudioLanguages: true };
+
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+
+        const state = document.querySelector<HTMLElement>('.audio-language-coverage-state');
+        expect(state?.textContent).toBe('0');
+        expect(state?.getAttribute('aria-label')).toBe(
+            'No eligible members for language coverage',
+        );
+        expect(plugin).toHaveBeenCalledWith('/tag-data/pageusera', expect.objectContaining({
+            method: 'POST',
+            body: ['collection-dispatch'],
+        }));
     });
 });

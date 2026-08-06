@@ -15,6 +15,7 @@ import {
     projectionOnlyContentRequiresReset,
     decideProjectionResponse,
     extractUserDataChangedIds,
+    getItemId,
     isListViewRow,
     normalizeProjectionKey,
     readProjectionIdentity,
@@ -358,6 +359,43 @@ describe('isListViewRow — the single list-view gate (issue 34)', () => {
 
     it('catches the legacy .listItemImage.cardImageContainer no-image variant', () => {
         expect(isListViewRow(legacyNoImageRow())).toBe(true);
+    });
+});
+
+describe('details poster identity', () => {
+    it('binds an image-less poster only to the visible route-owned details view', () => {
+        const previousUrl = window.location.href;
+        const itemId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        const otherId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        document.body.innerHTML = `
+            <div id="itemDetailPage" class="hide">
+                <div class="detailImageContainer">
+                    <div class="cardImageContainer" data-test="hidden"></div>
+                </div>
+            </div>
+            <div id="itemDetailPage">
+                <div class="detailImageContainer">
+                    <div class="cardImageContainer" data-test="visible"></div>
+                </div>
+            </div>`;
+        const hidden = document.querySelector<HTMLElement>('[data-test="hidden"]')!;
+        const visible = document.querySelector<HTMLElement>('[data-test="visible"]')!;
+
+        try {
+            window.history.replaceState({}, '', `/#/details?id=${itemId}`);
+            visible.closest('[id="itemDetailPage"]')!
+                .dispatchEvent(new CustomEvent('viewshow', { bubbles: true }));
+
+            expect(getItemId(visible)).toBe(itemId);
+            expect(getItemId(hidden)).toBeNull();
+
+            window.history.replaceState({}, '', `/#/details?id=${otherId}`);
+            // Mid-transition, the old visible page is still recorded for itemId.
+            expect(getItemId(visible)).toBeNull();
+        } finally {
+            window.history.replaceState({}, '', previousUrl);
+            document.body.innerHTML = '';
+        }
     });
 });
 
@@ -1848,6 +1886,61 @@ describe('revisioned tag-cache content protocol (issue 72)', () => {
         expect(applied.entries.get(siblingId)).toBe(sibling);
         expect(source).not.toHaveProperty('LanguageCoverage');
         expect(sibling).not.toHaveProperty('LanguageCoverage');
+    });
+
+    it('attaches collection coverage from its separate sidecar without changing episode coverage', () => {
+        const streamData = { Streams: [{ Type: 'Audio', Language: 'pt-BR', IsDefault: true }] };
+        const collection = { Type: 'BoxSet', Name: 'Collection', StreamData: streamData };
+        const coverage = {
+            EligibleMemberCount: 3,
+            ObservedMemberCount: 3,
+            Complete: true,
+            FullLanguages: ['en'],
+            PartialLanguages: ['ja'],
+            UnknownLanguages: [],
+            Truncated: false,
+            OmittedLanguageCount: 0,
+        };
+        const applied = applyContentResponse(null, new Map(), {
+            ...response(11, { [id]: collection, [siblingId]: { Type: 'Series' } }),
+            collectionLanguageCoverage: { [id]: coverage },
+            languageCoverage: { [siblingId]: { Complete: false } },
+        }, true);
+
+        expect(applied.entries.get(id)).toEqual({
+            ...collection,
+            CollectionLanguageCoverage: coverage,
+        });
+        expect(applied.entries.get(id)).not.toHaveProperty('LanguageCoverage');
+        // #664 quality/sound selection continues to consume the untouched
+        // StreamData object; coverage is an independent response sidecar.
+        expect(applied.entries.get(id).StreamData).toBe(streamData);
+        expect(applied.entries.get(siblingId)).toHaveProperty('LanguageCoverage');
+        expect(collection).not.toHaveProperty('CollectionLanguageCoverage');
+    });
+
+    it('clears prior collection coverage when a newer BoxSet upsert omits its sidecar', () => {
+        const coverage = {
+            EligibleMemberCount: 1,
+            ObservedMemberCount: 1,
+            Complete: true,
+            FullLanguages: ['en'],
+            PartialLanguages: [],
+            UnknownLanguages: [],
+            Truncated: false,
+            OmittedLanguageCount: 0,
+        };
+        const initial = applyContentResponse(null, new Map(), {
+            ...response(12, { [id]: { Type: 'BoxSet', Name: 'Collection' } }),
+            collectionLanguageCoverage: { [id]: coverage },
+        }, true);
+        expect(initial.entries.get(id)).toHaveProperty('CollectionLanguageCoverage');
+
+        const stripped = applyContentResponse(initial.identity, initial.entries, response(13, {
+            [id]: { Type: 'BoxSet', Name: 'Collection' },
+        }), false);
+        expect(stripped.entries.get(id)).toEqual({ Type: 'BoxSet', Name: 'Collection' });
+        expect(stripped.entries.get(id)).not.toHaveProperty('CollectionLanguageCoverage');
     });
 
     it('is deterministic in both N/N+1 completion orders and never resurrects stale rows', () => {

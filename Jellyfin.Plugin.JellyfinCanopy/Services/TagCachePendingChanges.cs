@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services
 {
@@ -20,6 +21,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Changed item id -> latest explicit event token. Dependency expansion happens only
         // after Drain, on the background worker, so recording remains O(1).
         private readonly ConcurrentDictionary<Guid, PendingSlot> _pending = new();
+        private int _retired;
 
         /// <summary>
         /// Record the latest intent for an id. Last write wins, so a removal that
@@ -43,7 +45,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         public bool Record(TagCacheChange change)
         {
-            if (change.Id == Guid.Empty) return false;
+            if (change.Id == Guid.Empty || Volatile.Read(ref _retired) != 0) return false;
             while (true)
             {
                 if (_pending.TryGetValue(change.Id, out var slot))
@@ -55,6 +57,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             continue;
                         }
 
+                        if (Volatile.Read(ref _retired) != 0)
+                        {
+                            return false;
+                        }
+
                         slot.Change = Merge(slot.Change, change);
                         return change.RetryAttempts == 0 || slot.Change.RetryAttempts != 0;
                     }
@@ -63,10 +70,56 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var candidate = new PendingSlot(change);
                 if (_pending.TryAdd(change.Id, candidate))
                 {
-                    return true;
+                    return Volatile.Read(ref _retired) == 0;
                 }
             }
         }
+
+        /// <summary>
+        /// Restore an older handoff token without overwriting a newer token already recorded for
+        /// the same id. This is intentionally per-key O(1): callers may replay a large detached
+        /// batch outside their lifecycle lock while normal event recording continues.
+        /// </summary>
+        public bool RecordOlder(TagCacheChange change)
+        {
+            if (change.Id == Guid.Empty || Volatile.Read(ref _retired) != 0) return false;
+            while (true)
+            {
+                if (_pending.TryGetValue(change.Id, out var slot))
+                {
+                    lock (slot)
+                    {
+                        if (!slot.Active)
+                        {
+                            continue;
+                        }
+
+                        if (Volatile.Read(ref _retired) != 0)
+                        {
+                            return false;
+                        }
+
+                        // Equivalent to recording the detached token first and the live token
+                        // second: the live intent/current parents win, while Merge preserves the
+                        // earliest previous-owner ids and the genuine-event-over-retry rule.
+                        slot.Change = Merge(change, slot.Change);
+                        return true;
+                    }
+                }
+
+                var candidate = new PendingSlot(change);
+                if (_pending.TryAdd(change.Id, candidate))
+                {
+                    return Volatile.Read(ref _retired) == 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Prevent any out-of-lock restore still targeting this container from publishing into it.
+        /// Existing rows remain drainable by the owner that detached the container.
+        /// </summary>
+        public void Retire() => Interlocked.Exchange(ref _retired, 1);
 
         private static TagCacheChange Merge(TagCacheChange existing, TagCacheChange incoming)
         {
