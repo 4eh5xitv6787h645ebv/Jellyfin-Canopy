@@ -870,15 +870,13 @@ async function cycleTrackViaApi(
     // disagrees with the press item, the press is stale — swallow.
     const itemBeforeCommand = currentTrackPressItemHint();
     if (itemBeforeCommand && itemBeforeCommand !== pressItemId) return true;
-    // Id-less presses can't be checked by source id, so a surface that moved
-    // since the keypress needs a FRESH ownership proof: probe again and
-    // require the same item (allows our own command's same-item restart,
-    // rejects a landed next episode even when the earlier probe was stale).
-    if (press.idless && !pressSurfaceUnchanged(press)) {
-        const fresh = await probeOwnSession(context);
-        if (baselineStale()) return true;
-        if (normalizeTrackItemId(fresh?.NowPlayingItem?.Id) !== pressItemId) return true;
-    }
+    // Id-less presses can't be checked by source id, and a lagging server can
+    // keep reporting the old item after a transition — no probe can PROVE the
+    // moved surface still plays the press item. The only sound rule is to
+    // swallow the press outright when an id-less surface moved. (Cost: a
+    // rapid blob-source press queued across our own command's restart is
+    // dropped; the user presses again.)
+    if (press.idless && !pressSurfaceUnchanged(press)) return true;
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
@@ -1180,6 +1178,7 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
         return;
     }
     const sampledSrc = video.currentSrc || video.src || '';
+    const sampledPageItem = getCurrentVideoItemId();
     const session = await probeOwnSession(context);
     if (_playbackInfoOverlay !== overlay || !JC.identity.isCurrent(context)) return;
     const currentVideo = getVideo();
@@ -1188,14 +1187,18 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
         return;
     }
     // The session sample and the video must describe the same playback. A
-    // next-episode swap on the same /video route (new element or source, or a
-    // derivable item id disagreeing with the probed session) discards this
-    // mixed sample; the next tick renders a coherent one.
+    // next-episode swap on the same /video route (new element, new source, a
+    // changed page item id behind a stable blob source, or a derivable item
+    // id disagreeing with the probed session) discards this mixed sample; the
+    // next tick renders a coherent one.
     const currentSrc = currentVideo.currentSrc || currentVideo.src || '';
-    const derivableItem = normalizeTrackItemId(parseItemIdFromVideosSrc(currentSrc));
+    const derivableItem = normalizeTrackItemId(
+        parseItemIdFromVideosSrc(currentSrc) ?? getCurrentVideoItemId()
+    );
     const sessionItem = normalizeTrackItemId(session?.NowPlayingItem?.Id);
     const coherent = currentVideo === video
         && currentSrc === sampledSrc
+        && getCurrentVideoItemId() === sampledPageItem
         && !(derivableItem && sessionItem && derivableItem !== sessionItem);
     if (coherent) renderPlaybackInfo(currentVideo, session);
     schedulePlaybackInfoRefresh(context, overlay);

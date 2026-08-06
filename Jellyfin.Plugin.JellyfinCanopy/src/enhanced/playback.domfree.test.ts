@@ -718,7 +718,7 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).toHaveBeenCalledTimes(1); // surface-guarded fallback
         });
 
-        it('BLOB: an established press with a moved surface needs a fresh matching proof before POST', async () => {
+        it('BLOB: an established press whose surface later moves is swallowed — even a LAGGING probe still reporting the press item cannot rescue it', async () => {
             const video = mountVideo();
             const commands: string[] = [];
             let probeCount = 0;
@@ -727,8 +727,10 @@ describe('DOM-free player shortcuts', () => {
                 if (path.startsWith('/Sessions?')) {
                     probeCount += 1;
                     if (probeCount === 1) return Promise.resolve([sessionForItem(ITEM_A)]); // press probe (surface intact)
-                    if (probeCount === 2) return new Promise((r) => { resolveOpProbe = r; }); // op probe deferred
-                    return Promise.resolve([sessionForItem(ITEM_B)]); // fresh proof: next episode landed
+                    // Op probe deferred; any later probe would also LAG and
+                    // keep reporting ITEM_A — which must not matter.
+                    if (probeCount === 2) return new Promise((r) => { resolveOpProbe = r; });
+                    return Promise.resolve([sessionForItem(ITEM_A)]);
                 }
                 commands.push(path);
                 return Promise.resolve({});
@@ -747,8 +749,30 @@ describe('DOM-free player shortcuts', () => {
             resolveOpProbe([sessionForItem(ITEM_A)]);
             await flushPromises();
 
-            expect(commands).toHaveLength(0); // fresh proof said ITEM_B → swallowed
+            expect(commands).toHaveLength(0); // moved id-less surface → swallowed outright
             expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('overlay: an item change behind a STABLE blob source (route id) also discards the sample', async () => {
+            window.history.replaceState(null, '', `/web/index.html#/video?id=${ITEM_A}`);
+            mountVideo(); // stable blob source and element throughout
+            let resolveSessions!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.togglePlaybackInfo!();
+            const overlay = document.querySelector('[data-jc-playback-info="true"]')!;
+            await Promise.resolve();
+            await Promise.resolve();
+            // Route moves to the next item while the probe (for ITEM_A) is in flight.
+            window.history.replaceState(null, '', `/web/index.html#/video?id=${ITEM_B}`);
+            resolveSessions([sessionForItem(ITEM_A)]); // stale sample for the OLD item
+            await flushPromises();
+
+            expect(overlay.textContent).not.toContain('DirectPlay'); // mixed sample discarded
         });
 
         it('overlay: a session sampled for the old item is not rendered against the new video', async () => {
