@@ -210,6 +210,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     ? languageProjector.ProjectAccessibleSnapshot(items, cancellationToken)
                     : languageProjector.ProjectEntries(user, items, cancellationToken),
                 StringComparer.Ordinal);
+            var collectionLanguageProjector = new Services.TagCollectionLanguageCoverageProjector(
+                _libraryManager,
+                _tagCacheService,
+                _logger);
+            var collectionLanguageCoverage = new Dictionary<string, Model.TagCollectionLanguageCoverage>(
+                isFullContentSnapshot
+                    ? collectionLanguageProjector.ProjectAccessibleSnapshot(user, items, cancellationToken)
+                    : collectionLanguageProjector.ProjectEntries(user, items, cancellationToken),
+                StringComparer.Ordinal);
 
             // One request-scoped resolver outlives every stabilization pass below:
             // it memoizes each guid's item resolution (including misses) for the
@@ -238,6 +247,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 ApplyTagCacheSpoilerStrip(
                     items,
                     languageCoverage,
+                    collectionLanguageCoverage,
                     effectiveUserId,
                     user,
                     stripResolver,
@@ -275,6 +285,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     languageCoverage[key] = value;
                 }
+                // Collection coverage depends on library membership/evidence, not watched
+                // projection state. Do not traverse it again during stabilization: this also
+                // keeps the 20,000-edge budget request-wide rather than resetting per pass.
                 // Targeted per-pass invalidation (AC5): the revision advance we just
                 // observed was produced by a UserDataSaved whose delta names exactly
                 // the affected season/episode/series ids. Drop only those seasons from
@@ -339,6 +352,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 count = items.Count,
                 items,
                 languageCoverage,
+                collectionLanguageCoverage,
                 contentEpoch = content.Epoch,
                 contentRevision = content.Revision,
                 contentReset = false,
@@ -448,6 +462,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private void ApplyTagCacheSpoilerStrip(
             Dictionary<string, Model.TagCacheEntry> items,
             IDictionary<string, Model.TagLanguageCoverage> languageCoverage,
+            IDictionary<string, Model.TagCollectionLanguageCoverage> collectionLanguageCoverage,
             Guid userId,
             JUser user,
             TagStripProjectionResolver resolver,
@@ -488,6 +503,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 (spCfg.SpoilerReplaceTitle && (spPrefs?.ReplaceEpisodeTitles ?? true))
                 || (spCfg.SpoilerStripOverview && (spPrefs?.HideEpisodeDescriptions ?? true));
             if (!stripGenresEnabled && !stripRatingsEnabled && !sanitizeTitleStreams) return;
+
+            // A collection sidecar summarizes member Movies, including known absence and
+            // counts. Once genre stripping is actually effective for a nonempty/fail-closed
+            // policy, omit every collection sidecar: a delta may not contain enough member
+            // rows to classify reverse relationships safely, and stripped AudioLanguages
+            // must never become known-empty. This conservative fallback is intentional.
+            if (stripGenresEnabled)
+            {
+                ApplyCollectionCoverageSpoilerOmission(collectionLanguageCoverage, effectiveGenreStrip: true);
+            }
 
             // Batch-prepare this pass's runtime facts — unless the fail-closed
             // sentinel makes them moot (ResolveTagStripDecision strips every
@@ -1166,6 +1191,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     _tagCacheService,
                     _logger)
                 .ProjectContainers(user, requestedItems, cancellationToken);
+            var collectionLanguageCoverage = new Dictionary<string, Model.TagCollectionLanguageCoverage>(
+                new Services.TagCollectionLanguageCoverageProjector(
+                        _libraryManager,
+                        _tagCacheService,
+                        _logger)
+                    .ProjectContainers(user, requestedItems, cancellationToken),
+                StringComparer.Ordinal);
+            if (stripTagsEnabled && spStripGenres)
+            {
+                ApplyCollectionCoverageSpoilerOmission(collectionLanguageCoverage, effectiveGenreStrip: true);
+            }
 
             // Process items sequentially (Jellyfin library manager is not fully thread-safe for GetMediaSources)
             foreach (var item in requestedItems)
@@ -1173,7 +1209,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var kind = item.GetBaseItemKind();
-                var isContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+                var isEpisodeContainer = kind == BaseItemKind.Series || kind == BaseItemKind.Season;
+                var isContainer = isEpisodeContainer || kind == BaseItemKind.BoxSet;
                 Services.TagCacheService.GuardedSeasonRatingProjection? guardedSeasonRatings = null;
 
                 // Fail-closed: the policy read faulted with no last-known-good. Return
@@ -1505,7 +1542,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 // First episode lookup for Series/Season
                 object? firstEpisodeData = null;
-                if (isContainer)
+                if (isEpisodeContainer)
                 {
                     // Inline the first-episode lookup to avoid cache/threading issues
                     var epQuery = new InternalItemsQuery(user)
@@ -1562,6 +1599,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     FirstEpisode = firstEpisodeData,
                     LanguageCoverage = languageCoverage.TryGetValue(item.Id.ToString("N"), out var coverage)
                         ? coverage
+                        : null,
+                    CollectionLanguageCoverage = collectionLanguageCoverage.TryGetValue(item.Id.ToString("N"), out var collectionCoverage)
+                        ? collectionCoverage
                         : null
                 });
             }
@@ -1580,6 +1620,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             }
 
             return Ok(new { Items = results });
+        }
+
+        internal static void ApplyCollectionCoverageSpoilerOmission(
+            IDictionary<string, Model.TagCollectionLanguageCoverage> coverage,
+            bool effectiveGenreStrip)
+        {
+            if (effectiveGenreStrip)
+            {
+                coverage.Clear();
+            }
         }
 
 

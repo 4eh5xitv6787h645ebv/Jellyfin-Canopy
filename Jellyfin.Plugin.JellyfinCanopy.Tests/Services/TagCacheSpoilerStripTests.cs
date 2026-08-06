@@ -348,6 +348,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Version = 7L,
                 LastModified = 123L,
                 Items = new Dictionary<string, TagCacheEntry> { [entryKey] = entry },
+                CollectionMembers = new Dictionary<Guid, Guid[]>(),
+                UnindexedCollectionIds = new HashSet<Guid>(),
             };
             File.WriteAllText(path, JsonSerializer.Serialize(doc));
             return path;
@@ -398,7 +400,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             {
                 var key = Guid.NewGuid().ToString("N");
                 var seriesN = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 6, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
+                WriteCache(dir, schemaVersion: 7, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();

@@ -285,6 +285,161 @@ test.describe('tags', () => {
             }
         });
 
+    test('Collection language coverage has poster and details parity', async ({
+        page,
+        consoleErrors,
+    }, testInfo) => {
+        await page.addInitScript(() => localStorage.setItem('layout', 'experimental'));
+        await loginAs(page, 'admin', consoleErrors);
+        const fixture = await page.evaluate(async () => {
+            const api = (window as any).ApiClient;
+            const canopy = (window as any).JellyfinCanopy;
+            const userId = api.getCurrentUserId();
+            const result = await api.getItems(userId, {
+                IncludeItemTypes: 'Movie',
+                Recursive: true,
+                Fields: 'Path,MediaStreams,MediaSources',
+                Limit: 200,
+            });
+            const expectedPaths = [
+                '/media/Movies/Alpha Adventure (2021).mp4',
+                '/media/Movies/Beta Voyage (2022).mp4',
+            ];
+            const members = expectedPaths.map((path) =>
+                (result?.Items || []).find((item: any) => item.Path === path));
+            if (members.some((item) => !item?.Id)) {
+                throw new Error('issue 668 deterministic English movie fixtures are missing');
+            }
+            const memberLanguages = members.map((item) => {
+                const streams = [
+                    ...(item.MediaStreams || []),
+                    ...(item.MediaSources || []).flatMap((source: any) => source.MediaStreams || []),
+                ];
+                return [...new Set(streams
+                    .filter((stream: any) => stream?.Type === 'Audio')
+                    .map((stream: any) => String(stream.Language || '').toLowerCase())
+                    .filter(Boolean))];
+            });
+            if (memberLanguages.some((languages) =>
+                !languages.some((language) => language === 'en' || language === 'eng'))) {
+                throw new Error('issue 668 movie fixtures do not expose deterministic English audio');
+            }
+            const settings = ['languageTagsEnabled', 'showAudioLanguages']
+                .reduce((snapshot: Record<string, { has: boolean; value: unknown }>, key) => {
+                    snapshot[key] = {
+                        has: Object.prototype.hasOwnProperty.call(canopy.currentSettings, key),
+                        value: canopy.currentSettings[key],
+                    };
+                    return snapshot;
+                }, {});
+            return {
+                memberIds: members.map((item) => item.Id),
+                memberLanguages,
+                settings,
+            };
+        });
+
+        expect(fixture.memberIds).toHaveLength(2);
+        expect(fixture.memberLanguages.every((languages) =>
+            languages.some((language) => language === 'en' || language === 'eng'))).toBe(true);
+        let collectionId = '';
+
+        try {
+            collectionId = await page.evaluate(async (memberIds) => {
+                const api = (window as any).ApiClient;
+                const name = `JC Issue 668 Coverage ${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                const created = await api.ajax({
+                    type: 'POST',
+                    url: api.getUrl('Collections', { Name: name, Ids: memberIds.join(',') }),
+                    dataType: 'json',
+                });
+                if (!created?.Id) throw new Error('issue 668 BoxSet creation returned no item ID');
+                return created.Id;
+            }, fixture.memberIds);
+            expect(collectionId).not.toBe('');
+
+            await page.evaluate(async () => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.currentSettings.languageTagsEnabled = true;
+                canopy.currentSettings.showAudioLanguages = true;
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeLanguageTags();
+            });
+
+            await expect.poll(async () => page.evaluate(async (id) => {
+                const api = (window as any).ApiClient;
+                const cache = await api.ajax({
+                    type: 'GET',
+                    url: api.getUrl(`/JellyfinCanopy/tag-cache/${api.getCurrentUserId()}`),
+                    dataType: 'json',
+                });
+                const key = String(id).replace(/-/g, '').toLowerCase();
+                return cache?.collectionLanguageCoverage?.[key] || null;
+            }, collectionId), {
+                timeout: 60_000,
+                intervals: [250, 500, 1_000],
+                message: 'new BoxSet reaches caller-scoped tag-cache projection',
+            }).toEqual({
+                EligibleMemberCount: 2,
+                ObservedMemberCount: 2,
+                Complete: true,
+                FullLanguages: ['en'],
+                PartialLanguages: [],
+                UnknownLanguages: [],
+                Truncated: false,
+                OmittedLanguageCount: 0,
+            });
+
+            await showRoute(page, `/details?id=${collectionId}`);
+            await waitForHash(page, collectionId);
+            const detailPoster = page.locator(
+                '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+                + '#itemDetailPage:not(.hide) .detailImageContainer .card',
+            ).filter({ has: page.locator('.language-coverage-full') }).first();
+            const posterCoverage = detailPoster.locator('.language-coverage-full');
+            const detailsCoverage = page.locator(
+                '#itemDetailPage:not(.hide) .mediaInfoItem-audioLanguage '
+                + '.audio-language-coverage-full',
+            ).first();
+            await expect(posterCoverage).toHaveAttribute('data-lang-tags', '["en"]', {
+                timeout: 60_000,
+            });
+            await expect(detailsCoverage).toHaveAttribute('data-lang-tags', '["en"]', {
+                timeout: 60_000,
+            });
+            await expect(posterCoverage).toHaveAttribute(
+                'aria-label',
+                /full coverage across 2 eligible members/,
+            );
+            await expect(detailsCoverage).toHaveAttribute(
+                'aria-label',
+                /full coverage across 2 eligible members/,
+            );
+            await detailPoster.screenshot({ path: testInfo.outputPath('issue-668-modern.png') });
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            if (!page.isClosed()) {
+                await page.evaluate(async ({ id, settings }) => {
+                    const api = (window as any).ApiClient;
+                    const canopy = (window as any).JellyfinCanopy;
+                    window.location.hash = '#/home';
+                    if (id) {
+                        await api.ajax({ type: 'DELETE', url: api.getUrl(`Items/${id}`) });
+                    }
+                    for (const [key, snapshot] of Object.entries(settings) as Array<[
+                        string,
+                        { has: boolean; value: unknown },
+                    ]>) {
+                        if (snapshot.has) canopy.currentSettings[key] = snapshot.value;
+                        else delete canopy.currentSettings[key];
+                    }
+                    await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                    canopy.reinitializeLanguageTags();
+                }, { id: collectionId, settings: fixture.settings });
+            }
+        }
+    });
+
     test('single-digit Jellyfin critic values stay single-digit on real poster cards', async ({ page, consoleErrors }) => {
         const routePattern = '**/JellyfinCanopy/tag-cache/**';
         const injectedIds = new Set<string>();

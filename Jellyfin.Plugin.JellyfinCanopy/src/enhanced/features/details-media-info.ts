@@ -64,6 +64,84 @@ const fileSizeCache = createBoundedCache<string, { size: number | null; unavaila
 const audioLanguageCache = createBoundedCache<string, { languages: MediaLanguageIdentity[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { canonical identities, unavailable, ts }>
 const retryTimers = new Set<number>();
 
+type LanguageCoverageState = 'full' | 'partial' | 'unknown';
+
+interface CollectionLanguageCoverageProjection {
+    eligibleMemberCount: number | null;
+    complete: boolean;
+    groups: Array<{ state: LanguageCoverageState; languages: MediaLanguageIdentity[] }>;
+}
+
+function safeCoverageCount(value: unknown): number | null {
+    return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+}
+
+/** Validate the response-only collection sidecar before it reaches details DOM. */
+function readCollectionLanguageCoverage(value: unknown): CollectionLanguageCoverageProjection | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.Complete !== 'boolean'
+        || typeof record.Truncated !== 'boolean'
+        || !Array.isArray(record.FullLanguages)
+        || !Array.isArray(record.PartialLanguages)
+        || !Array.isArray(record.UnknownLanguages)) return null;
+    const eligibleMemberCount = record.EligibleMemberCount === null
+        ? null
+        : safeCoverageCount(record.EligibleMemberCount);
+    const observedMemberCount = record.ObservedMemberCount === null
+        ? null
+        : safeCoverageCount(record.ObservedMemberCount);
+    const omittedLanguageCount = record.OmittedLanguageCount === null
+        ? null
+        : safeCoverageCount(record.OmittedLanguageCount);
+    if ((record.EligibleMemberCount !== null && eligibleMemberCount === null)
+        || (record.ObservedMemberCount !== null && observedMemberCount === null)
+        || (eligibleMemberCount !== null && observedMemberCount !== null
+            && observedMemberCount > eligibleMemberCount)
+        || (record.OmittedLanguageCount !== null && omittedLanguageCount === null)
+        || (omittedLanguageCount === null
+            && (record.Complete || eligibleMemberCount !== null || observedMemberCount !== null
+                || record.FullLanguages.length > 0 || record.PartialLanguages.length > 0
+                || record.UnknownLanguages.length > 0))
+        || (!record.Truncated && omittedLanguageCount !== null && omittedLanguageCount !== 0)
+        || (record.FullLanguages.length + record.PartialLanguages.length
+            + record.UnknownLanguages.length) > 32
+        || (record.Complete && (eligibleMemberCount === null
+            || observedMemberCount !== eligibleMemberCount))) return null;
+
+    const rank: Record<LanguageCoverageState, number> = { full: 0, unknown: 1, partial: 2 };
+    const merged = new Map<string, { state: LanguageCoverageState; language: MediaLanguageIdentity }>();
+    const rawGroups: Array<[LanguageCoverageState, unknown[]]> = [
+        ['full', record.FullLanguages],
+        ['partial', record.PartialLanguages],
+        ['unknown', record.UnknownLanguages],
+    ];
+    for (const [state, values] of rawGroups) {
+        for (const language of resolveMediaLanguageIdentities(values)) {
+            const current = merged.get(language.canonicalTag);
+            if (!current) {
+                merged.set(language.canonicalTag, { state, language });
+            } else if (rank[state] > rank[current.state]) {
+                current.state = state;
+            }
+            if (current && current.language.flagRegion !== language.flagRegion) {
+                current.language = { ...current.language, flagRegion: null };
+            }
+        }
+    }
+    const groups = (['full', 'partial', 'unknown'] as const).map((state) => ({
+        state,
+        languages: Array.from(merged.values())
+            .filter((entry) => entry.state === state)
+            .map((entry) => entry.language)
+            .sort((left, right) => left.canonicalTag < right.canonicalTag ? -1
+                : left.canonicalTag > right.canonicalTag ? 1 : 0),
+    }));
+    if ((record.Complete && groups[2].languages.length > 0)
+        || (!record.Complete && groups[0].languages.length > 0)) return null;
+    return { eligibleMemberCount, complete: record.Complete, groups };
+}
+
 function isActive(context: IdentityContext, placeholder?: HTMLElement): boolean {
     return JC.identity.isCurrent(context) && (!placeholder || placeholder.isConnected);
 }
@@ -633,25 +711,137 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
         placeholder.appendChild(scrollContainer);
     };
 
-    const performFetch = async (attempt = 1): Promise<void> => {
+    /** Render the same three-state, three-presentation contract used on posters. */
+    const renderCollectionCoverage = (coverage: CollectionLanguageCoverageProjection): void => {
         if (!isActive(context, placeholder)) return;
-        // Check cache first
-        const now = Date.now();
-        const cached = audioLanguageCache.get(itemId);
-        if (cached && (now - cached.ts) < effectiveTtl(cached, LANGUAGE_CACHE_TTL)) {
-            if (!isActive(context, placeholder)) return;
-            if (cached.unavailable || !cached.languages || cached.languages.length === 0) {
-                renderUnavailable();
-                return;
+        const presentations = coverage.groups.flatMap(({ state, languages }) =>
+            buildMediaLanguagePresentations(languages).map((presentation) => ({ state, presentation })));
+        if (presentations.length === 0) {
+            applyLangStyles(placeholder);
+            const icon = document.createElement('span');
+            icon.className = 'material-icons';
+            icon.style.fontSize = 'inherit';
+            icon.style.marginRight = '0.3em';
+            icon.textContent = 'translate';
+            const value = document.createElement('span');
+            value.className = 'audio-language-coverage-state';
+            if (coverage.complete && coverage.eligibleMemberCount === 0) {
+                value.textContent = '0';
+                value.setAttribute('aria-label', 'No eligible members for language coverage');
+            } else if (coverage.complete) {
+                value.textContent = '—';
+                const count = coverage.eligibleMemberCount;
+                value.setAttribute(
+                    'aria-label',
+                    `No recognized audio languages across ${count} eligible member${count === 1 ? '' : 's'}`,
+                );
+            } else {
+                value.textContent = '?';
+                value.setAttribute('aria-label', 'Collection language coverage incomplete');
             }
-            // Render from cache
-            renderLanguages(cached.languages);
+            placeholder.innerHTML = '';
+            placeholder.append(icon, value);
             return;
         }
 
+        placeholder.innerHTML = '';
+        placeholder.style.display = 'flex';
+        placeholder.style.alignItems = 'center';
+        placeholder.style.gap = '0.5em';
+        placeholder.title = JC.t!('audio_language_tooltip');
+        const icon = document.createElement('span');
+        icon.className = 'material-icons';
+        icon.style.fontSize = 'inherit';
+        icon.style.flexShrink = '0';
+        icon.textContent = 'translate';
+        placeholder.appendChild(icon);
+
+        const languageContainer = document.createElement('div');
+        languageContainer.className = 'audio-languages-container audio-language-coverage';
+        languageContainer.style.display = 'flex';
+        languageContainer.style.gap = '0.35em';
+        languageContainer.style.alignItems = 'center';
+        for (const { state, presentation } of presentations.slice(0, 3)) {
+            const language = document.createElement('span');
+            language.className = `audio-language-item audio-language-coverage-${state}`;
+            language.dataset.lang = presentation.canonicalTags[0] || '';
+            language.dataset.langTags = JSON.stringify(presentation.canonicalTags);
+            language.dataset.langName = presentation.displayNames.join(', ');
+            language.dataset.region = presentation.flagRegion || '';
+            language.dataset.coverage = state;
+            const count = coverage.eligibleMemberCount;
+            const countLabel = count === null
+                ? ''
+                : ` across ${count} eligible member${count === 1 ? '' : 's'}`;
+            const label = `${presentation.accessibleLabel} — ${state} coverage${countLabel}`;
+            language.title = label;
+            language.setAttribute('aria-label', label);
+            language.style.whiteSpace = 'nowrap';
+
+            if (presentation.kind === 'flag' && presentation.flagRegion) {
+                const flag = document.createElement('img');
+                flag.src = flagSvgUrl(presentation.flagRegion);
+                flag.alt = '';
+                flag.setAttribute('aria-hidden', 'true');
+                flag.width = 18;
+                flag.height = 14;
+                flag.style.width = '18px';
+                flag.style.height = '13.5px';
+                flag.style.marginRight = '0.3em';
+                flag.style.borderRadius = '2px';
+                language.appendChild(flag);
+            }
+            language.appendChild(document.createTextNode(presentation.displayNames.join(' / ')));
+            const marker = document.createElement('span');
+            marker.className = 'audio-language-coverage-marker';
+            marker.setAttribute('aria-hidden', 'true');
+            marker.textContent = state === 'full' ? '✓' : state === 'partial' ? '◐' : '?';
+            language.appendChild(marker);
+            languageContainer.appendChild(language);
+        }
+        placeholder.appendChild(languageContainer);
+    };
+
+    const performFetch = async (attempt = 1): Promise<void> => {
+        if (!isActive(context, placeholder)) return;
         try {
             const item: any = await getItemCached(itemId, { userId: context.userId });
             if (!isActive(context, placeholder)) return;
+
+            if (item.Type === 'BoxSet') {
+                // Collection coverage is caller-scoped and response-only. Ask
+                // the plugin projection directly and never place it in the
+                // leaf-language cache; old servers safely produce a dash.
+                audioLanguageCache.delete(itemId);
+                const response: any = await JC.core.api!.plugin(
+                    `/tag-data/${encodeURIComponent(context.userId)}`,
+                    { method: 'POST', body: [itemId], skipCache: true, skipRetry: true },
+                );
+                if (!isActive(context, placeholder)) return;
+                const normalizedItemId = String(item.Id || itemId).replace(/-/g, '').toLowerCase();
+                const projected = Array.isArray(response?.Items)
+                    ? response.Items.find((candidate: any) => (
+                        String(candidate?.Id || '').replace(/-/g, '').toLowerCase() === normalizedItemId
+                    ))
+                    : null;
+                const coverage = readCollectionLanguageCoverage(projected?.CollectionLanguageCoverage);
+                if (coverage) renderCollectionCoverage(coverage);
+                else renderUnavailable();
+                return;
+            }
+
+            // Leaf and legacy Series/Season results are identity-scoped and
+            // may use the bounded in-memory cache after item type is known.
+            const now = Date.now();
+            const cached = audioLanguageCache.get(itemId);
+            if (cached && (now - cached.ts) < effectiveTtl(cached, LANGUAGE_CACHE_TTL)) {
+                if (cached.unavailable || !cached.languages || cached.languages.length === 0) {
+                    renderUnavailable();
+                    return;
+                }
+                renderLanguages(cached.languages);
+                return;
+            }
 
             let sourceItem = item;
 

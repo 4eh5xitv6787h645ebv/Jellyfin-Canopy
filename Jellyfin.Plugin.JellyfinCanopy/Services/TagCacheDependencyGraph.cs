@@ -124,6 +124,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal static bool NeedsSeriesDescendantDiscovery(TagCacheChange change)
             => !change.Removed && change.Kind == BaseItemKind.Series;
 
+        internal static bool NeedsCollectionParentDiscovery(TagCacheChange change)
+            => change.Kind == BaseItemKind.Movie;
+
         internal static IEnumerable<(Guid Id, BaseItemKind Kind)> DirectDerivedTargets(TagCacheChange change)
         {
             if (change.Kind == BaseItemKind.Episode)

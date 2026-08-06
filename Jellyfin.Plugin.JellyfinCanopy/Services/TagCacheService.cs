@@ -13,6 +13,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Model;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +31,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILibraryManager _libraryManager;
         private readonly IApplicationPaths _applicationPaths;
         private readonly ILogger<TagCacheService> _logger;
+        private readonly ILinkedChildrenService? _linkedChildrenService;
         private volatile ConcurrentDictionary<string, TagCacheEntry> _cache = new();
+        private volatile Dictionary<Guid, Guid[]> _collectionMembers = new();
+        private volatile Dictionary<Guid, Guid[]> _collectionParents = new();
+        private volatile HashSet<Guid> _unindexedCollections = new();
         private readonly object _contentGate = new();
         private readonly string _contentEpoch = Guid.NewGuid().ToString("N");
         private readonly ContentChange?[] _contentJournal;
@@ -129,6 +134,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // cache swap, so a test can simulate an incremental flush firing mid-rebuild.
         internal Action? OnBeforeSwapForTest;
 
+        // Test seam after the pending-container handoff has completed under _lifecycleGate but
+        // before its O(N) drain starts. Tests park the worker here to prove scan-thread enqueue is
+        // not held behind handoff materialization.
+        internal Action? OnBeforePendingHandoffDrainForTest;
+
+        // Test seam after rollback has validated its lifecycle generation and captured the live
+        // target, but before its O(N) older-prefix replay begins outside _lifecycleGate.
+        internal Action? OnBeforePendingRestoreReplayForTest;
+
         // Test seam: invoked inside FlushPending after the batch is applied but BEFORE the flush
         // guard (_flushing) is released, so a test can park a flush in the "drained + applied, still
         // holding the guard" state and drive the rebuild against it deterministically.
@@ -142,15 +156,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Incremental cache maintenance. Library-scan events are recorded here (O(1),
         // no DB/probe work) and drained by a debounced background worker so scans are
         // never blocked and repeated hits on the same id coalesce to one rebuild.
-        private readonly TagCachePendingChanges _pending = new();
+        private TagCachePendingChanges _pending = new();
         private readonly object _lifecycleGate = new();
         private Timer? _flushTimer;
         private long _firstPendingTicks; // 0 = nothing pending since last flush
         private int _flushing;           // 0/1 non-reentrancy guard for the worker
         private int _disposed;           // 0/1; prevents timer resurrection during shutdown
         private int _suspended;          // 0/1; disabled server mode accepts no work
+        private long _lifecycleGeneration;
         private long _retryBackoffTicks;
         private long _removedDependencyEntriesVisited;
+        private long _collectionReverseRebuildsForTest;
         private int _repairIncomplete;
         private long _libraryEventGeneration;
         private int _loadFromDiskCalls;
@@ -201,8 +217,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // CommunityRating-only inheritance check, which could overwrite a
         // child's valid CriticRating of 0 or 7 (#682). v6 projects audio
         // default/index/source identity for deterministic live/cache parity
-        // when selecting one preferred-language quality track (#664).
-        private const int CurrentCacheSchemaVersion = 6;
+        // when selecting one preferred-language quality track (#664). v7 adds a
+        // complete, validated BoxSet forward-membership snapshot plus explicit
+        // over-cap/unavailable sentinels; its derived reverse map lets Movie
+        // removal/move invalidation survive restart after live old edges disappear.
+        private const int CurrentCacheSchemaVersion = 7;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -228,7 +247,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         };
 
         public TagCacheService(ILibraryManager libraryManager, IApplicationPaths applicationPaths, ILogger<TagCacheService> logger)
-            : this(libraryManager, applicationPaths, logger, DefaultContentJournalCapacity)
+            : this(libraryManager, applicationPaths, logger, null, DefaultContentJournalCapacity)
+        {
+        }
+
+        public TagCacheService(
+            ILibraryManager libraryManager,
+            IApplicationPaths applicationPaths,
+            ILogger<TagCacheService> logger,
+            ILinkedChildrenService linkedChildrenService)
+            : this(libraryManager, applicationPaths, logger, linkedChildrenService, DefaultContentJournalCapacity)
         {
         }
 
@@ -236,6 +264,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ILibraryManager libraryManager,
             IApplicationPaths applicationPaths,
             ILogger<TagCacheService> logger,
+            int contentJournalCapacity)
+            : this(libraryManager, applicationPaths, logger, null, contentJournalCapacity)
+        {
+        }
+
+        internal TagCacheService(
+            ILibraryManager libraryManager,
+            IApplicationPaths applicationPaths,
+            ILogger<TagCacheService> logger,
+            ILinkedChildrenService? linkedChildrenService,
             int contentJournalCapacity)
         {
             if (contentJournalCapacity <= 0)
@@ -246,8 +284,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _libraryManager = libraryManager;
             _applicationPaths = applicationPaths;
             _logger = logger;
+            _linkedChildrenService = linkedChildrenService;
             _contentJournal = new ContentChange[contentJournalCapacity];
         }
+
+        internal IReadOnlyList<Guid> GetCollectionMemberIds(Guid collectionId)
+            => _linkedChildrenService?.GetLinkedChildrenIds(collectionId, (int)LinkedChildType.Manual)
+                ?? throw new InvalidOperationException("Linked-children relationship service is unavailable.");
+
+        internal IReadOnlyList<Guid> GetCollectionParentIds(Guid movieId)
+            => _linkedChildrenService?.GetManualLinkedParentIds(movieId, BaseItemKind.BoxSet)
+                ?? throw new InvalidOperationException("Linked-children relationship service is unavailable.");
 
         public long Version
         {
@@ -296,7 +343,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         internal void FlushPendingForTest() => FlushPending();
 
-        internal int PendingChangeCountForTest => _pending.Count;
+        internal int PendingChangeCountForTest => Volatile.Read(ref _pending).Count;
+
+        internal IReadOnlyList<TagCacheChange> DrainPendingForTest() => Volatile.Read(ref _pending).Drain();
 
         internal bool HasFlushTimerForTest => Volatile.Read(ref _flushTimer) != null;
 
@@ -309,9 +358,41 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal long RemovedDependencyEntriesVisitedForTest
             => Interlocked.Read(ref _removedDependencyEntriesVisited);
 
+        internal long CollectionReverseRebuildsForTest
+            => Interlocked.Read(ref _collectionReverseRebuildsForTest);
+
+        internal bool IsContentGateHeldByCurrentThreadForTest => Monitor.IsEntered(_contentGate);
+
         internal bool ContainsKeyForTest(string key) => _cache.ContainsKey(key);
 
         internal void SeedEntryForTest(string key, TagCacheEntry entry) => _cache[key] = entry;
+
+        internal void SeedCollectionMembershipForTest(Guid collectionId, params Guid[] memberIds)
+        {
+            var replacement = new Dictionary<Guid, Guid[]>(_collectionMembers)
+            {
+                [collectionId] = memberIds.Distinct().OrderBy(static id => id).ToArray(),
+            };
+            _collectionMembers = replacement;
+            _collectionParents = BuildCollectionParents(replacement);
+            var unindexed = new HashSet<Guid>(_unindexedCollections);
+            unindexed.Remove(collectionId);
+            _unindexedCollections = unindexed;
+        }
+
+        internal void SeedUnindexedCollectionForTest(Guid collectionId)
+        {
+            var unindexed = new HashSet<Guid>(_unindexedCollections) { collectionId };
+            _unindexedCollections = unindexed;
+        }
+
+        internal bool IsCollectionUnindexedForTest(Guid collectionId)
+            => _unindexedCollections.Contains(collectionId);
+
+        internal IReadOnlyList<Guid> GetIndexedCollectionMembersForTest(Guid collectionId)
+            => _collectionMembers.TryGetValue(collectionId, out var members)
+                ? members
+                : Array.Empty<Guid>();
 
         // Deterministic controller-cursor race seams. A test captures the reader's
         // dictionary, then swaps the live cache/cursor exactly where a reconcile can.
@@ -325,6 +406,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             lock (_contentGate)
             {
                 _cache = new ConcurrentDictionary<string, TagCacheEntry>(entries, StringComparer.Ordinal);
+                _collectionMembers = new Dictionary<Guid, Guid[]>();
+                _collectionParents = new Dictionary<Guid, Guid[]>();
+                _unindexedCollections = new HashSet<Guid>();
                 Interlocked.Exchange(ref _version, version);
                 Interlocked.Exchange(ref _lastModified, lastModified);
             }
@@ -409,8 +493,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 var oldCache = _cache;
                 var newCache = new ConcurrentDictionary<string, TagCacheEntry>(StringComparer.Ordinal);
+                var newCollectionMembers = new Dictionary<Guid, Guid[]>();
+                var newUnindexedCollections = new HashSet<Guid>();
                 var changed = false;
                 var processed = 0;
+                var changedCollectionParents = new HashSet<Guid>();
+                var changedMovieIds = new HashSet<Guid>();
                 var eventGeneration = Interlocked.Read(ref _libraryEventGeneration);
 
                 // Resolve Series first in its own bounded pass. Episode inheritance can
@@ -421,6 +509,29 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 ReadPages(
                     TaggableTypes.Where(static kind => kind != BaseItemKind.Series).ToArray());
 
+                foreach (var pair in oldCache)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!newCache.ContainsKey(pair.Key)
+                        && string.Equals(pair.Value.Type, nameof(BaseItemKind.Movie), StringComparison.Ordinal)
+                        && Guid.TryParseExact(pair.Key, "N", out var removedMovieId))
+                    {
+                        changedMovieIds.Add(removedMovieId);
+                    }
+                }
+                var newCollectionParents = BuildCollectionParents(newCollectionMembers);
+                if (newCollectionMembers.Count != _collectionMembers.Count
+                    || newCollectionMembers.Keys.Any(id => CollectionMembershipChanged(id, _collectionMembers, newCollectionMembers))
+                    || !_unindexedCollections.SetEquals(newUnindexedCollections))
+                {
+                    changed = true;
+                }
+                foreach (var movieId in changedMovieIds)
+                {
+                    AddKnownParents(_collectionParents, movieId, changedCollectionParents);
+                    AddKnownParents(newCollectionParents, movieId, changedCollectionParents);
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
                 if (Interlocked.Read(ref _libraryEventGeneration) != eventGeneration)
                 {
@@ -429,6 +540,28 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                 OnBeforeSwapForTest?.Invoke();
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // Drain and fully prepare the handoff while the single-writer guard is held
+                // but before entering _contentGate. Host relationship/library reads and the
+                // one reverse-map rebuild for this batch must never extend the publication lock.
+                var detachedPending = DetachPendingForHandoff(out var handoffGeneration);
+                OnBeforePendingHandoffDrainForTest?.Invoke();
+                var pendingBatch = detachedPending.Drain();
+                PendingBatchPlan pendingPlan;
+                try
+                {
+                    pendingPlan = PreparePendingBatch(
+                        pendingBatch,
+                        newCache,
+                        newCollectionMembers,
+                        newCollectionParents,
+                        newUnindexedCollections);
+                }
+                catch
+                {
+                    RestoreDrainedPendingBatch(pendingBatch, handoffGeneration);
+                    throw;
+                }
 
                 var removed = false;
                 var drainRemoved = false;
@@ -454,15 +587,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var priorJournal = (ContentChange?[])_contentJournal.Clone();
                         var priorDirty = _dirty;
                         var priorDirtyVersion = Interlocked.Read(ref _dirtyVersion);
-                        IReadOnlyList<TagCacheChange> pendingBatch = Array.Empty<TagCacheChange>();
-
+                        var priorCollectionMembers = _collectionMembers;
+                        var priorCollectionParents = _collectionParents;
+                        var priorUnindexedCollections = _unindexedCollections;
                         try
                         {
                             _cache = newCache;
+                            _collectionMembers = newCollectionMembers;
+                            _collectionParents = newCollectionParents;
+                            _unindexedCollections = newUnindexedCollections;
                             foreach (var pair in newCache)
                             {
                                 if (!oldCache.TryGetValue(pair.Key, out var previous)
-                                    || !ContentEquals(previous, pair.Value))
+                                    || !ContentEquals(previous, pair.Value)
+                                    || (string.Equals(pair.Value.Type, nameof(BaseItemKind.BoxSet), StringComparison.Ordinal)
+                                        && previous.SourceRevision != pair.Value.SourceRevision)
+                                    || (Guid.TryParseExact(pair.Key, "N", out var itemId)
+                                        && (changedCollectionParents.Contains(itemId)
+                                            || CollectionMembershipChanged(itemId, priorCollectionMembers, newCollectionMembers)
+                                            || priorUnindexedCollections.Contains(itemId) != newUnindexedCollections.Contains(itemId))))
                                 {
                                     RecordContentChangeLocked(pair.Key, removed: false);
                                 }
@@ -488,10 +631,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                 Interlocked.Increment(ref _version);
                             }
 
-                            pendingBatch = _pending.Drain();
-                            if (ApplyPendingBatch(pendingBatch, out drainRemoved))
+                            if (ApplyPreparedPendingBatchLocked(pendingPlan, out drainRemoved))
                             {
                                 Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                                _userAccessCache.Clear();
                             }
 
                             if (drainRemoved)
@@ -517,6 +660,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         catch
                         {
                             _cache = oldCache;
+                            _collectionMembers = priorCollectionMembers;
+                            _collectionParents = priorCollectionParents;
+                            _unindexedCollections = priorUnindexedCollections;
                             Interlocked.Exchange(ref _version, priorVersion);
                             Interlocked.Exchange(ref _lastModified, priorLastModified);
                             Interlocked.Exchange(ref _contentRevision, priorContentRevision);
@@ -525,10 +671,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             Array.Copy(priorJournal, _contentJournal, _contentJournal.Length);
                             _dirty = priorDirty;
                             Interlocked.Exchange(ref _dirtyVersion, priorDirtyVersion);
-                            foreach (var pending in pendingBatch)
-                            {
-                                _pending.Record(pending);
-                            }
+                            RestoreDrainedPendingBatch(pendingBatch, handoffGeneration);
 
                             throw;
                         }
@@ -540,9 +683,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var published = Publish();
                 if (!published)
                 {
+                    RestoreDrainedPendingBatch(pendingBatch, handoffGeneration);
                     _logger.LogInformation("[TagCache] Discarded completed replacement because its lifecycle generation is no longer enabled.");
                     return false;
                 }
+
+                PublishPendingFollowups(pendingPlan);
 
                 progress?.Report(100);
                 sw.Stop();
@@ -629,6 +775,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var kind = item.GetBaseItemKind();
                     var revision = item.DateLastSaved.Ticks;
                     oldCache.TryGetValue(key, out var old);
+                    if (kind == BaseItemKind.BoxSet)
+                    {
+                        var membership = ReadCollectionMembers(item.Id);
+                        if (membership.Unindexed)
+                        {
+                            newUnindexedCollections.Add(item.Id);
+                        }
+                        else
+                        {
+                            newCollectionMembers[item.Id] = membership.MemberIds;
+                        }
+                    }
+                    if (kind == BaseItemKind.Movie
+                        && (old == null || old.SourceRevision != revision))
+                    {
+                        changedMovieIds.Add(item.Id);
+                    }
 
                     TagCacheEntry? parentSeriesRefresh = null;
                     var parentOrRelationshipChanged = false;
@@ -714,6 +877,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 Interlocked.Exchange(ref _flushing, 0);
             }
+
         }
 
         /// <summary>
@@ -849,6 +1013,69 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
                 ScheduleFlush();
             }
+        }
+
+        /// <summary>
+        /// Detach pending work in O(1) under the lifecycle gate. The worker drains the retired
+        /// container after leaving the gate, so a large handoff never stalls synchronous scan
+        /// events from recording into the new container.
+        /// </summary>
+        private TagCachePendingChanges DetachPendingForHandoff(out long generation)
+        {
+            lock (_lifecycleGate)
+            {
+                generation = Interlocked.Read(ref _lifecycleGeneration);
+                return SwapPendingContainerLocked(retireDetached: true);
+            }
+        }
+
+        /// <summary>
+        /// Restore a failed handoff as an older chronological prefix. Lifecycle validation and
+        /// target capture are O(1) under the gate; per-key replay occurs outside it. RecordOlder
+        /// makes a real event racing the replay the newer suffix regardless of lock ordering.
+        /// Suspend retires the captured target, revoking any replay still in progress.
+        /// </summary>
+        private void RestoreDrainedPendingBatch(
+            IReadOnlyList<TagCacheChange> olderBatch,
+            long expectedGeneration)
+        {
+            if (olderBatch.Count == 0) return;
+            TagCachePendingChanges restoreTarget;
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    // A full writer owns _flushing until this method returns, so Dispose either
+                    // observes this marker before its final save or has already selected the
+                    // timeout/marker path. Startup must rebuild rather than trust a snapshot that
+                    // could not reclaim the detached handoff batch.
+                    Interlocked.Exchange(ref _repairIncomplete, 1);
+                    MarkDirty();
+                    return;
+                }
+
+                if (Volatile.Read(ref _suspended) != 0
+                    || Interlocked.Read(ref _lifecycleGeneration) != expectedGeneration)
+                {
+                    return;
+                }
+
+                restoreTarget = _pending;
+            }
+
+            OnBeforePendingRestoreReplayForTest?.Invoke();
+            foreach (var older in olderBatch) restoreTarget.RecordOlder(older);
+        }
+
+        private TagCachePendingChanges SwapPendingContainerLocked(bool retireDetached)
+        {
+            var detached = Interlocked.Exchange(ref _pending, new TagCachePendingChanges());
+            if (retireDetached)
+            {
+                detached.Retire();
+            }
+
+            return detached;
         }
 
         /// <summary>
@@ -1079,34 +1306,142 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         private bool ApplyPendingBatch(IReadOnlyList<TagCacheChange> batch, out bool removedFromCache)
         {
-            var removed = false;
-            var changed = false;
+            var plan = PreparePendingBatch(
+                batch,
+                _cache,
+                _collectionMembers,
+                _collectionParents,
+                _unindexedCollections);
+            bool changed;
+            lock (_contentGate)
+            {
+                changed = ApplyPreparedPendingBatchLocked(plan, out removedFromCache);
+            }
+
+            PublishPendingFollowups(plan);
+            if (changed)
+            {
+                _userAccessCache.Clear();
+            }
+
+            return changed;
+        }
+
+        private PendingBatchPlan PreparePendingBatch(
+            IReadOnlyList<TagCacheChange> batch,
+            IReadOnlyDictionary<string, TagCacheEntry> cacheSnapshot,
+            IReadOnlyDictionary<Guid, Guid[]> collectionMembersSnapshot,
+            IReadOnlyDictionary<Guid, Guid[]> collectionParentsSnapshot,
+            IReadOnlySet<Guid> unindexedCollectionsSnapshot)
+        {
             var expandedSeries = new HashSet<Guid>();
-            var preparedEntries = new Dictionary<Guid, TagCacheEntry>();
-            foreach (var change in ExpandDependencies(batch, expandedSeries, preparedEntries))
+            var derivedEntries = new Dictionary<Guid, TagCacheEntry>();
+            var ordered = ExpandDependencies(
+                batch,
+                expandedSeries,
+                derivedEntries,
+                cacheSnapshot,
+                collectionParentsSnapshot,
+                unindexedCollectionsSnapshot);
+            // ExpandDependencies already owns the prepared-entry dictionary. Reuse it as
+            // the final plan map so large Series repairs do not allocate a second O(N)
+            // dictionary merely to republish the same derived entries.
+            var entries = derivedEntries;
+            var followupSeries = new HashSet<Guid>();
+            Dictionary<Guid, Guid[]>? replacementMembers = null;
+            HashSet<Guid>? replacementUnindexed = null;
+            var membershipChanged = false;
+
+            void EnsureMembershipCopy()
+            {
+                replacementMembers ??= new Dictionary<Guid, Guid[]>(collectionMembersSnapshot);
+                replacementUnindexed ??= new HashSet<Guid>(unindexedCollectionsSnapshot);
+            }
+
+            foreach (var change in ordered)
             {
                 try
                 {
                     if (change.Removed)
                     {
-                        var didRemove = RemoveEntry(change.Id);
-                        removed |= didRemove;
-                        changed |= didRemove;
+                        var key = change.Id.ToString("N");
+                        if (cacheSnapshot.ContainsKey(key)
+                            && (collectionMembersSnapshot.ContainsKey(change.Id)
+                                || unindexedCollectionsSnapshot.Contains(change.Id)))
+                        {
+                            EnsureMembershipCopy();
+                            replacementMembers!.Remove(change.Id);
+                            replacementUnindexed!.Remove(change.Id);
+                            membershipChanged = true;
+                        }
+
                         continue;
                     }
 
-                    var unavailable = false;
-                    var didRebuild = preparedEntries.TryGetValue(change.Id, out var prepared)
-                        ? PublishPreparedEntry(change.Id, prepared)
-                        : RebuildEntry(
-                            change.Id,
-                            expandedSeries.Contains(change.Id),
-                            out unavailable);
-                    changed |= didRebuild;
-                    if (unavailable)
+                    BaseItem? item = null;
+                    TagCacheEntry? entry;
+                    if (derivedEntries.TryGetValue(change.Id, out var derived))
                     {
-                        QueueRetry(change, "item is not yet resolvable");
+                        // The dependency expander has already produced the complete entry.
+                        // The former PublishPreparedEntry path performed no additional probe,
+                        // retention, relationship, or follow-up work; preserve that allocation-
+                        // tight behavior for large Series descendant batches.
+                        _ = derived;
+                        continue;
                     }
+                    else
+                    {
+                        item = _libraryManager.GetItemById<BaseItem>(change.Id);
+                        if (item == null || !TaggableTypes.Contains(item.GetBaseItemKind()))
+                        {
+                            QueueRetry(change, "item is not yet resolvable");
+                            continue;
+                        }
+
+                        entry = BuildEntryForItem(item);
+                        if (entry == null)
+                        {
+                            QueueRetry(change, "item entry could not be prepared");
+                            continue;
+                        }
+                    }
+
+                    var entryKey = change.Id.ToString("N");
+                    if (entry.SourceRevision == 0
+                        && cacheSnapshot.TryGetValue(entryKey, out var existing)
+                        && string.Equals(entry.StreamSourceId, existing.StreamSourceId, StringComparison.Ordinal))
+                    {
+                        RetainLastGoodProbeData(entry, existing);
+                    }
+
+                    var kind = item?.GetBaseItemKind() ?? ParseKind(entry.Type);
+                    if (kind == BaseItemKind.BoxSet)
+                    {
+                        var membership = ReadCollectionMembers(change.Id);
+                        EnsureMembershipCopy();
+                        if (membership.Unindexed)
+                        {
+                            replacementMembers!.Remove(change.Id);
+                            replacementUnindexed!.Add(change.Id);
+                        }
+                        else
+                        {
+                            replacementMembers![change.Id] = membership.MemberIds;
+                            replacementUnindexed!.Remove(change.Id);
+                        }
+
+                        membershipChanged = true;
+                    }
+
+                    if (kind == BaseItemKind.Series
+                        && !expandedSeries.Contains(change.Id)
+                        && cacheSnapshot.TryGetValue(entryKey, out existing)
+                        && TagCacheDependencyGraph.ParentSeriesSurfaceChanged(existing, entry))
+                    {
+                        followupSeries.Add(change.Id);
+                    }
+
+                    entries[change.Id] = entry;
                 }
                 catch (Exception ex)
                 {
@@ -1114,14 +1449,98 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
             }
 
-            if (changed)
+            Dictionary<Guid, Guid[]>? replacementParents = null;
+            if (membershipChanged)
             {
-                _userAccessCache.Clear();
+                replacementParents = BuildCollectionParents(replacementMembers!);
+                Interlocked.Increment(ref _collectionReverseRebuildsForTest);
+            }
+
+            return new PendingBatchPlan(
+                ordered,
+                entries,
+                replacementMembers,
+                replacementParents,
+                replacementUnindexed,
+                followupSeries);
+        }
+
+        private bool ApplyPreparedPendingBatchLocked(PendingBatchPlan plan, out bool removedFromCache)
+        {
+            if (!Monitor.IsEntered(_contentGate))
+            {
+                throw new InvalidOperationException("Prepared pending batches must publish under the content gate.");
+            }
+
+            var changed = false;
+            var removed = false;
+            if (plan.CollectionMembers != null
+                && plan.CollectionParents != null
+                && plan.UnindexedCollections != null)
+            {
+                _collectionMembers = plan.CollectionMembers;
+                _collectionParents = plan.CollectionParents;
+                _unindexedCollections = plan.UnindexedCollections;
+            }
+
+            foreach (var change in plan.OrderedChanges)
+            {
+                var key = change.Id.ToString("N");
+                if (change.Removed)
+                {
+                    if (_cache.TryRemove(key, out _))
+                    {
+                        RecordContentChangeLocked(key, removed: true);
+                        changed = true;
+                        removed = true;
+                    }
+
+                    continue;
+                }
+
+                if (plan.Entries.TryGetValue(change.Id, out var entry))
+                {
+                    _cache[key] = entry;
+                    RecordContentChangeLocked(key, removed: false);
+                    changed = true;
+                }
             }
 
             removedFromCache = removed;
             return changed;
         }
+
+        private void PublishPendingFollowups(PendingBatchPlan plan)
+        {
+            lock (_lifecycleGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
+                foreach (var seriesId in plan.FollowupSeriesIds)
+                {
+                    _pending.Record(new TagCacheChange(
+                        seriesId,
+                        BaseItemKind.Series,
+                        Guid.Empty,
+                        Guid.Empty,
+                        Guid.Empty,
+                        Guid.Empty,
+                        Removed: false));
+                }
+
+                if (plan.FollowupSeriesIds.Count != 0)
+                {
+                    ScheduleFlush();
+                }
+            }
+        }
+
+        private sealed record PendingBatchPlan(
+            IReadOnlyList<TagCacheChange> OrderedChanges,
+            IReadOnlyDictionary<Guid, TagCacheEntry> Entries,
+            Dictionary<Guid, Guid[]>? CollectionMembers,
+            Dictionary<Guid, Guid[]>? CollectionParents,
+            HashSet<Guid>? UnindexedCollections,
+            IReadOnlySet<Guid> FollowupSeriesIds);
 
         /// <summary>
         /// Expand the centralized derived-entry graph on the background flush worker. Explicit
@@ -1132,12 +1551,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private IReadOnlyList<TagCacheChange> ExpandDependencies(
             IReadOnlyList<TagCacheChange> batch,
             ISet<Guid> expandedSeries,
-            IDictionary<Guid, TagCacheEntry> preparedEntries)
+            IDictionary<Guid, TagCacheEntry> preparedEntries,
+            IReadOnlyDictionary<string, TagCacheEntry> cacheSnapshot,
+            IReadOnlyDictionary<Guid, Guid[]> collectionParentsSnapshot,
+            IReadOnlySet<Guid> unindexedCollectionsSnapshot)
         {
             var targets = new Dictionary<Guid, TagCacheChange>();
             foreach (var change in batch)
             {
                 if (change.Id != Guid.Empty) targets[change.Id] = change;
+            }
+
+            foreach (var change in batch.Where(TagCacheDependencyGraph.NeedsCollectionParentDiscovery))
+            {
+                var oldParents = new HashSet<Guid>();
+                AddKnownParents(collectionParentsSnapshot, change.Id, oldParents);
+                // An over-cap collection cannot have a complete reverse index. Recheck it on
+                // the background worker for any Movie change so a 20,001 -> 20,000 removal
+                // transitions back to indexed/servable even when Jellyfin's live reverse edge
+                // has already disappeared. Event capture itself remains O(1).
+                oldParents.UnionWith(unindexedCollectionsSnapshot);
+                foreach (var parentId in oldParents)
+                {
+                    targets.TryAdd(parentId, DependencyTarget(parentId, BaseItemKind.BoxSet));
+                }
+
+                if (_linkedChildrenService != null)
+                {
+                    try
+                    {
+                        var parentIds = GetCollectionParentIds(change.Id);
+                        if (parentIds.Count > TagCollectionLanguageCoverageProjector.MaximumMembershipEdgesPerRequest
+                            || parentIds.Any(static id => id == Guid.Empty))
+                        {
+                            throw new InvalidOperationException("Collection reverse membership exceeded its safety bound or returned an empty id.");
+                        }
+
+                        foreach (var parentId in parentIds.Distinct())
+                        {
+                            targets.TryAdd(parentId, DependencyTarget(parentId, BaseItemKind.BoxSet));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        QueueRetry(change, $"collection parent discovery failed: {ex.Message}");
+                    }
+                }
             }
 
             var removedSeriesIds = batch
@@ -1177,7 +1636,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 || movedSeasonExpectedEpisodes.Count != 0
                 || seriesExpectedDescendants.Count != 0)
             {
-                foreach (var cached in _cache)
+                foreach (var cached in cacheSnapshot)
                 {
                     Interlocked.Increment(ref _removedDependencyEntriesVisited);
                     if (!Guid.TryParseExact(cached.Key, "N", out var descendantId))
@@ -1286,7 +1745,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         continue;
                     }
 
-                    _cache.TryGetValue(descendantId.ToString("N"), out var cachedDescendant);
+                    cacheSnapshot.TryGetValue(descendantId.ToString("N"), out var cachedDescendant);
                     targets[descendantId] = RemovalTarget(descendantId, ParseKind(cachedDescendant?.Type));
                     preparedEntries.Remove(descendantId);
                 }
@@ -1300,7 +1759,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             && parent.Id != change.SeriesId
                         || parent.Id == change.PreviousSeasonId
                             && parent.Id != change.SeasonId;
-                    if (isPreviousOnlyOwner && !_cache.ContainsKey(parent.Id.ToString("N")))
+                    if (isPreviousOnlyOwner && !cacheSnapshot.ContainsKey(parent.Id.ToString("N")))
                     {
                         continue;
                     }
@@ -1355,7 +1814,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                 && !removedSeriesIds.Contains(episode.SeriesId)
                                 && !removedSeasonIds.Contains(episode.SeasonId);
                             if ((targets.TryAdd(episode.Id, episodeTarget) || canReplaceSyntheticRemoval)
-                                && _cache.TryGetValue(episode.Id.ToString("N").ToLowerInvariant(), out var existing))
+                                && cacheSnapshot.TryGetValue(episode.Id.ToString("N").ToLowerInvariant(), out var existing))
                             {
                                 targets[episode.Id] = episodeTarget;
                                 if (existing.SourceRevision == episode.DateLastSaved.Ticks)
@@ -1418,7 +1877,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             continue;
                         }
 
-                        if (_cache.TryGetValue(descendant.Id.ToString("N"), out var cachedDescendant)
+                        if (cacheSnapshot.TryGetValue(descendant.Id.ToString("N"), out var cachedDescendant)
                             && ParseId(cachedDescendant.SeriesId) is { } oldSeriesId
                             && oldSeriesId != change.Id
                             && (descendant is MediaBrowser.Controller.Entities.TV.Episode episode
@@ -1472,7 +1931,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             var candidate = _libraryManager.GetItemById<BaseItem>(omittedCandidateId);
                             if (candidate == null)
                             {
-                                if (_cache.TryGetValue(omittedCandidateId.ToString("N"), out var missingCached)
+                                if (cacheSnapshot.TryGetValue(omittedCandidateId.ToString("N"), out var missingCached)
                                     && ParseKind(missingCached.Type) is { } missingKind)
                                 {
                                     if (missingKind == BaseItemKind.Series || missingKind == BaseItemKind.Season)
@@ -1538,7 +1997,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         discoveredDescendantIds.Add(descendant.Id);
 
                         var key = descendant.Id.ToString("N").ToLowerInvariant();
-                        _cache.TryGetValue(key, out var existing);
+                        cacheSnapshot.TryGetValue(key, out var existing);
                         var lastUpdated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                         if (existing == null)
                         {
@@ -1621,7 +2080,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         .Select(static id => (Id: id, Kind: BaseItemKind.Series))
                         .Concat(oldSeasonRepairIds.Select(static id => (Id: id, Kind: BaseItemKind.Season)))
                         .Where(owner => !explicitChangeIds.Contains(owner.Id)
-                            && _cache.ContainsKey(owner.Id.ToString("N")))
+                            && cacheSnapshot.ContainsKey(owner.Id.ToString("N")))
                         .GroupBy(static owner => owner.Id)
                         .ToDictionary(static group => group.Key, static group => group.First().Kind);
                     if (oldOwnerKinds.Count != 0)
@@ -1722,6 +2181,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             => kind switch
             {
                 BaseItemKind.Season => 1,
+                BaseItemKind.BoxSet => 1,
                 BaseItemKind.Series => 2,
                 _ => 0,
             };
@@ -1751,6 +2211,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
+                if (Volatile.Read(ref _suspended) != 0)
+                {
+                    return;
+                }
+
                 var attempts = change.RetryAttempts == byte.MaxValue
                     ? byte.MaxValue
                     : (byte)(change.RetryAttempts + 1);
@@ -1777,18 +2242,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 TimeSpan.FromMinutes(5).Ticks));
         }
 
-        private bool PublishPreparedEntry(Guid id, TagCacheEntry entry)
-        {
-            var key = id.ToString("N").ToLowerInvariant();
-            lock (_contentGate)
-            {
-                _cache[key] = entry;
-                RecordContentChangeLocked(key, removed: false);
-            }
-
-            return true;
-        }
-
         private static void SetMax(ref long location, long value)
         {
             var current = Interlocked.Read(ref location);
@@ -1797,88 +2250,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 var observed = Interlocked.CompareExchange(ref location, value, current);
                 if (observed == current) return;
                 current = observed;
-            }
-        }
-
-        /// <summary>
-        /// Resolve an id to its live library item and (re)build its cache entry.
-        /// Returns true if the cache was modified. Runs on the flush worker only.
-        /// </summary>
-        private bool RebuildEntry(Guid id, bool seriesDiscoveryAlreadyExpanded, out bool unavailable)
-        {
-            var item = _libraryManager.GetItemById<BaseItem>(id);
-            if (item == null)
-            {
-                unavailable = true;
-                return false;
-            }
-
-            var kind = item.GetBaseItemKind();
-            if (!TaggableTypes.Contains(kind))
-            {
-                unavailable = false;
-                return false;
-            }
-
-            var entry = BuildEntryForItem(item);
-            if (entry == null)
-            {
-                unavailable = true;
-                return false;
-            }
-            unavailable = false;
-
-            var key = id.ToString("N").ToLowerInvariant();
-            // A degraded entry (media probe failed) carries SourceRevision == 0: retain the last-good
-            // streams and leave it unconfirmed so the next reconcile rebuilds it. Mirrors the
-            // reconcile so an incremental event during a probe outage doesn't drop the streams.
-            if (entry.SourceRevision == 0
-                && _cache.TryGetValue(key, out var existing)
-                && existing != null
-                && string.Equals(entry.StreamSourceId, existing.StreamSourceId, StringComparison.Ordinal))
-            {
-                RetainLastGoodProbeData(entry, existing);
-            }
-            var queueSeriesDiscovery = false;
-            lock (_contentGate)
-            {
-                _cache.TryGetValue(key, out existing);
-                queueSeriesDiscovery = kind == BaseItemKind.Series
-                    && !seriesDiscoveryAlreadyExpanded
-                    && existing != null
-                    && TagCacheDependencyGraph.ParentSeriesSurfaceChanged(existing, entry);
-                _cache[key] = entry;
-                RecordContentChangeLocked(key, removed: false);
-            }
-
-            if (queueSeriesDiscovery && Volatile.Read(ref _disposed) == 0)
-            {
-                _pending.Record(new TagCacheChange(
-                    id,
-                    BaseItemKind.Series,
-                    Guid.Empty,
-                    Guid.Empty,
-                    Guid.Empty,
-                    Guid.Empty,
-                    Removed: false));
-                ScheduleFlush();
-            }
-
-            return true;
-        }
-
-        private bool RemoveEntry(Guid id)
-        {
-            var key = id.ToString("N").ToLowerInvariant();
-            lock (_contentGate)
-            {
-                if (!_cache.TryRemove(key, out _))
-                {
-                    return false;
-                }
-
-                RecordContentChangeLocked(key, removed: true);
-                return true;
             }
         }
 
@@ -2553,7 +2924,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var json = File.ReadAllText(path);
                     OnAfterDiskReadForTest?.Invoke();
                     var data = JsonSerializer.Deserialize<TagCacheDiskFormat>(json);
-                    if (data?.Items != null)
+                    if (data?.Items != null
+                        && data.CollectionMembers != null
+                        && data.UnindexedCollectionIds != null)
                     {
                         if (data.IncompleteRepair)
                         {
@@ -2570,6 +2943,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             return false;
                         }
                         var loaded = new ConcurrentDictionary<string, TagCacheEntry>(data.Items);
+                        var loadedMembers = data.CollectionMembers;
+                        var loadedUnindexed = data.UnindexedCollectionIds;
+                        if (!ValidateCollectionMembershipSnapshot(loaded, loadedMembers, loadedUnindexed))
+                        {
+                            _logger.LogInformation("[TagCache] Discarding malformed collection membership snapshot and rebuilding from the library.");
+                            return false;
+                        }
+                        var loadedParents = BuildCollectionParents(loadedMembers);
                         lock (_contentGate)
                         {
                             if (Volatile.Read(ref _suspended) != 0
@@ -2580,6 +2961,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             }
 
                             _cache = loaded;
+                            _collectionMembers = loadedMembers;
+                            _collectionParents = loadedParents;
+                            _unindexedCollections = loadedUnindexed;
                             Interlocked.Exchange(ref _version, data.Version);
                             Interlocked.Exchange(ref _lastModified, data.LastModified);
                         }
@@ -2643,6 +3027,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         // an immutable cache/metadata snapshot without an O(N) clone.
                         var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
                         var cacheSnapshot = _cache;
+                        var collectionMembersSnapshot = _collectionMembers;
+                        var unindexedCollectionsSnapshot = _unindexedCollections;
                         var cacheVersion = Interlocked.Read(ref _version);
                         var lastModified = Interlocked.Read(ref _lastModified);
                         var incompleteRepair = Volatile.Read(ref _repairIncomplete) != 0;
@@ -2663,6 +3049,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             writer.WriteBoolean(nameof(TagCacheDiskFormat.IncompleteRepair), incompleteRepair);
                             writer.WritePropertyName(nameof(TagCacheDiskFormat.Items));
                             JsonSerializer.Serialize(writer, cacheSnapshot);
+                            writer.WritePropertyName(nameof(TagCacheDiskFormat.CollectionMembers));
+                            JsonSerializer.Serialize(writer, collectionMembersSnapshot);
+                            writer.WritePropertyName(nameof(TagCacheDiskFormat.UnindexedCollectionIds));
+                            JsonSerializer.Serialize(writer, unindexedCollectionsSnapshot);
                             writer.WriteEndObject();
                             writer.Flush();
                         }, () => AcquireCommitLease(canCommit));
@@ -2791,8 +3181,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal void Resume()
         {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            Volatile.Write(ref _suspended, 0);
+            lock (_lifecycleGate)
+            {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                Interlocked.Increment(ref _lifecycleGeneration);
+                Volatile.Write(ref _suspended, 0);
+            }
         }
 
         /// <summary>
@@ -2811,10 +3205,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     return;
                 }
 
+                Interlocked.Increment(ref _lifecycleGeneration);
                 Volatile.Write(ref _suspended, 1);
                 flush = Interlocked.Exchange(ref _flushTimer, null);
                 save = Interlocked.Exchange(ref _debounceSaveTimer, null);
-                _pending.Drain();
+                SwapPendingContainerLocked(retireDetached: true);
                 Interlocked.Exchange(ref _firstPendingTicks, 0);
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
             }
@@ -2882,7 +3277,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             _cache = new ConcurrentDictionary<string, TagCacheEntry>(StringComparer.Ordinal);
-            _pending.Drain();
+            _collectionMembers = new Dictionary<Guid, Guid[]>();
+            _collectionParents = new Dictionary<Guid, Guid[]>();
+            _unindexedCollections = new HashSet<Guid>();
             _userAccessCache.Clear();
             _userAccessInFlight.Clear();
             _servedContentStates.Clear();
@@ -2891,12 +3288,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         public void Dispose()
         {
+            TagCachePendingChanges shutdownPending;
             lock (_lifecycleGate)
             {
                 if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 {
                     return;
                 }
+
+                Interlocked.Increment(ref _lifecycleGeneration);
+                // Keep the detached container writable until the in-flight writer releases
+                // _flushing. A restore that captured it before disposal then completes before
+                // the final drain below; a timeout is already covered by the repair marker.
+                shutdownPending = SwapPendingContainerLocked(retireDetached: false);
             }
 
             var flush = Interlocked.Exchange(ref _flushTimer, null);
@@ -2928,7 +3332,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     PersistIncompleteRepairMarker();
                     _logger.LogWarning("[TagCache] Shutdown timed out waiting for an in-flight cache writer; marking the disk snapshot incomplete for startup rebuild.");
                 }
-                else if (ApplyPendingBatch(_pending.Drain(), out var removed))
+                else if (ApplyPendingBatch(shutdownPending.Drain(), out var removed))
                 {
                     Interlocked.Exchange(ref _lastModified, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     // Persist a Version bump for a shutdown-time removal so clients reconnecting
@@ -3005,8 +3409,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     SeriesId = seriesIdN,
                     SeasonId = seasonIdN,
                     // Capture the source revision so the reconcile can skip re-probing an
-                    // item whose DateLastSaved is unchanged. Set here so BOTH the daily
-                    // reconcile and the incremental RebuildEntry populate the gate key.
+                    // item whose DateLastSaved is unchanged. Set here so both the daily
+                    // reconcile and the incremental pending-batch preparer populate the gate key.
                     SourceRevision = item.DateLastSaved.Ticks,
                 };
 
@@ -3241,6 +3645,98 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     $"Parent Series {seriesId.Value} for {item.Id} is not yet resolvable");
         }
 
+        private CollectionMembershipSnapshot ReadCollectionMembers(Guid collectionId)
+        {
+            if (_linkedChildrenService == null)
+            {
+                return new CollectionMembershipSnapshot(Array.Empty<Guid>(), Unindexed: true);
+            }
+
+            var members = GetCollectionMemberIds(collectionId);
+            // The pinned Jellyfin API returns a fully materialized list; validate it
+            // immediately and never construct a larger union/reverse index from it.
+            if (members.Count > TagCollectionLanguageCoverageProjector.MaximumMembershipEdgesPerRequest)
+            {
+                return new CollectionMembershipSnapshot(Array.Empty<Guid>(), Unindexed: true);
+            }
+
+            if (members.Any(static id => id == Guid.Empty))
+            {
+                throw new InvalidOperationException("Collection membership returned an empty id.");
+            }
+
+            return new CollectionMembershipSnapshot(
+                members.Distinct().OrderBy(static id => id).ToArray(),
+                Unindexed: false);
+        }
+
+        private static bool ValidateCollectionMembershipSnapshot(
+            IReadOnlyDictionary<string, TagCacheEntry> cache,
+            IReadOnlyDictionary<Guid, Guid[]> members,
+            IReadOnlySet<Guid> unindexed)
+        {
+            var boxSets = cache.Where(static pair => string.Equals(pair.Value.Type, nameof(BaseItemKind.BoxSet), StringComparison.Ordinal))
+                .Select(static pair => Guid.TryParseExact(pair.Key, "N", out var id) ? id : Guid.Empty)
+                .ToHashSet();
+            if (boxSets.Contains(Guid.Empty)
+                || unindexed.Contains(Guid.Empty)
+                || unindexed.Any(id => !boxSets.Contains(id))
+                || members.Keys.Any(id => id == Guid.Empty || !boxSets.Contains(id) || unindexed.Contains(id))
+                || !boxSets.SetEquals(members.Keys.Concat(unindexed)))
+            {
+                return false;
+            }
+
+            return members.Values.All(memberIds => memberIds != null
+                && memberIds.Length <= TagCollectionLanguageCoverageProjector.MaximumMembershipEdgesPerRequest
+                && memberIds.All(static id => id != Guid.Empty)
+                && memberIds.Distinct().Count() == memberIds.Length);
+        }
+
+        private static Dictionary<Guid, Guid[]> BuildCollectionParents(
+            IReadOnlyDictionary<Guid, Guid[]> membersByCollection)
+        {
+            var mutable = new Dictionary<Guid, List<Guid>>();
+            foreach (var (collectionId, memberIds) in membersByCollection)
+            {
+                foreach (var memberId in memberIds)
+                {
+                    if (!mutable.TryGetValue(memberId, out var parents))
+                    {
+                        parents = new List<Guid>();
+                        mutable[memberId] = parents;
+                    }
+
+                    parents.Add(collectionId);
+                }
+            }
+
+            return mutable.ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.Distinct().OrderBy(static id => id).ToArray());
+        }
+
+        private static void AddKnownParents(
+            IReadOnlyDictionary<Guid, Guid[]> parentsByMember,
+            Guid memberId,
+            ISet<Guid> destination)
+        {
+            if (parentsByMember.TryGetValue(memberId, out var parents))
+            {
+                destination.UnionWith(parents);
+            }
+        }
+
+        private static bool CollectionMembershipChanged(
+            Guid collectionId,
+            IReadOnlyDictionary<Guid, Guid[]> before,
+            IReadOnlyDictionary<Guid, Guid[]> after)
+        {
+            before.TryGetValue(collectionId, out var oldMembers);
+            after.TryGetValue(collectionId, out var newMembers);
+            return !(oldMembers ?? Array.Empty<Guid>()).SequenceEqual(newMembers ?? Array.Empty<Guid>());
+        }
+
         private class TagCacheDiskFormat
         {
             // On-disk entry schema. Absent (0) in caches written before this
@@ -3251,6 +3747,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             public long LastModified { get; set; }
             public bool IncompleteRepair { get; set; }
             public Dictionary<string, TagCacheEntry> Items { get; set; } = new();
+            public Dictionary<Guid, Guid[]>? CollectionMembers { get; set; }
+            public HashSet<Guid>? UnindexedCollectionIds { get; set; }
         }
+
+        private readonly record struct CollectionMembershipSnapshot(Guid[] MemberIds, bool Unindexed);
     }
 }

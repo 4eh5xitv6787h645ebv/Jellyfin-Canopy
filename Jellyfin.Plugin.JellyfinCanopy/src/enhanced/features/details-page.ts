@@ -84,7 +84,7 @@ const SPOILER_GUARD_READY_EVENT = 'jc:spoiler-guard-ready';
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
 // Types that support audio languages (excludes BoxSet and Playlist)
-const AUDIO_LANGUAGES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie'];
+const AUDIO_LANGUAGES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet'];
 
 // Types that support hiding
 const HIDE_SUPPORTED_TYPES = ['Movie', 'Series', 'Episode', 'Season'];
