@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import {
     displayAudioLanguages,
+    displayFileSource,
     displayWatchProgress,
     resetDetailsMediaInfo,
 } from './details-media-info';
@@ -100,6 +101,57 @@ describe('details media-info identity lifecycle', () => {
 
         expect(plugin).toHaveBeenCalledTimes(1);
         expect(container.querySelector('.mediaInfoItem-watchProgress')).toBeNull();
+    });
+
+    it('renders only the canonical file-source enum and replaces same-item metadata', () => {
+        const container = mountContainer();
+        displayFileSource('source-item', container, {
+            Type: 'Movie',
+            Name: '<img src=x onerror=alert(1)>',
+            Path: '/private/<secret>/Movie.BluRay.disc',
+        });
+
+        const chip = container.querySelector<HTMLElement>('.mediaInfoItem-fileSource');
+        expect(chip?.dataset.itemId).toBe('source-item');
+        expect(chip?.dataset.fileSource).toBe('BluRay');
+        expect(chip?.textContent).toBe('albumBluRay');
+        expect(chip?.getAttribute('aria-label')).toBe('file_source_tooltip: BluRay');
+        expect(container.innerHTML).not.toContain('/private/');
+        expect(container.querySelector('img')).toBeNull();
+
+        displayFileSource('source-item', container, {
+            Type: 'Movie', MediaSources: [{ Path: '/media/Movie.DVD.disc' }],
+        });
+        expect(container.querySelector<HTMLElement>('.mediaInfoItem-fileSource')?.dataset.fileSource).toBe('DVD');
+        expect(container.querySelectorAll('.mediaInfoItem-fileSource')).toHaveLength(1);
+    });
+
+    it('keeps unknown and ambiguous source metadata silent and reset-owned', () => {
+        const container = mountContainer();
+        displayFileSource('source-item', container, {
+            Type: 'Episode', MediaSources: [{ Path: '/media/Episode.HDTV.disc' }],
+        });
+        expect(container.querySelector('.mediaInfoItem-fileSource')).not.toBeNull();
+
+        displayFileSource('source-item', container, {
+            Type: 'Episode',
+            MediaSources: [
+                { Path: '/media/A.BluRay.disc' },
+                { Path: '/media/B.DVD.disc' },
+            ],
+        });
+        expect(container.querySelector('.mediaInfoItem-fileSource')).toBeNull();
+
+        displayFileSource('source-item', container, {
+            Type: 'Episode', MediaSources: [{ Path: '/media/Episode.mkv' }],
+        });
+        expect(container.querySelector('.mediaInfoItem-fileSource')).toBeNull();
+
+        displayFileSource('source-item', container, {
+            Type: 'Episode', MediaSources: [{ Path: '/media/Episode.HDTV.disc' }],
+        });
+        resetDetailsMediaInfo();
+        expect(container.querySelector('.mediaInfoItem-fileSource')).toBeNull();
     });
 
     it('uses the captured account for audio metadata and drops A language results', async () => {

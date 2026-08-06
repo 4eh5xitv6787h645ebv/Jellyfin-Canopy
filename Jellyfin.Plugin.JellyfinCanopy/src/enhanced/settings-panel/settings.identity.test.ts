@@ -6,7 +6,7 @@ import type { PanelContext } from './panel';
 const TOGGLE_IDS = [
     'autoPauseToggle', 'autoResumeToggle', 'autoPipToggle', 'autoSkipIntroToggle',
     'autoSkipOutroToggle', 'randomButtonToggle', 'randomUnwatchedOnly',
-    'showWatchProgressToggle', 'showFileSizesToggle', 'showAudioLanguagesToggle',
+    'showWatchProgressToggle', 'showFileSizesToggle', 'showFileSourceToggle', 'showAudioLanguagesToggle',
     'removeContinueWatchingToggle', 'hideFavoritesTabToggle', 'qualityTagsToggle', 'genreTagsToggle',
     'pauseScreenToggle', 'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
     'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled'
@@ -39,7 +39,7 @@ describe('settings panel document listener identity cleanup', () => {
         wireSettingsListeners({
             identityContext: contextA,
             registerCleanup: (cleanup: () => void) => cleanups.push(cleanup),
-            createToast: () => '',
+            createToast: () => 'saved',
             resetAutoCloseTimer: vi.fn(),
         } as unknown as PanelContext);
 
@@ -55,5 +55,38 @@ describe('settings panel document listener identity cleanup', () => {
         expect(JC.currentSettings.subtitleHorizontalPosition).toBeUndefined();
         expect(JC.currentSettings.subtitleVerticalPosition).toBeUndefined();
         expect(save).not.toHaveBeenCalled();
+    });
+
+    it('removes the acting user file-source chip synchronously when disabled', async () => {
+        document.body.innerHTML = '';
+        JC.identity.transition('server-a', 'user-a', 'settings-source-toggle');
+        const cleanups: Array<() => void> = [];
+        for (const id of TOGGLE_IDS) {
+            const input = document.createElement('input');
+            input.id = id;
+            input.type = 'checkbox';
+            document.body.appendChild(input);
+        }
+        const chip = document.createElement('div');
+        chip.className = 'mediaInfoItem-fileSource';
+        document.body.appendChild(chip);
+        JC.currentSettings = { showFileSource: true };
+        const save = vi.fn().mockResolvedValue(undefined);
+        JC.saveUserSettings = save;
+        wireSettingsListeners({
+            identityContext: JC.identity.capture(),
+            registerCleanup: (cleanup: () => void) => cleanups.push(cleanup),
+            createToast: () => 'saved',
+            resetAutoCloseTimer: vi.fn(),
+        } as unknown as PanelContext);
+
+        const toggle = document.getElementById('showFileSourceToggle') as HTMLInputElement;
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+
+        expect(JC.currentSettings.showFileSource).toBe(false);
+        expect(document.querySelector('.mediaInfoItem-fileSource')).toBeNull();
+        await vi.waitFor(() => expect(save).toHaveBeenCalled());
+        cleanups.forEach((cleanup) => cleanup());
     });
 });

@@ -6,5 +6,10 @@
     "segmentStartSeconds": 2,
     "segmentEndSeconds": 25,
     "minimumMarginSeconds": 10
+  },
+  "fileSource": {
+    "name": "JC File Source BluRay",
+    "relativePath": "Movies/JC File Source BluRay.disc.mkv",
+    "canonicalValue": "BluRay"
   }
 }

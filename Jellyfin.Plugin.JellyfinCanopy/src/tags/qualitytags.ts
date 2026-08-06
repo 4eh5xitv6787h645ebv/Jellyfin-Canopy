@@ -13,6 +13,11 @@ import { register, reinitialize, resolvePosition } from '../core/tag-renderer-ba
 import type { TagRendererContext, TagSpec } from '../types/jc';
 import { resolveQualityResolution } from './quality-resolution';
 import {
+    detectFileSource,
+    FILE_SOURCE_DETECTION_VERSION,
+    FILE_SOURCE_VALUES,
+} from '../core/file-source';
+import {
     AUDIO_SELECTION_VERSION,
     describeSelectedAudioTrack,
     resolveEffectiveAudioLanguagePreference,
@@ -34,7 +39,7 @@ const containerClass = 'quality-overlay-container';
 
 // Within-category sort orders (more important = lower index inside each category).
 const resolutionOrder = ['8K', '4K', '1440p', '1080p', '720p', '480p', 'LOW-RES', 'SD'];
-const sourceOrder = ['BluRay', 'HD DVD', 'DVD', 'VHS', 'HDTV', 'Physical'];
+const sourceOrder: string[] = [...FILE_SOURCE_VALUES];
 const dynamicRangeOrder = ['Dolby Vision', 'HDR10+', 'HDR10', 'HDR'];
 const specialFormatOrder = ['IMAX', '3D'];
 const codecOrder = ['AV1', 'HEVC', 'H265', 'VP9', 'H264', 'VP8', 'XVID', 'DIVX', 'WMV', 'MPEG2', 'MPEG4', 'MJPEG', 'THEORA'];
@@ -114,6 +119,7 @@ interface QualityCacheEntry {
     qualities: string[];
     timestamp: number;
     audioSelectionKey: string;
+    fileSourceDetectionVersion: number;
 }
 
 // Computed quality labels derived from server cache entries. The preference
@@ -194,7 +200,7 @@ export function getEnhancedQuality(
     itemData: any = null,
     preferredAudioLanguage = effectiveAudioPreference(),
 ): string[] {
-    if (!mediaStreams && !mediaSources) return [];
+    if (!mediaStreams && !mediaSources && !itemData) return [];
 
     const qualities = new Set<string>();
     let videoStreams: any[] = [];
@@ -400,45 +406,13 @@ export function getEnhancedQuality(
     }
 
     // --- MEDIA STUB TAG LOGIC ---
-    // Detect media stubs (.disc files) for BluRay, DVD, or generic Physical media
-    const stubSignals: string[] = [];
-    if (itemData) {
-        stubSignals.push(
-            itemData.Name || '',
-            itemData.Path || ''
-        );
-    }
-    if (Array.isArray(mediaSources)) {
-        mediaSources.forEach((source: any) => {
-            stubSignals.push(source?.Path || '', source?.Name || '');
-        });
-    }
-
-    const stubContext = stubSignals.filter(Boolean).join(' | ').toLowerCase();
-
-    // Check for .disc extension (media stub indicator)
-    if (stubContext.includes('.disc')) {
-        // Parse filename/path for specific media type patterns
-        const blurayRegex = /bluray|blu-ray|bdrip|bd-rip|bdremux/;
-        const hddvdRegex = /hddvd|hd-dvd|hd dvd/;
-        const dvdRegex = /dvd|dvdrip|dvd-rip|dvdremux/;
-        const vhsRegex = /vhs/;
-        const hdtvRegex = /hdtv/;
-
-        if (blurayRegex.test(stubContext)) {
-            qualities.add('BluRay');
-        } else if (hddvdRegex.test(stubContext)) {
-            qualities.add('HD DVD');
-        } else if (dvdRegex.test(stubContext)) {
-            qualities.add('DVD');
-        } else if (vhsRegex.test(stubContext)) {
-            qualities.add('VHS');
-        } else if (hdtvRegex.test(stubContext)) {
-            qualities.add('HDTV');
-        } else {
-            qualities.add('Physical');
-        }
-    }
+    // Poster and details surfaces deliberately share one ambiguity-safe owner.
+    const fileSource = detectFileSource({
+        Name: itemData?.Name,
+        Path: itemData?.Path,
+        MediaSources: mediaSources,
+    });
+    if (fileSource) qualities.add(fileSource);
 
     return Array.from(qualities);
 }
@@ -678,6 +652,7 @@ const spec: TagSpec = {
             // Check hot cache first
             const hot = ctx.hot?.get(itemId) as QualityCacheEntry | undefined;
             if (hot && hot.audioSelectionKey === selectionKey
+                && hot.fileSourceDetectionVersion === FILE_SOURCE_DETECTION_VERSION
                 && (Date.now() - hot.timestamp) < ctx.cacheTtl) {
                 insertOverlay(ctx, el, hot.qualities);
                 return;
@@ -697,6 +672,7 @@ const spec: TagSpec = {
                     qualities,
                     timestamp: Date.now(),
                     audioSelectionKey: selectionKey,
+                    fileSourceDetectionVersion: FILE_SOURCE_DETECTION_VERSION,
                 };
                 ctx.setPersistent(itemId, cached);
                 ctx.hot?.set(itemId, cached);
@@ -710,6 +686,7 @@ const spec: TagSpec = {
             const hot = ctx.hot?.get(itemId) as QualityCacheEntry | undefined;
             const cached = hot || (ctx.getPersistent(itemId) as QualityCacheEntry | undefined);
             if (cached?.audioSelectionKey === audioSelectionKey()
+                && cached.fileSourceDetectionVersion === FILE_SOURCE_DETECTION_VERSION
                 && Array.isArray(cached.qualities) && cached.qualities.length > 0) {
                 insertOverlay(ctx, el, cached.qualities);
                 return true;
@@ -722,17 +699,26 @@ const spec: TagSpec = {
             const selectionKey = audioSelectionKey();
             // Check local computed cache first (avoids re-running quality detection)
             const cached = serverQualityCache.get(itemId);
-            if (cached?.audioSelectionKey === selectionKey) {
+            if (cached?.audioSelectionKey === selectionKey
+                && cached.fileSourceDetectionVersion === FILE_SOURCE_DETECTION_VERSION) {
                 if (cached.qualities.length > 0) insertOverlay(ctx, el, cached.qualities);
                 return;
             }
             const sd = entry.StreamData;
             if (!sd || !sd.Streams) {
-                serverQualityCache.set(itemId, { audioSelectionKey: selectionKey, qualities: [] });
+                serverQualityCache.set(itemId, {
+                    audioSelectionKey: selectionKey,
+                    fileSourceDetectionVersion: FILE_SOURCE_DETECTION_VERSION,
+                    qualities: [],
+                });
                 return;
             }
             const qualities = getEnhancedQuality(sd.Streams, sd.Sources, { Name: sd.ItemName, Path: sd.ItemPath });
-            serverQualityCache.set(itemId, { audioSelectionKey: selectionKey, qualities });
+            serverQualityCache.set(itemId, {
+                audioSelectionKey: selectionKey,
+                fileSourceDetectionVersion: FILE_SOURCE_DETECTION_VERSION,
+                qualities,
+            });
             if (qualities.length > 0) insertOverlay(ctx, el, qualities);
         },
         onServerCacheRefresh(ctx, updatedIds) {

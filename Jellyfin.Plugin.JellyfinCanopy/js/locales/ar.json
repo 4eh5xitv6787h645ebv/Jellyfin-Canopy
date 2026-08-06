@@ -1,4 +1,7 @@
 {
+  "panel_settings_ui_file_source": "Show File Source",
+  "panel_settings_ui_file_source_desc": "Display BluRay, DVD, or other physical-media source on Movie and Episode detail pages independently of poster source tags.",
+  "file_source_tooltip": "File Source",
   "toast_search": "{{icon:search}} بحث",
   "toast_home": "{{icon:home}} الرئيسية",
   "toast_dashboard": "{{icon:dashboard}} لوحة التحكم",

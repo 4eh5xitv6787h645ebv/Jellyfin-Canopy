@@ -295,6 +295,7 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
         isEnabled: (state) => Boolean(state.identity) && (
             JC.currentSettings?.showWatchProgress === true
             || JC.currentSettings?.showFileSizes === true
+            || JC.currentSettings?.showFileSource === true
             || JC.currentSettings?.showAudioLanguages === true
             || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
             || JC.pluginConfig?.HiddenContentEnabled === true

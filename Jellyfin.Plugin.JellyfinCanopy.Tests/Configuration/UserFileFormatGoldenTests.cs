@@ -78,6 +78,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                 SubtitleVerticalPosition = 42,
                 WatchProgressMode = "time",
                 WatchProgressTimeFormat = "minutes",
+                ShowFileSource = true,
                 ShowResolutionTag = false,
                 // int? orders: mixed null / non-null so the golden pins that
                 // nulls are WRITTEN (NullValueHandling.Include) not omitted.
@@ -108,6 +109,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Null(back.SourceTagOrder);
             Assert.Equal(2, back.ResolutionTagOrder);
             Assert.Equal(0, back.DynamicRangeTagOrder);
+            Assert.True(back.ShowFileSource);
             Assert.Equal(
                 new[] { "Episode", "BoxSet" },
                 back.RatingTagScopeOverrides.DisabledItemTypes);

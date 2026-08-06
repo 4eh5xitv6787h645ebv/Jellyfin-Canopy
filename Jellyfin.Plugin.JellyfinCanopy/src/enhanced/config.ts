@@ -817,7 +817,7 @@ JC.loadSettings = (): UserSettings => {
         subtitleVerticalPosition: 85, subtitleHorizontalPosition: 50,
         randomButtonEnabled: true,
         randomIncludeMovies: true, randomIncludeShows: true, randomUnwatchedOnly: false,
-        showWatchProgress: false, showFileSizes: false, showAudioLanguages: true, removeContinueWatchingEnabled: false, hideFavoritesTab: false,
+        showWatchProgress: false, showFileSizes: false, showFileSource: false, showAudioLanguages: true, removeContinueWatchingEnabled: false, hideFavoritesTab: false,
         watchProgressMode: 'percentage',
         watchProgressTimeFormat: 'hours',
         pauseScreenEnabled: true,

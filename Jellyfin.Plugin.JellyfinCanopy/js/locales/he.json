@@ -1,4 +1,7 @@
 {
+  "panel_settings_ui_file_source": "Show File Source",
+  "panel_settings_ui_file_source_desc": "Display BluRay, DVD, or other physical-media source on Movie and Episode detail pages independently of poster source tags.",
+  "file_source_tooltip": "File Source",
   "toast_search": "{{icon:search}} חיפוש",
   "panel_settings_language_display_desc": "Select the language for Jellyfin Canopy interface. Changes take effect after page refresh.",
   "discovery_more_with_tag": "More with the tag - \"{tag}\"",

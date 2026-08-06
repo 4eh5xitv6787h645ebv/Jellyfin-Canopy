@@ -135,7 +135,7 @@ const TOGGLE_IDS = [
     'autoPauseToggle', 'autoResumeToggle', 'autoPipToggle',
     'autoSkipIntroToggle', 'autoSkipOutroToggle',
     'randomButtonToggle', 'randomUnwatchedOnly',
-    'showWatchProgressToggle', 'showFileSizesToggle', 'showAudioLanguagesToggle',
+    'showWatchProgressToggle', 'showFileSizesToggle', 'showFileSourceToggle', 'showAudioLanguagesToggle',
     'removeContinueWatchingToggle', 'hideFavoritesTabToggle',
     'qualityTagsToggle', 'genreTagsToggle', 'pauseScreenToggle',
     'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
@@ -290,6 +290,10 @@ describe('admin target pane isolation', () => {
     it('persists target toggles without applying any actor DOM/runtime side effect', async () => {
         settingsDom();
         const editor = targetEditor();
+        editor.settings.showFileSource = true;
+        const actorSourceChip = document.createElement('div');
+        actorSourceChip.className = 'mediaInfoItem-fileSource';
+        document.body.appendChild(actorSourceChip);
         const initializeQuality = vi.fn();
         const addRandom = vi.fn();
         const hideFavorites = vi.fn();
@@ -307,11 +311,16 @@ describe('admin target pane isolation', () => {
         const random = document.getElementById('randomButtonToggle') as HTMLInputElement;
         random.checked = true;
         random.dispatchEvent(new Event('change'));
-        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(2));
-        await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+        const fileSource = document.getElementById('showFileSourceToggle') as HTMLInputElement;
+        fileSource.checked = false;
+        fileSource.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(3));
+        await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(3));
 
         expect(editor.settings.qualityTagsEnabled).toBe(true);
         expect(editor.settings.randomButtonEnabled).toBe(true);
+        expect(editor.settings.showFileSource).toBe(false);
+        expect(document.querySelector('.mediaInfoItem-fileSource')).toBe(actorSourceChip);
         expect(initializeQuality).not.toHaveBeenCalled();
         expect(addRandom).not.toHaveBeenCalled();
         expect(hideFavorites).not.toHaveBeenCalled();

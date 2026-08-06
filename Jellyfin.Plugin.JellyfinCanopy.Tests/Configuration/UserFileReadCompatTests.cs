@@ -124,6 +124,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Equal(1, settings.RatingTagScopeOverrides.Version);
             Assert.Empty(settings.RatingTagScopeOverrides.DisabledItemTypes);
             Assert.Empty(settings.RatingTagScopeOverrides.DisabledSurfaces);
+            Assert.False(settings.ShowFileSource);
         }
 
         /// <summary>Unknown members (from newer/older plugin versions) remain

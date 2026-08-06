@@ -22,7 +22,7 @@ The panel is a settings view with a section list on the left (full-screen with t
 - **Shortcuts** — customize the keyboard shortcuts (see [Advanced keyboard shortcuts](#advanced-keyboard-shortcuts)).
 - **Playback, Auto-Skip, Subtitles, Random Button, UI, Hidden Content, Spoiler Guard, Language** — enable or disable features and adjust positions, sizes, colors, and modes, one section at a time.
 
-Toggling a feature applies **immediately** — no restart, no page reload. The toggles you'll find here include Quality Tags, Genre Tags, Language Tags, Rating Tags, People Tags, Pause Screen, Auto-skip Intros, Auto-skip Outros, Auto Picture-in-Picture, Show Watch Progress, Show File Sizes, Show Audio Languages, and more.
+Toggling a feature applies **immediately** — no restart, no page reload. The toggles you'll find here include Quality Tags, Genre Tags, Language Tags, Rating Tags, People Tags, Pause Screen, Auto-skip Intros, Auto-skip Outros, Auto Picture-in-Picture, Show Watch Progress, Show File Sizes, Show File Source, Show Audio Languages, and more.
 
 ### Settings persistence
 
@@ -401,6 +401,7 @@ Poster tags are computed once on the server and served in a single request, so t
 Beyond poster overlays, a few per-user toggles add useful facts to a title's detail page.
 
 - **Show File Sizes** — displays each item's file size on its detail and collection pages. Per-user, in the **Settings** tab.
+- **Show File Source** — displays the normalized physical-media source (`BluRay`, `HD DVD`, `DVD`, `VHS`, `HDTV`, or generic `Physical`) on Movie and Episode detail pages. It is independent of the poster Quality Tags **Source** category, so you can keep poster source badges off while retaining the detail-page chip. Detection remains limited to Jellyfin `.disc` media stubs; ordinary files, unsupported data, and conflicting or partly unknown multi-version items stay silent instead of guessing. Per-user, default off, in the **Settings** tab.
 - **Show Audio Languages** — lists a title's available audio languages on its detail page. For Collections it shows the same bounded, access-safe full/partial/unknown member coverage as the poster instead of choosing a representative title. Explicit BCP-47 country regions use the same validated flag as poster Language Tags; ambiguous tags stay as descriptive text without an inferred national flag. Per-user, in the **Settings** tab. (This is the text list on the detail page — distinct from the poster [Language Tags](#language-tags) overlay.)
 
 There's also an admin-only chip for release dates:

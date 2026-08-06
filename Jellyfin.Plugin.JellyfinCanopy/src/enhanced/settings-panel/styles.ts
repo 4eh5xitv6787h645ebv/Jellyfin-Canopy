@@ -112,6 +112,7 @@ export function injectGlobalStyles(): void {
                 box-shadow: 0 1px 1px rgba(0,0,0,0.2);
             }
             .mediaInfoItem-fileSize .material-icons,
+            .mediaInfoItem-fileSource .material-icons,
             .mediaInfoItem-watchProgress .material-icons,
             .mediaInfoItem-audioLanguage .material-icons {
               font-family: 'Material Symbols Rounded' !important;
@@ -131,19 +132,25 @@ export function injectGlobalStyles(): void {
                roughly 540–700px because its sibling action row keeps its
                intrinsic size. Reserve a usable metadata column and let those
                actions wrap only while Canopy chips are actually mounted. */
-            @media (min-width: 500px) and (max-width: 709px) {
+            @media (min-width: 500px) and (max-width: 710px) {
                 .jc-modern-layout #itemDetailPage:not(.hide)
                 .detailRibbon:has(
                     .mediaInfoItem-watchProgress,
                     .mediaInfoItem-fileSize,
+                    .mediaInfoItem-fileSource,
                     .mediaInfoItem-audioLanguage
                 ) .infoWrapper {
                     min-width: 7.5rem !important;
                 }
                 .jc-modern-layout #itemDetailPage:not(.hide)
+                .detailRibbon:has(.mediaInfoItem-fileSource) .infoWrapper {
+                    min-width: 14rem !important;
+                }
+                .jc-modern-layout #itemDetailPage:not(.hide)
                 .detailRibbon:has(
                     .mediaInfoItem-watchProgress,
                     .mediaInfoItem-fileSize,
+                    .mediaInfoItem-fileSource,
                     .mediaInfoItem-audioLanguage
                 ) .mainDetailButtons {
                     min-width: 0 !important;
