@@ -20,6 +20,7 @@ declare module '../types/jc' {
         cycleSubtitleTrack?: () => void;
         cycleAudioTrack?: () => void;
         cycleAspect?: () => void;
+        togglePlaybackInfo?: () => void;
         initializeAutoSkipObserver?: () => void;
         stopAutoSkip?: () => void;
         handleLongPressDown?: (e: Event) => void;

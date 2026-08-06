@@ -974,5 +974,21 @@
   "maintainerr_unavailable": "Maintainerr kullanılamıyor",
   "maintainerr_version": "Sürüm {version}",
   "maintainerr_view_content": "Medya öğelerini görüntüle",
-  "maintainerr_views": "Maintainerr görünümleri"
+  "maintainerr_views": "Maintainerr görünümleri",
+  "track_off": "Kapalı",
+  "aspect_ratio_auto": "Otomatik",
+  "aspect_ratio_cover": "Kapla",
+  "aspect_ratio_fill": "Doldur",
+  "playback_info_title": "Oynatma Bilgisi",
+  "pi_resolution": "Çözünürlük",
+  "pi_speed": "Hız",
+  "pi_dropped_frames": "Düşen kareler",
+  "pi_buffer": "Ara belleğe alındı",
+  "pi_play_method": "Oynatma yöntemi",
+  "pi_transcoding": "Dönüştürme",
+  "pi_bitrate": "Bit hızı",
+  "pi_transcode_reason": "Neden",
+  "pi_container": "Kapsayıcı",
+  "pi_audio": "Ses",
+  "pi_subtitle": "Altyazılar"
 }
