@@ -715,7 +715,7 @@ describe('DOM-free player shortcuts', () => {
             await flushPromises();
 
             expect(commands).toHaveLength(0); // ownership unproven → never commands
-            expect(triggerClick).toHaveBeenCalledTimes(1); // surface-guarded fallback
+            expect(triggerClick).not.toHaveBeenCalled(); // moved surface → no fallback either
         });
 
         it('BLOB: an established press whose surface later moves is swallowed — even a LAGGING probe still reporting the press item cannot rescue it', async () => {
@@ -751,6 +751,32 @@ describe('DOM-free player shortcuts', () => {
 
             expect(commands).toHaveLength(0); // moved id-less surface → swallowed outright
             expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('BLOB: unproven ownership PLUS a moved surface swallows (no fallback on the next item)', async () => {
+            const video = mountVideo();
+            const commands: string[] = [];
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return Promise.reject(new Error('probe down'));
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            // Next episode lands while ownership is still unresolved.
+            video.remove();
+            mountVideo();
+            await flushPromises();
+
+            expect(commands).toHaveLength(0);
+            expect(triggerClick).not.toHaveBeenCalled(); // no menu on the next item
         });
 
         it('overlay: an item change behind a STABLE blob source (route id) also discards the sample', async () => {

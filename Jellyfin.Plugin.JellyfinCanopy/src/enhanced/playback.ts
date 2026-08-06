@@ -828,9 +828,12 @@ async function cycleTrackViaApi(
     if (baselineStale()) return true; // stale press — swallow
     // Unproven press ownership never commands: every press resolves an item
     // id (source-parsed or press-time probe), so a null here means the
-    // ownership capture failed. The DOM sheet fallback is safe — it operates
-    // on the visible current surface and stays behind the outer guards.
-    if (!pressItemId) return false;
+    // ownership capture failed. The DOM sheet fallback is acceptable only
+    // while the press surface has not moved — a moved surface plus unproven
+    // ownership means the press may belong to the previous item; swallow.
+    if (!pressItemId) {
+        return press.idless && !pressSurfaceUnchanged(press);
+    }
     const sessionId = session?.Id;
     const itemId = session?.NowPlayingItem?.Id;
     if (!session || !sessionId || !itemId) return false;
