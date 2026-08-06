@@ -435,6 +435,8 @@ test.describe('Seerr modal history ownership', () => {
                 window.removeEventListener('popstate', modalListener, true);
                 const proof = {
                     laterStates: [] as Array<string | null>,
+                    phaseAtBack: null as string | null,
+                    pushRuns: 0,
                     recoveryForwardQueued: false,
                     rewriteRuns: 0,
                     rewriteSettled: false,
@@ -514,14 +516,35 @@ test.describe('Seerr modal history ownership', () => {
                     );
                 });
 
+                // Place B after Canopy issues its real Back but before the
+                // browser can deliver that asynchronous traversal. A second
+                // zero-delay timer does not define that transaction boundary.
+                const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+                const originalBack = history.back.bind(history);
+                const restoreBack = () => {
+                    if (ownBackDescriptor) {
+                        Object.defineProperty(history, 'back', ownBackDescriptor);
+                    } else {
+                        delete (history as { back?: () => void }).back;
+                    }
+                };
+                Object.defineProperty(history, 'back', {
+                    configurable: true,
+                    writable: true,
+                    value: () => {
+                        restoreBack();
+                        proof.phaseAtBack = owner.pendingOwnedTraversal?.phase ?? null;
+                        originalBack();
+                        proof.pushRuns += 1;
+                        history.pushState(
+                            { jcHistoryProof: 'async-canonical-route-b' },
+                            '',
+                            stableHref
+                        );
+                    },
+                });
+
                 handle.close();
-                setTimeout(() => {
-                    history.pushState(
-                        { jcHistoryProof: 'async-canonical-route-b' },
-                        '',
-                        stableHref
-                    );
-                }, 0);
 
                 // Keep this Playwright step attached to the browser task until
                 // the selected scheduler actually delivers, instead of starting
@@ -543,6 +566,8 @@ test.describe('Seerr modal history ownership', () => {
             }, undefined, { polling: 50, timeout: 30_000 });
             expect(await page.evaluate(() => (window as any).__jcAsyncCanonicalProof)).toEqual({
                 laterStates: ['async-canonical-route-b'],
+                phaseAtBack: 'issued',
+                pushRuns: 1,
                 recoveryForwardQueued: true,
                 rewriteRuns: 1,
                 rewriteSettled: true,
@@ -1038,7 +1063,12 @@ test.describe('Seerr modal history ownership', () => {
             const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
             const modalListener = owner.listener as EventListener;
             window.removeEventListener('popstate', modalListener, true);
-            const proof = { laterStates: [] as unknown[], reactiveRuns: 0 };
+            const proof = {
+                laterStates: [] as unknown[],
+                phaseAtBack: null as string | null,
+                pushRuns: 0,
+                reactiveRuns: 0,
+            };
             (window as any).__jcReactivePushProof = proof;
             window.addEventListener('popstate', () => {
                 proof.reactiveRuns += 1;
@@ -1059,21 +1089,41 @@ test.describe('Seerr modal history ownership', () => {
             window.addEventListener('popstate', modalListener, { capture: true });
             window.addEventListener('popstate', (event) => proof.laterStates.push(event.state));
 
+            // Preserve a real asynchronous Back while making the intended
+            // issued-Back/host-PUSH ordering explicit and observable.
+            const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+            const originalBack = history.back.bind(history);
+            const restoreBack = () => {
+                if (ownBackDescriptor) {
+                    Object.defineProperty(history, 'back', ownBackDescriptor);
+                } else {
+                    delete (history as { back?: () => void }).back;
+                }
+            };
+            Object.defineProperty(history, 'back', {
+                configurable: true,
+                writable: true,
+                value: () => {
+                    restoreBack();
+                    proof.phaseAtBack = owner.pendingOwnedTraversal?.phase ?? null;
+                    originalBack();
+                    proof.pushRuns += 1;
+                    History.prototype.pushState.call(
+                        history,
+                        { jcHistoryProof: 'reactive-route-b' },
+                        '',
+                        stableHref
+                    );
+                    owner.historyObserver?.({
+                        source: 'pushState',
+                        action: 'PUSH',
+                        state: history.state,
+                        href: location.href,
+                    });
+                },
+            });
+
             handle.close();
-            setTimeout(() => {
-                History.prototype.pushState.call(
-                    history,
-                    { jcHistoryProof: 'reactive-route-b' },
-                    '',
-                    stableHref
-                );
-                owner.historyObserver?.({
-                    source: 'pushState',
-                    action: 'PUSH',
-                    state: history.state,
-                    href: location.href,
-                });
-            }, 0);
         });
 
         await page.waitForFunction(() => {
@@ -1085,6 +1135,8 @@ test.describe('Seerr modal history ownership', () => {
         }, undefined, { polling: 50, timeout: 30_000 });
         expect(await page.evaluate(() => (window as any).__jcReactivePushProof)).toEqual({
             laterStates: [],
+            phaseAtBack: 'issued',
+            pushRuns: 1,
             reactiveRuns: 1,
         });
 
