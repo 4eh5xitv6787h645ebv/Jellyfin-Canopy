@@ -367,6 +367,21 @@ make_multilingual_clip() { # <relative-path>
         -shortest -threads "${JF_FFMPEG_THREADS}" -y "$1"
 }
 
+make_coverage_clip() { # <relative-path> <base-tone-hz>
+    # Every episode in the coverage fixture has English; exactly one also has
+    # Japanese. Series/Season projection must therefore prove English full and
+    # Japanese partial from real Jellyfin 12 stream metadata.
+    run_ffmpeg \
+        -f lavfi -i "testsrc2=duration=5:size=640x360:rate=24" \
+        -f lavfi -i "sine=frequency=$2:duration=5" \
+        -f lavfi -i "sine=frequency=$(($2 + 40)):duration=5" \
+        -map 0:v -map 1:a -map 2:a \
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+        -c:a aac -metadata:s:a:0 language="eng" -disposition:a:0 default \
+        -metadata:s:a:1 language="jpn" -disposition:a:1 0 \
+        -shortest -threads "${JF_FFMPEG_THREADS}" -y "$1"
+}
+
 log "generating test movies"
 make_clip "Movies/Alpha Adventure (2021).mp4" 440
 make_clip "Movies/Beta Voyage (2022).mp4" 550
@@ -388,7 +403,7 @@ SHOW_NAME="Guard Test Show"
 log "generating test series '${SHOW_NAME}' (2 seasons × 2 episodes)"
 mkdir -p "${MEDIA_DIR}/Shows/${SHOW_NAME}/Season 01" "${MEDIA_DIR}/Shows/${SHOW_NAME}/Season 02"
 make_clip "Shows/${SHOW_NAME}/Season 01/${SHOW_NAME} S01E01.mp4" 480
-make_clip "Shows/${SHOW_NAME}/Season 01/${SHOW_NAME} S01E02.mp4" 500
+make_coverage_clip "Shows/${SHOW_NAME}/Season 01/${SHOW_NAME} S01E02.mp4" 500
 make_clip "Shows/${SHOW_NAME}/Season 02/${SHOW_NAME} S02E01.mp4" 520
 make_clip "Shows/${SHOW_NAME}/Season 02/${SHOW_NAME} S02E02.mp4" 540
 

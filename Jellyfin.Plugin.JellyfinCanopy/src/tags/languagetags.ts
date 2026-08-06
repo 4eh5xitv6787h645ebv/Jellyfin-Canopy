@@ -30,7 +30,19 @@ const containerClass = 'language-overlay-container';
 const flagClass = 'language-flag';
 const neutralClass = 'language-code-badge';
 const presentationClass = 'language-tag-presentation';
-const LANGUAGE_CACHE_SCHEMA_VERSION = 3;
+const LANGUAGE_CACHE_SCHEMA_VERSION = 4;
+
+type LanguageCoverageState = 'full' | 'partial' | 'unknown';
+
+interface LanguageCoverageProjection {
+    eligibleEpisodeCount: number | null;
+    observedEpisodeCount: number | null;
+    complete: boolean;
+    full: MediaLanguageIdentity[];
+    partial: MediaLanguageIdentity[];
+    unknown: MediaLanguageIdentity[];
+    truncated: boolean;
+}
 
 /** Versioned browser-cache shape. Pre-version caches lost regional subtags. */
 export interface LanguageCachePayload {
@@ -162,6 +174,151 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
     ctx.commitOverlay(container, wrap);
 }
 
+function safeCount(value: unknown): number | null {
+    return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+}
+
+/** Validate the server-owned, caller-scoped coverage sidecar fail closed. */
+function readLanguageCoverage(value: unknown): LanguageCoverageProjection | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.Complete !== 'boolean'
+        || typeof record.Truncated !== 'boolean'
+        || !Array.isArray(record.FullLanguages)
+        || !Array.isArray(record.PartialLanguages)
+        || !Array.isArray(record.UnknownLanguages)) return null;
+    const eligibleEpisodeCount = record.EligibleEpisodeCount === null
+        ? null
+        : safeCount(record.EligibleEpisodeCount);
+    const observedEpisodeCount = record.ObservedEpisodeCount === null
+        ? null
+        : safeCount(record.ObservedEpisodeCount);
+    if ((record.EligibleEpisodeCount !== null && eligibleEpisodeCount === null)
+        || (record.ObservedEpisodeCount !== null && observedEpisodeCount === null)
+        || (eligibleEpisodeCount !== null && observedEpisodeCount !== null
+            && observedEpisodeCount > eligibleEpisodeCount)) return null;
+
+    const rawIdentityCount = record.FullLanguages.length
+        + record.PartialLanguages.length
+        + record.UnknownLanguages.length;
+    if (rawIdentityCount > 32) return null;
+    const groups: Array<[LanguageCoverageState, MediaLanguageIdentity[]]> = [
+        ['full', resolveMediaLanguageIdentities(record.FullLanguages)],
+        ['partial', resolveMediaLanguageIdentities(record.PartialLanguages)],
+        ['unknown', resolveMediaLanguageIdentities(record.UnknownLanguages)],
+    ];
+    const tierRank: Record<LanguageCoverageState, number> = { full: 0, unknown: 1, partial: 2 };
+    const merged = new Map<string, { state: LanguageCoverageState; language: MediaLanguageIdentity }>();
+    for (const [state, languages] of groups) {
+        for (const language of languages) {
+            const current = merged.get(language.canonicalTag);
+            if (!current) {
+                merged.set(language.canonicalTag, { state, language });
+                continue;
+            }
+            current.state = tierRank[state] > tierRank[current.state] ? state : current.state;
+            if (current.language.flagRegion !== language.flagRegion) {
+                current.language = { ...current.language, flagRegion: null };
+            }
+        }
+    }
+    const byTier = (state: LanguageCoverageState): MediaLanguageIdentity[] => Array.from(merged.values())
+        .filter((entry) => entry.state === state)
+        .map((entry) => entry.language)
+        .sort((left, right) => left.canonicalTag < right.canonicalTag ? -1
+            : left.canonicalTag > right.canonicalTag ? 1 : 0);
+    const full = byTier('full');
+    const partial = byTier('partial');
+    const unknown = byTier('unknown');
+    if (record.Complete && (eligibleEpisodeCount === null || observedEpisodeCount !== eligibleEpisodeCount)) return null;
+    if ((record.Complete && unknown.length > 0) || (!record.Complete && full.length > 0)) return null;
+    return {
+        eligibleEpisodeCount,
+        observedEpisodeCount,
+        complete: record.Complete,
+        full,
+        partial,
+        unknown,
+        truncated: record.Truncated,
+    };
+}
+
+function insertLanguageCoverage(
+    ctx: TagRendererContext,
+    container: HTMLElement,
+    coverage: LanguageCoverageProjection,
+): void {
+    if (!container || ctx.isTagged(container)) return;
+    ctx.removeExistingOverlay(container);
+    container.style.position = 'relative';
+    const wrap = document.createElement('div');
+    wrap.className = containerClass;
+    const pos = resolvePosition('languageTagsPosition', 'LanguageTagsPosition', 'bottom-left');
+    wrap.style.position = 'absolute';
+    wrap.style.top = pos.topVal; wrap.style.right = pos.rightVal;
+    wrap.style.bottom = pos.bottomVal; wrap.style.left = pos.leftVal;
+    if (container.querySelector('.cardIndicators') && pos.needsTopRightOffset) {
+        wrap.style.marginTop = 'clamp(20px, 3vw, 30px)';
+    }
+
+    const groups: Array<[LanguageCoverageState, MediaLanguageIdentity[]]> = [
+        ['full', coverage.full],
+        ['partial', coverage.partial],
+        ['unknown', coverage.unknown],
+    ];
+    const presentations = groups.flatMap(([state, languages]) =>
+        buildMediaLanguagePresentations(languages).map((presentation) => ({ state, presentation })));
+
+    for (const { state, presentation } of presentations.slice(0, 3)) {
+        const tag = document.createElement('span');
+        tag.className = `${presentationClass} language-coverage-${state}`;
+        tag.setAttribute('role', 'img');
+        const count = coverage.eligibleEpisodeCount;
+        const countLabel = count === null ? '' : ` across ${count} eligible episode${count === 1 ? '' : 's'}`;
+        tag.setAttribute('aria-label', `${presentation.accessibleLabel} — ${state} coverage${countLabel}`);
+        tag.dataset.langTags = JSON.stringify(presentation.canonicalTags);
+        tag.dataset.coverage = state;
+        if (presentation.kind === 'flag' && presentation.flagRegion) {
+            tag.dataset.region = presentation.flagRegion;
+            const img = document.createElement('img');
+            img.src = flagSvgUrl(presentation.flagRegion);
+            img.className = flagClass;
+            img.alt = '';
+            img.setAttribute('aria-hidden', 'true');
+            img.loading = 'lazy';
+            tag.appendChild(img);
+        } else {
+            tag.classList.add(neutralClass);
+            tag.dataset.region = '';
+            tag.textContent = presentation.token;
+        }
+        wrap.appendChild(tag);
+    }
+
+    if (presentations.length === 0) {
+        const state = document.createElement('span');
+        state.className = `${presentationClass} ${neutralClass} language-coverage-state`;
+        state.setAttribute('role', 'img');
+        state.dataset.region = '';
+        if (coverage.complete && coverage.eligibleEpisodeCount === 0) {
+            state.textContent = '0';
+            state.setAttribute('aria-label', 'No eligible episodes for language coverage');
+        } else if (coverage.complete) {
+            state.textContent = '—';
+            const count = coverage.eligibleEpisodeCount;
+            state.setAttribute(
+                'aria-label',
+                `No recognized audio languages across ${count} eligible episode${count === 1 ? '' : 's'}`,
+            );
+        } else {
+            state.textContent = '?';
+            state.setAttribute('aria-label', 'Language coverage incomplete');
+        }
+        wrap.appendChild(state);
+    }
+    ctx.commitOverlay(container, wrap);
+}
+
 /** Factory spec — everything language-specific lives here. */
 const spec: TagSpec = {
     logPrefix,
@@ -195,6 +352,7 @@ const spec: TagSpec = {
                 object-fit: cover;
             }
             .${presentationClass} {
+                position: relative;
                 display: inline-flex;
                 min-width: clamp(24px, 6vw, 32px);
                 min-height: 1.25em;
@@ -219,6 +377,24 @@ const spec: TagSpec = {
                 white-space: nowrap;
                 box-shadow: 0 1px 3px rgba(0,0,0,0.4);
             }
+            .${presentationClass}[data-coverage]::after {
+                position: absolute;
+                right: -0.28em;
+                bottom: -0.28em;
+                min-width: 1.05em;
+                min-height: 1.05em;
+                border: 1px solid rgba(255,255,255,0.9);
+                border-radius: 50%;
+                background: rgba(18,18,18,0.95);
+                color: #fff;
+                font-size: 0.55em;
+                font-weight: 800;
+                line-height: 1;
+                text-align: center;
+            }
+            .language-coverage-full::after { content: '✓'; }
+            .language-coverage-partial::after { content: '◐'; }
+            .language-coverage-unknown::after { content: '?'; }
             @media (max-width: 768px) {
                 .${flagClass} {
                     width: clamp(20px, 5vw, 26px);
@@ -251,6 +427,15 @@ const spec: TagSpec = {
             if (el.closest('.jc-hidden')) return;
 
             const itemId = item.Id;
+            const isContainer = item.Type === 'Series' || item.Type === 'Season';
+            if (isContainer && item.LanguageCoverage !== undefined) {
+                const coverage = readLanguageCoverage(item.LanguageCoverage);
+                // Coverage is policy-scoped, so never retain it in browser storage.
+                ctx.hot?.delete(itemId);
+                ctx.setPersistent(itemId, undefined);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage);
+                return;
+            }
             // Check hot cache first
             const hot = ctx.hot?.get(itemId);
             if (hot) {
@@ -264,7 +449,7 @@ const spec: TagSpec = {
             }
 
             let sourceItem = item;
-            if (item.Type === 'Series' || item.Type === 'Season') {
+            if (isContainer) {
                 if (extras.firstEpisode) {
                     sourceItem = extras.firstEpisode;
                 } else {
@@ -275,10 +460,17 @@ const spec: TagSpec = {
             const languages = extractLanguagesFromItem(sourceItem);
 
             if (languages.length > 0) {
-                const payload = createLanguageCachePayload(languages)!;
-                ctx.setPersistent(itemId, payload);
-                ctx.hot?.set(itemId, { value: payload, timestamp: payload.timestamp });
-                insertLanguageTags(ctx, el, payload.languages);
+                if (isContainer) {
+                    // Old servers expose only representative first-Episode data.
+                    // Render that compatibility fallback, but never cache it as
+                    // aggregate coverage evidence.
+                    insertLanguageTags(ctx, el, languages);
+                } else {
+                    const payload = createLanguageCachePayload(languages)!;
+                    ctx.setPersistent(itemId, payload);
+                    ctx.hot?.set(itemId, { value: payload, timestamp: payload.timestamp });
+                    insertLanguageTags(ctx, el, payload.languages);
+                }
             }
         },
         renderFromCache(ctx, el, itemId) {
@@ -311,6 +503,11 @@ const spec: TagSpec = {
         renderFromServerCache(ctx, el, entry: any) {
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
+            if (entry.LanguageCoverage !== undefined) {
+                const coverage = readLanguageCoverage(entry.LanguageCoverage);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage);
+                return;
+            }
             const codes = entry.AudioLanguages;
             if (!codes || codes.length === 0) return;
             insertLanguageTags(ctx, el, codes);

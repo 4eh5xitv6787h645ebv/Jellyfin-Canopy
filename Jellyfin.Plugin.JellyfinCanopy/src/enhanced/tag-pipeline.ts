@@ -118,6 +118,16 @@ export interface ContentApplyResult {
     changedIds: string[];
 }
 
+/** Attach one response-scoped language sidecar without mutating caller data. */
+function projectResponseEntry(response: any, id: string, entry: any): any {
+    const coverage = response?.languageCoverage && typeof response.languageCoverage === 'object'
+        ? response.languageCoverage[id]
+        : undefined;
+    return coverage && typeof coverage === 'object'
+        ? { ...entry, LanguageCoverage: coverage }
+        : entry;
+}
+
 /**
  * Pure owner of full/delta map publication. Full snapshots replace the map even
  * when empty; deltas delete tombstones before merging upserts; stale responses
@@ -147,7 +157,7 @@ export function applyContentResponse(
         for (const [rawId, entry] of Object.entries(response.items)) {
             const id = normalizeProjectionKey(rawId);
             if (!id) continue;
-            next.set(id, entry);
+            next.set(id, projectResponseEntry(response, id, entry));
             changed.add(id);
         }
     }
@@ -880,7 +890,7 @@ async function refreshServerCache(projectionOnly = false): Promise<void> {
         if (resp?.items && typeof resp.items === 'object') {
             for (const [rawId, entry] of Object.entries(resp.items)) {
                 const id = normalizeProjectionKey(rawId);
-                if (id) newEntries.push([id, entry]);
+                if (id) newEntries.push([id, projectResponseEntry(resp, id, entry)]);
             }
         }
 

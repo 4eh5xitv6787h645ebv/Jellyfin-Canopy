@@ -146,6 +146,145 @@ test.describe('tags', () => {
         expect(consoleErrors.real()).toEqual([]);
     });
 
+    test('Series and season language coverage render full and partial states', async ({
+        page,
+        consoleErrors,
+    }, testInfo) => {
+            await page.addInitScript(() => localStorage.setItem('layout', 'experimental'));
+            await loginAs(page, 'admin', consoleErrors);
+            const fixture = await page.evaluate(async () => {
+                const api = (window as any).ApiClient;
+                const canopy = (window as any).JellyfinCanopy;
+                const userId = api.getCurrentUserId();
+                const result = await api.getItems(userId, {
+                    IncludeItemTypes: 'Series',
+                    Recursive: true,
+                    SearchTerm: 'Guard Test Show',
+                    Limit: 10,
+                });
+                const matches = (result?.Items || []).filter((item: any) => item.Name === 'Guard Test Show');
+                const series = matches[0];
+                const seasonResult = series
+                    ? await api.getItems(userId, {
+                        ParentId: series.Id,
+                        IncludeItemTypes: 'Season',
+                        Recursive: false,
+                    })
+                    : null;
+                const seasonOne = (seasonResult?.Items || []).find((item: any) => item.Name === 'Season 1');
+                const hadSetting = Object.prototype.hasOwnProperty.call(
+                    canopy.currentSettings,
+                    'languageTagsEnabled',
+                );
+                const setting = canopy.currentSettings.languageTagsEnabled;
+                return {
+                    matchCount: matches.length,
+                    seriesId: series?.Id || '',
+                    seasonOneId: seasonOne?.Id || '',
+                    hadSetting,
+                    setting,
+                    modern: document.documentElement.classList.contains('jc-modern-layout'),
+                };
+            });
+
+            expect(fixture.matchCount).toBe(1);
+            expect(fixture.seriesId).not.toBe('');
+            expect(fixture.seasonOneId).not.toBe('');
+            expect(fixture.modern).toBe(true);
+
+            try {
+                const coverage = await page.evaluate(async ({ seriesId, seasonOneId }) => {
+                    const api = (window as any).ApiClient;
+                    const canopy = (window as any).JellyfinCanopy;
+                    canopy.currentSettings.languageTagsEnabled = true;
+                    await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                    canopy.reinitializeLanguageTags();
+
+                    const userId = api.getCurrentUserId();
+                    const cache = await api.ajax({
+                        type: 'GET',
+                        url: api.getUrl(`/JellyfinCanopy/tag-cache/${userId}`),
+                        dataType: 'json',
+                    });
+                    const coverageFor = (id: unknown) => {
+                        const key = String(id || '').replace(/-/g, '').toLowerCase();
+                        return cache?.languageCoverage?.[key] || null;
+                    };
+                    return {
+                        series: coverageFor(seriesId),
+                        seasonOne: coverageFor(seasonOneId),
+                    };
+                }, { seriesId: fixture.seriesId, seasonOneId: fixture.seasonOneId });
+
+                expect(coverage.series).toMatchObject({
+                    EligibleEpisodeCount: 4,
+                    ObservedEpisodeCount: 4,
+                    Complete: true,
+                    FullLanguages: ['en'],
+                    PartialLanguages: ['ja'],
+                    UnknownLanguages: [],
+                    Truncated: false,
+                });
+                expect(coverage.seasonOne).toMatchObject({
+                    EligibleEpisodeCount: 2,
+                    ObservedEpisodeCount: 2,
+                    Complete: true,
+                    FullLanguages: ['en'],
+                    PartialLanguages: ['ja'],
+                    UnknownLanguages: [],
+                    Truncated: false,
+                });
+
+                await showRoute(page, `/details?id=${fixture.seriesId}`);
+                await waitForHash(page, fixture.seriesId);
+                const poster = page.locator(
+                    '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+                    + '#itemDetailPage:not(.hide) .detailImageContainer .card',
+                ).filter({ has: page.locator('.language-coverage-partial') }).first();
+                const full = poster.locator('.language-coverage-full');
+                const partial = poster.locator('.language-coverage-partial');
+                await expect(full).toHaveCount(1, { timeout: 60_000 });
+                await expect(partial).toHaveCount(1);
+                await expect(full).toHaveAttribute('data-lang-tags', '["en"]');
+                await expect(partial).toHaveAttribute('data-lang-tags', '["ja"]');
+                const fullLabel = await full.getAttribute('aria-label');
+                const partialLabel = await partial.getAttribute('aria-label');
+                const fullCount = fullLabel?.match(/full coverage across (\d+) eligible episodes/)?.[1];
+                const partialCount = partialLabel?.match(/partial coverage across (\d+) eligible episodes/)?.[1];
+                expect(fullCount).toBe('2');
+                expect(partialCount).toBe(fullCount);
+                expect(await full.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('"✓"');
+                expect(await partial.evaluate((element) => getComputedStyle(element, '::after').content)).toBe('"◐"');
+
+                await page.setViewportSize({ width: 390, height: 844 });
+                const bounds = await poster.locator('.language-overlay-container').evaluate((element) => {
+                    const overlay = element as HTMLElement;
+                    const card = overlay.closest<HTMLElement>('.card');
+                    const overlayRect = overlay.getBoundingClientRect();
+                    const cardRect = card?.getBoundingClientRect();
+                    return {
+                        insideCard: !!cardRect
+                            && overlayRect.left >= cardRect.left - 1
+                            && overlayRect.right <= cardRect.right + 1,
+                        noHorizontalOverflow: overlay.scrollWidth <= overlay.clientWidth + 1,
+                    };
+                });
+                expect(bounds).toEqual({ insideCard: true, noHorizontalOverflow: true });
+                await poster.screenshot({ path: testInfo.outputPath('issue-667-modern.png') });
+                assertNoRuntimeErrors(consoleErrors);
+            } finally {
+                if (!page.isClosed()) {
+                    await page.evaluate(async ({ hadSetting, setting }) => {
+                        const canopy = (window as any).JellyfinCanopy;
+                        if (hadSetting) canopy.currentSettings.languageTagsEnabled = setting;
+                        else delete canopy.currentSettings.languageTagsEnabled;
+                        await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                        canopy.reinitializeLanguageTags();
+                    }, { hadSetting: fixture.hadSetting, setting: fixture.setting });
+                }
+            }
+        });
+
     test('single-digit Jellyfin critic values stay single-digit on real poster cards', async ({ page, consoleErrors }) => {
         const routePattern = '**/JellyfinCanopy/tag-cache/**';
         const injectedIds = new Set<string>();

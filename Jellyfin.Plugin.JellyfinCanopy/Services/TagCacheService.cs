@@ -2212,6 +2212,32 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             return result;
         }
 
+        /// <summary>
+        /// Read shared Episode evidence for ids already returned by a caller-scoped
+        /// library query. This method performs no authorization by design; only the
+        /// request-scoped language projector may call it with those verified ids.
+        /// </summary>
+        internal Dictionary<Guid, TagCacheEntry> GetCachedEntriesByIds(IEnumerable<Guid> itemIds)
+        {
+            ArgumentNullException.ThrowIfNull(itemIds);
+            ConcurrentDictionary<string, TagCacheEntry> cache;
+            lock (_contentGate)
+            {
+                cache = _cache;
+            }
+
+            var result = new Dictionary<Guid, TagCacheEntry>();
+            foreach (var id in itemIds)
+            {
+                if (id != Guid.Empty && cache.TryGetValue(id.ToString("N"), out var entry))
+                {
+                    result[id] = entry;
+                }
+            }
+
+            return result;
+        }
+
         // ── Spoiler Guard per-user tag-strip (F3) ────────────────────────────
         //
         // The JC tag pipeline reads the server cache BEFORE it fetches per-batch
