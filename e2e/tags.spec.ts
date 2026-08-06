@@ -538,6 +538,167 @@ test.describe('tags', () => {
         }
     });
 
+    test('rating scope hides Episode posters without affecting Movie posters', async ({ page, consoleErrors }) => {
+        const routePattern = '**/JellyfinCanopy/tag-cache/**';
+        await page.route(routePattern, async (route) => {
+            const response = await route.fetch();
+            const url = new URL(route.request().url());
+            const body = await response.json() as {
+                items?: Record<string, Record<string, unknown>>;
+                Items?: Record<string, Record<string, unknown>>;
+            };
+            const items = body.items ?? body.Items;
+            if (url.search === '' && items && typeof items === 'object') {
+                for (const [id, entry] of Object.entries(items)) {
+                    if (!entry) continue;
+                    items[id] = {
+                        ...entry,
+                        CommunityRating: 8.4,
+                        CriticRating: 84,
+                        RatingSuppressed: false,
+                    };
+                }
+            }
+            await route.fulfill({ response, json: body });
+        });
+
+        await loginAs(page, 'user', consoleErrors);
+        const fixture = await page.evaluate(async () => {
+            const api = (window as any).ApiClient;
+            const canopy = (window as any).JellyfinCanopy;
+            const userId = api.getCurrentUserId();
+            const [movies, episodes] = await Promise.all([
+                api.getItems(userId, { IncludeItemTypes: 'Movie', Recursive: true, Limit: 1 }),
+                api.getItems(userId, { IncludeItemTypes: 'Episode', Recursive: true, Limit: 1 }),
+            ]);
+            const settings = canopy.currentSettings;
+            return {
+                movieId: movies?.Items?.[0]?.Id || '',
+                episodeId: episodes?.Items?.[0]?.Id || '',
+                hadEnabled: Object.prototype.hasOwnProperty.call(settings, 'ratingTagsEnabled'),
+                enabled: settings.ratingTagsEnabled,
+                hadPolicy: Object.prototype.hasOwnProperty.call(settings, 'ratingTagScopeOverrides'),
+                policy: settings.ratingTagScopeOverrides,
+            };
+        });
+        expect(fixture.movieId).not.toBe('');
+        expect(fixture.episodeId).not.toBe('');
+
+        const poster = '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+            + '#itemDetailPage:not(.hide) .detailImageContainer .card';
+        try {
+            await page.evaluate(async () => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.currentSettings.ratingTagsEnabled = true;
+                canopy.currentSettings.ratingTagScopeOverrides = {
+                    version: 1,
+                    disabledItemTypes: ['Episode'],
+                    disabledSurfaces: [],
+                };
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeRatingTags();
+            });
+
+            await showRoute(page, `/details?id=${fixture.movieId}`);
+            await waitForHash(page, fixture.movieId);
+            const moviePoster = page.locator(poster).first();
+            await expect(moviePoster.locator('.rating-overlay-container')).toBeVisible({ timeout: 60_000 });
+            await expect(moviePoster.locator('.rating-tag-critic .rating-text')).toHaveText('84%');
+
+            await showRoute(page, `/details?id=${fixture.episodeId}`);
+            await waitForHash(page, fixture.episodeId);
+            const episodePoster = page.locator(poster).first();
+            await expect(episodePoster).toHaveAttribute('data-jc-rating-tagged', '1', { timeout: 60_000 });
+            await expect(episodePoster.locator('.rating-overlay-container')).toHaveCount(0);
+
+            // Exercise a real Home row after the asynchronous per-user
+            // DisplayPreferences read. With no surface deny, the seeded Next Up
+            // Episode must remain visible; applying NextUp live then removes the
+            // stale tag without affecting the same Movie on the Other surface.
+            await page.evaluate(async () => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.currentSettings.ratingTagScopeOverrides = {
+                    version: 1,
+                    disabledItemTypes: [],
+                    disabledSurfaces: [],
+                };
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeRatingTags();
+            });
+            const preferencesRead = page.waitForResponse(
+                (response) => response.url().includes('/DisplayPreferences/usersettings')
+                    && response.status() === 200,
+                { timeout: 60_000 },
+            );
+            await showRoute(page, '/home');
+            await waitForHash(page, '/home');
+            const preferences = await (await preferencesRead).json() as {
+                CustomPrefs?: Record<string, unknown>;
+            };
+            const defaultSections = [
+                'smalllibrarytiles',
+                'resume',
+                'resumeaudio',
+                'resumebook',
+                'livetv',
+                'nextup',
+                'latestmedia',
+                'none',
+                'none',
+                'none',
+            ];
+            const nextUpSlot = defaultSections.findIndex((fallback, index) => {
+                const raw = preferences.CustomPrefs?.[`homesection${index}`];
+                return (typeof raw === 'string' ? raw.trim().toLowerCase() : fallback) === 'nextup';
+            });
+            expect(nextUpSlot, 'DisplayPreferences must configure a Next Up Home slot')
+                .toBeGreaterThanOrEqual(0);
+            const nextUpCard = page.locator(
+                `.homeSectionsContainer .section${nextUpSlot} .card[data-type="Episode"]`,
+            ).first();
+            await expect(nextUpCard).toBeVisible({ timeout: 60_000 });
+            await expect(nextUpCard.locator('.rating-tag-critic .rating-text')).toHaveText(
+                '84%',
+                { timeout: 60_000 },
+            );
+
+            await page.evaluate(async () => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.currentSettings.ratingTagScopeOverrides = {
+                    version: 1,
+                    disabledItemTypes: [],
+                    disabledSurfaces: ['NextUp'],
+                };
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                canopy.reinitializeRatingTags();
+            });
+            await expect(nextUpCard).toHaveAttribute('data-jc-rating-tagged', '1', { timeout: 60_000 });
+            await expect(nextUpCard.locator('.rating-overlay-container')).toHaveCount(0);
+
+            await showRoute(page, `/details?id=${fixture.movieId}`);
+            await waitForHash(page, fixture.movieId);
+            const movieAfterNextUpDeny = page.locator(poster).first();
+            await expect(movieAfterNextUpDeny.locator('.rating-tag-critic .rating-text')).toHaveText(
+                '84%',
+                { timeout: 60_000 },
+            );
+            assertNoRuntimeErrors(consoleErrors);
+        } finally {
+            if (!page.isClosed()) {
+                await page.evaluate(async (snapshot) => {
+                    const canopy = (window as any).JellyfinCanopy;
+                    if (snapshot.hadEnabled) canopy.currentSettings.ratingTagsEnabled = snapshot.enabled;
+                    else delete canopy.currentSettings.ratingTagsEnabled;
+                    if (snapshot.hadPolicy) canopy.currentSettings.ratingTagScopeOverrides = snapshot.policy;
+                    else delete canopy.currentSettings.ratingTagScopeOverrides;
+                    await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+                    canopy.reinitializeRatingTags();
+                }, fixture);
+            }
+            await page.unroute(routePattern);
+        }
+    });
+
     test('preferred audio language selects one real track and rerenders without a mixed badge', async ({
         page,
         consoleErrors,

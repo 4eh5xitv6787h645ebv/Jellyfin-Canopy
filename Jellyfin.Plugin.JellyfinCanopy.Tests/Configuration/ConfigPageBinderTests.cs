@@ -121,6 +121,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
         }
 
         [Fact]
+        public void RatingTagScopePolicy_IsVersionedAndUsesOnlyStableIdentifiers()
+        {
+            var html = ConfigPageSource.Html;
+            var js = ConfigPageSource.Js;
+
+            Assert.Contains(
+                "data-config-key=\"RatingTagScopePolicy\"",
+                html,
+                StringComparison.Ordinal);
+            foreach (var itemType in RatingTagScopePolicyV1.ItemTypes)
+            {
+                Assert.Contains($"data-rating-scope-kind=\"itemType\" value=\"{itemType}\"", html, StringComparison.Ordinal);
+            }
+
+            foreach (var surface in RatingTagScopePolicyV1.Surfaces)
+            {
+                Assert.Contains($"data-rating-scope-kind=\"surface\" value=\"{surface}\"", html, StringComparison.Ordinal);
+            }
+
+            Assert.Contains("RatingTagScopePolicy:", js, StringComparison.Ordinal);
+            Assert.Contains("Version: 1", js, StringComparison.Ordinal);
+            Assert.DoesNotContain("DisabledSelectors", js, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void ArrInstanceEditor_PreservesOpaqueInstanceId()
         {
             var js = ConfigPageSource.Js;

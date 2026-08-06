@@ -399,6 +399,136 @@ describe('details poster identity', () => {
     });
 });
 
+describe('semantic scope ownership (issue 669)', () => {
+    const userId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const itemId = '99999999999999999999999999999999';
+
+    it('clears and rerenders the same item when its surface signature changes', async () => {
+        document.body.innerHTML = '';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = { ...oldConfig, TagCacheServerMode: false, SpoilerBlurEnabled: false };
+        JC.core.ui = { injectCss: vi.fn(), removeCss: vi.fn() } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userId);
+        const renderFromCache = vi.fn((target: HTMLElement) => {
+            const marker = document.createElement('div');
+            marker.className = 'scope-signature-marker';
+            marker.dataset.surface = target.closest<HTMLElement>('.card')?.dataset.surface || '';
+            target.appendChild(marker);
+            return true;
+        });
+        const invalidateCard = vi.fn((target: HTMLElement) => {
+            target.querySelector('.scope-signature-marker')?.remove();
+        });
+        JC.tagPipeline!.registerRenderer('scope-signature-sync-test', {
+            scopeSignature: (el: HTMLElement) => el.closest<HTMLElement>('.card')?.dataset.surface || 'ordinary',
+            render: () => undefined,
+            renderFromCache,
+            invalidateCard,
+            isEnabled: () => true,
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
+            const image = gridCardImage();
+            const card = image.closest<HTMLElement>('.card')!;
+            card.dataset.id = itemId;
+            card.dataset.type = 'Movie';
+            card.dataset.surface = 'ordinary';
+            document.body.appendChild(card);
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => {
+                expect(document.querySelector<HTMLElement>('.scope-signature-marker')?.dataset.surface)
+                    .toBe('ordinary');
+            });
+
+            card.dataset.surface = 'nextup';
+            JC.tagPipeline!.scheduleScan?.();
+
+            await vi.waitFor(() => {
+                expect(document.querySelector<HTMLElement>('.scope-signature-marker')?.dataset.surface)
+                    .toBe('nextup');
+            });
+            expect(invalidateCard).toHaveBeenCalled();
+            expect(renderFromCache).toHaveBeenCalledTimes(2);
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('scope-signature-sync-test');
+            resetTagPipelineIdentity();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+
+    it('rejects a delayed batch result after the same item changes surfaces', async () => {
+        document.body.innerHTML = '';
+        const oldConfig = JC.pluginConfig;
+        const oldUi = JC.core.ui;
+        JC.pluginConfig = { ...oldConfig, TagCacheServerMode: false, SpoilerBlurEnabled: false };
+        JC.core.ui = { injectCss: vi.fn(), removeCss: vi.fn() } as unknown as NonNullable<typeof JC.core.ui>;
+        const currentUser = vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(userId);
+        const resolvers: Array<(value: unknown) => void> = [];
+        const ajax = vi.spyOn(ApiClient, 'ajax').mockImplementation(
+            () => new Promise((resolve) => { resolvers.push(resolve); }),
+        );
+        const render = vi.fn((target: HTMLElement) => {
+            const marker = document.createElement('div');
+            marker.className = 'async-scope-signature-marker';
+            marker.dataset.surface = target.closest<HTMLElement>('.card')?.dataset.surface || '';
+            target.appendChild(marker);
+        });
+        JC.tagPipeline!.registerRenderer('scope-signature-async-test', {
+            scopeSignature: (el: HTMLElement) => el.closest<HTMLElement>('.card')?.dataset.surface || 'ordinary',
+            render,
+            invalidateCard: (target: HTMLElement) => {
+                target.querySelector('.async-scope-signature-marker')?.remove();
+            },
+            isEnabled: () => true,
+        });
+
+        try {
+            resetTagPipelineIdentity();
+            await Promise.resolve(JC.tagPipeline!.initialize?.());
+            const image = gridCardImage();
+            const card = image.closest<HTMLElement>('.card')!;
+            card.dataset.id = itemId;
+            card.dataset.type = 'Movie';
+            card.dataset.surface = 'ordinary';
+            document.body.appendChild(card);
+            JC.tagPipeline!.scheduleScan?.();
+            await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+
+            card.dataset.surface = 'nextup';
+            JC.tagPipeline!.scheduleScan?.();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            resolvers[0]({ Items: [{ Id: itemId, Type: 'Movie' }] });
+            await new Promise((resolve) => setTimeout(resolve, 40));
+
+            expect(render).not.toHaveBeenCalled();
+            expect(document.querySelector('.async-scope-signature-marker')).toBeNull();
+
+            await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(2));
+            resolvers[1]({ Items: [{ Id: itemId, Type: 'Movie' }] });
+            await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+            expect(document.querySelector<HTMLElement>('.async-scope-signature-marker')?.dataset.surface)
+                .toBe('nextup');
+        } finally {
+            (JC.tagPipeline as unknown as { unregisterRenderer(name: string): void })
+                .unregisterRenderer('scope-signature-async-test');
+            resetTagPipelineIdentity();
+            ajax.mockRestore();
+            currentUser.mockRestore();
+            JC.pluginConfig = oldConfig;
+            JC.core.ui = oldUi;
+            document.body.innerHTML = '';
+        }
+    });
+});
+
 describe('watched/privacy projection response ordering (BI-SEC-035)', () => {
     const userA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     const userB = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';

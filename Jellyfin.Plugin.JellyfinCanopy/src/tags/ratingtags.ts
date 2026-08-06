@@ -11,6 +11,11 @@ import { createStableMethodFacade } from '../core/feature-loader';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 import { shouldSuppressRatingTag as decideSuppressRatingTag, type SuppressionItem } from '../enhanced/spoiler-guard/suppression';
+import { acquireHomeRowScopes, primeHomeRowScopes } from '../enhanced/home-row-scope';
+import {
+    ratingTagScopeAllows,
+    resolveRatingTagRenderScope,
+} from './rating-tag-scope';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -55,7 +60,7 @@ function shouldSuppressRatingTag(item: SuppressionItem | null | undefined): bool
 const FRESH_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMyIgcj0iOCIgZmlsbD0iI2Y5MzIwOCIvPjxwYXRoIGQ9Ik0xMiA1YzEtMiAzLTMgNS0zLTEgMi0yIDMtNCA0eiIgZmlsbD0iIzVhYTAyYyIvPjwvc3ZnPg==';
 const ROTTEN_TOMATO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDNjMiAzIDYgMyA2IDcgMCAzIDIgNCAxIDctMiA0LTggNC0xMSAxLTMtMy0yLTYtMS04IDEtMiAzLTMgNS03eiIgZmlsbD0iIzZiOGUyMyIvPjwvc3ZnPg==';
 
-const RATING_CACHE_SCHEMA_VERSION = 2;
+const RATING_CACHE_SCHEMA_VERSION = 3;
 
 /**
  * A cached rating entry as read back for the render paths. Carries the display
@@ -63,7 +68,7 @@ const RATING_CACHE_SCHEMA_VERSION = 2;
  * can re-evaluate suppression without the full item DTO.
  */
 interface RatingCacheEntry {
-    /** v2 stores Jellyfin critic values as direct 0–100 percentages. */
+    /** v3 requires item type so cached renders can enforce rating scope. */
     schemaVersion: number;
     tmdb: string | null;
     critic: number | null;
@@ -105,17 +110,16 @@ interface ServerCacheRatingEntry {
 function getCachedEntry(ctx: TagRendererContext, itemId: string): RatingCacheEntry | null {
     const entry: unknown = ctx.getPersistent(itemId) ?? ctx.hot?.get(itemId);
     if (!entry) return null;
-    // Pre-v2 rows may contain the former <=10 ×10 critic transformation. Reject
-    // every shorthand/unversioned row so the live path refetches and overwrites
-    // it; the same validation covers persistent and session-hot caches.
-    const guardOn = JC.pluginConfig?.SpoilerBlurEnabled === true;
+    // Pre-v3 rows do not reliably carry item type, and pre-v2 rows may contain
+    // the former <=10 ×10 critic transformation. Reject every older shorthand
+    // so the live path refetches and overwrites it.
     if (typeof entry === 'string' || typeof entry === 'number') {
         return null;
     }
     if (typeof entry === 'object') {
         const cached = entry as Partial<RatingCacheEntry>;
         if (cached.schemaVersion !== RATING_CACHE_SCHEMA_VERSION) return null;
-        if (guardOn && typeof cached.sgType !== 'string') return null;
+        if (typeof cached.sgType !== 'string') return null;
         // Expose ratings, personal-review identity, PLUS the Spoiler-Guard fields
         // stashed by render(). Without them, renderFromCache's
         // suppression re-check saw Type=undefined and never suppressed, so a
@@ -333,10 +337,19 @@ const spec: TagSpec = {
     pipeline: {
         needsFirstEpisode: false,
         needsParentSeries: false,
+        scopeSignature(el) {
+            return resolveRatingTagRenderScope(el).signature;
+        },
         render(ctx, el, item: any, extras: any) {
             if (ctx.shouldIgnore(el)) return;
             if (ctx.isTagged(el)) return;
             if (el.closest('.jc-hidden')) return;
+
+            if (!ratingTagScopeAllows(el, item.Type)) {
+                ctx.removeExistingOverlay(el);
+                ctx.markTagged(el);
+                return;
+            }
 
             const itemId = item.Id;
 
@@ -421,6 +434,11 @@ const spec: TagSpec = {
             if (el.closest('.jc-hidden')) return true;
             const cached = getCachedEntry(ctx, itemId);
             if (!cached) return false;
+            if (!ratingTagScopeAllows(el, cached.sgType)) {
+                ctx.removeExistingOverlay(el);
+                ctx.markTagged(el);
+                return true;
+            }
             // Re-evaluate Spoiler-Guard suppression from the guard fields stashed
             // at cache time — a rating cached before the show was guarded must not
             // replay onto the card. Keep the user rating.
@@ -439,6 +457,11 @@ const spec: TagSpec = {
             const entry = rawEntry as ServerCacheRatingEntry;
             if (ctx.isTagged(el)) return;
             if (ctx.shouldIgnore(el)) return;
+            if (!ratingTagScopeAllows(el, entry.Type)) {
+                ctx.removeExistingOverlay(el);
+                ctx.markTagged(el);
+                return;
+            }
             // Defense in depth for a stale/non-null projected row. TagCacheEntry
             // carries SeriesId for Seasons, so client policy can suppress their
             // series-fallback rating even before the watched revision replacement
@@ -488,11 +511,29 @@ const stableRatingTags = createStableMethodFacade({
 
 /** Install frozen rating-tag entry points for one cluster activation. */
 export function installRatingTagsFacade(): () => void {
+    let releaseHomeRowScopes: (() => void) | null = null;
+    const ensureHomeRowScopes = (): void => {
+        if (releaseHomeRowScopes) return;
+        releaseHomeRowScopes = acquireHomeRowScopes(() => {
+            if (JC.currentSettings?.ratingTagsEnabled) reinitializeRatingTags();
+        });
+        primeHomeRowScopes();
+    };
     const uninstall = stableRatingTags.install({
-        initialize: initializeRatingTags,
-        reinitialize: reinitializeRatingTags,
+        initialize: () => {
+            ensureHomeRowScopes();
+            initializeRatingTags();
+        },
+        reinitialize: () => {
+            ensureHomeRowScopes();
+            reinitializeRatingTags();
+        },
     });
     JC.initializeRatingTags = stableRatingTags.facade.initialize;
     JC.reinitializeRatingTags = stableRatingTags.facade.reinitialize;
-    return uninstall;
+    return () => {
+        releaseHomeRowScopes?.();
+        releaseHomeRowScopes = null;
+        uninstall();
+    };
 }

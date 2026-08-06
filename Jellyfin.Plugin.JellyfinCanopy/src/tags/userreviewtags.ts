@@ -8,6 +8,12 @@ import { JC as JEBase } from '../globals';
 import { createStableMethodFacade } from '../core/feature-loader';
 import { ensureMaterialSymbolsFont, injectCss, removeCss } from '../core/ui-kit';
 import type { ApiApi, IdentityContext } from '../types/jc';
+import { getItemId, normalizeProjectionKey } from '../enhanced/tag-pipeline';
+import {
+    normalizeRatingTagItemType,
+    resolveRatingTagRenderScope,
+    shouldRenderRatingTag,
+} from './rating-tag-scope';
 
 /**
  * Local view of the shared namespace adding the public members this module
@@ -256,29 +262,67 @@ async function appendUserRatingToContainer(
     const context = JC.identity.capture();
     if (!isCurrent(context)) return;
 
+    const startedWithOverlay = containerOrEl.classList.contains('rating-overlay-container');
+    const renderTarget = startedWithOverlay
+        ? containerOrEl.closest<HTMLElement>(
+            '.jc-tag-host, .cardImageContainer, .detailImageContainer',
+        )
+        : containerOrEl;
+    if (!renderTarget || !renderTarget.isConnected) return;
+
+    const initialDomItemId = getItemId(renderTarget);
+    const expectedItemId = normalizeProjectionKey(item?.Id);
+    if (initialDomItemId && expectedItemId && initialDomItemId !== expectedItemId) return;
+    const initialDomItemType = normalizeRatingTagItemType(
+        renderTarget.closest('[data-type]')?.getAttribute('data-type'),
+    );
+    const initialScope = resolveRatingTagRenderScope(renderTarget, initialDomItemType ?? item?.Type);
+    if (!shouldRenderRatingTag(initialScope, JC.pluginConfig, JC.currentSettings)) return;
+
+    const scopeStillAllows = (): boolean => {
+        if (!renderTarget.isConnected) return false;
+        if (startedWithOverlay
+            && (!containerOrEl.isConnected || !renderTarget.contains(containerOrEl))) return false;
+        const currentDomItemId = getItemId(renderTarget);
+        if (initialDomItemId && currentDomItemId !== initialDomItemId) return false;
+        if (expectedItemId && currentDomItemId && currentDomItemId !== expectedItemId) return false;
+        const currentDomItemType = normalizeRatingTagItemType(
+            renderTarget.closest('[data-type]')?.getAttribute('data-type'),
+        );
+        if (initialDomItemType && currentDomItemType !== initialDomItemType) return false;
+        const currentScope = resolveRatingTagRenderScope(
+            renderTarget,
+            currentDomItemType ?? initialScope.itemType,
+        );
+        return currentScope.signature === initialScope.signature
+            && shouldRenderRatingTag(currentScope, JC.pluginConfig, JC.currentSettings);
+    };
+
     const resolved = resolveTmdbKey(item, extras);
     if (!resolved) return;
 
     const { tmdbKey, mediaType } = resolved;
     const rating = await fetchUserRating(tmdbKey, mediaType);
     if (!isCurrent(context)) return;
+    if (!scopeStillAllows()) return;
 
     if (rating === null && JC.pluginConfig?.ShowUserRatingDash === false) return;
 
     // Accept either the overlay container itself or the cardImageContainer
     let container = containerOrEl;
     if (!container.classList.contains('rating-overlay-container')) {
-        let overlay = containerOrEl.querySelector<HTMLElement>('.rating-overlay-container');
+        let overlay = renderTarget.querySelector<HTMLElement>('.rating-overlay-container');
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.className = 'rating-overlay-container';
             overlay.dataset.jcIdentityOwned = 'true';
             JC.identity.own(overlay, context);
-            containerOrEl.appendChild(overlay);
+            renderTarget.appendChild(overlay);
         }
         container = overlay;
     }
 
+    if (!scopeStillAllows()) return;
     appendUserRatingChip(container, rating, context);
 }
 

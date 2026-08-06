@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2919,
-        "totalLines": 3304
+        "coveredLines": 2920,
+        "totalLines": 3305
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2919,
-        "maximumCoveredLines": 2919
+        "minimumCoveredLines": 2920,
+        "maximumCoveredLines": 2920
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #664 adds preferred-audio-language selection on top of the shared BCP-47 resolver, including exact-region/base-language fallbacks, per-user inheritance, acknowledgement-safe whole-file persistence, and server-cache identity fencing. Two clean full client runs on this exact 3,304-line core scope and 2,314-test tree both passed every test and measured 2,919/3,304 (88.347%), advancing the prior 2,918-line high-water by one covered line with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,919/3,304 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #669 adds media-type and stable UI-surface rating-tag scope resolution, admin/user deny-list precedence, live stale-tag invalidation, same-item surface-recycling and async personal-review ownership fencing, and acknowledgement-safe per-user persistence. Two clean full client runs on this exact 3,305-line core scope and 2,359-test tree both passed every test and measured 2,920/3,305 (88.351%), advancing the prior 2,919-line high-water by one covered line with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,920/3,305 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45023,
-        "totalLines": 54817
+        "coveredLines": 45111,
+        "totalLines": 54905
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 45012,
-        "maximumCoveredLines": 45023
+        "cleanRuns": 5,
+        "minimumCoveredLines": 45101,
+        "maximumCoveredLines": 45111
       },
       "tolerance": {
-        "missingCoveredLines": 11,
-        "rationale": "Issue #668 adds caller-scoped direct-BoxSet Movie language-coverage projection, bounded membership indexing and invalidation, response-only sidecars, and focused server regressions, including off-publication-lock batch preparation, one reverse-membership rebuild per batch, chronological same-ID rollback restoration, lifecycle-generation fencing, and O(1) pending-container handoff so scan-thread recording never waits behind batch drain/replay. Four clean full-suite runs on this exact 54,817-line source and 4,292-test scope passed every test: two local .NET 10.0.9 runs measured 45,012 and 45,018 covered lines, and two hosted GitHub Actions runs measured 45,022 and 45,023. The reviewed high-water is therefore 45,023/54,817 (82.133%) and the exact observed floor is 45,012/54,817 (82.113%); the eleven-line timing-dependent instrumentation spread is 0.020 percentage points, far inside the 0.15pp policy bound. An intervening local 4,291/4,292 run was excluded rather than counted as clean evidence. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 10,
+        "rationale": "Issue #669 adds the versioned rating-tag scope policy, canonical admin and per-user persistence, malformed-payload rejection, public configuration projection, and focused server contract/snapshot coverage. Five clean full-suite runs on this exact 54,905-line source and 4,300-test scope passed every test: two local .NET 10.0.9 runs measured 45,102 and 45,101 covered lines, and three hosted GitHub Actions runs measured 45,106, 45,107, and 45,111. The reviewed high-water is therefore 45,111/54,905 (82.162%) and the exact observed floor is 45,101/54,905 (82.144%); the ten-line timing-dependent instrumentation spread is 0.018 percentage points, far inside the 0.15pp policy bound and improves the prior reviewed ratio. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

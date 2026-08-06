@@ -876,6 +876,17 @@ JC.loadSettings = (): UserSettings => {
         userSettings,
         'preferredAudioLanguage',
     ) ? userSettings.preferredAudioLanguage : null;
+    // Nested objects are deliberately outside the generic scalar merge. A
+    // missing legacy override is an empty schema-v1 deny set; the live admin
+    // policy is evaluated separately as the authoritative ceiling.
+    mergedSettings.ratingTagScopeOverrides = Object.prototype.hasOwnProperty.call(
+        userSettings,
+        'ratingTagScopeOverrides',
+    ) ? userSettings.ratingTagScopeOverrides : {
+        version: 1,
+        disabledItemTypes: [],
+        disabledSurfaces: [],
+    };
     mergedSettings.lastOpenedTab = userSettings.lastOpenedTab || 'shortcuts';
 
     // Ensure isAdmin is always present (even if undefined) so it can be set later

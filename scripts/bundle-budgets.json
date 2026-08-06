@@ -11,15 +11,15 @@
     "maxColdHomeRequests": 24,
     "maxColdHomeRawBytes": 202227,
     "maxColdHomeGzipBytes": 67825,
-    "maxFeatureRequests": 18,
+    "maxFeatureRequests": 19,
     "maxFeatureRawBytes": 524288,
     "maxFeatureGzipBytes": 196608,
-    "maxFeatureExpandedRequests": 21,
+    "maxFeatureExpandedRequests": 22,
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7344805,
+    "maxTotalRawBytes": 7386974,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7431919
+    "maxPublishedRawBytes": 7474232
   }
 }

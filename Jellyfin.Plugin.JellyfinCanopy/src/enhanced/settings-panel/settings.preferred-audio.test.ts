@@ -48,6 +48,19 @@ function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
     input.id = 'preferredAudioLanguageInput';
     custom.appendChild(input);
     document.body.appendChild(custom);
+
+    const ratingScope = document.createElement('div');
+    ratingScope.id = 'ratingTagScopeOverrides';
+    for (const [kind, value] of [['itemType', 'Episode'], ['surface', 'NextUp']] as const) {
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.checked = true;
+        toggle.dataset.ratingScopeKind = kind;
+        toggle.dataset.ratingScopeValue = value;
+        toggle.dataset.userDenied = 'false';
+        ratingScope.appendChild(toggle);
+    }
+    document.body.appendChild(ratingScope);
     return { mode: modeSelect, input };
 }
 
@@ -56,6 +69,12 @@ function makeEditor(appliesToActor: boolean): PanelEditorContext {
     const settings = {
         preferredAudioLanguage: null,
         qualityTagsEnabled: true,
+        ratingTagsEnabled: true,
+        ratingTagScopeOverrides: {
+            version: 1,
+            disabledItemTypes: [] as string[],
+            disabledSurfaces: [] as string[],
+        },
     };
     if (appliesToActor) JC.currentSettings = settings;
     return {
@@ -125,6 +144,7 @@ describe('preferred audio language settings', () => {
     afterEach(() => {
         document.body.innerHTML = '';
         delete (JC as typeof JC & { reinitializeQualityTags?: unknown }).reinitializeQualityTags;
+        delete (JC as typeof JC & { reinitializeRatingTags?: unknown }).reinitializeRatingTags;
         vi.restoreAllMocks();
         JC.currentSettings = {};
         JC.pluginConfig = {};
@@ -366,6 +386,99 @@ describe('preferred audio language settings', () => {
 
         await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(1));
         expect(editor.settings.preferredAudioLanguage).toBe('fr-CA');
+        expect(reinitialize).not.toHaveBeenCalled();
+    });
+
+    it('publishes rating scope only after the acting user save is acknowledged', async () => {
+        buildDom('inherit');
+        const editor = makeEditor(true);
+        const save = deferred<typeof acknowledgement>();
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementationOnce(() => {
+            captured.push(editor.settings.ratingTagScopeOverrides);
+            return save.promise;
+        });
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeRatingTags?: () => void }).reinitializeRatingTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        const episode = document.querySelector<HTMLInputElement>('[data-rating-scope-value="Episode"]')!;
+        episode.checked = false;
+        episode.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(1));
+        expect(captured).toEqual([{
+            version: 1,
+            disabledItemTypes: ['Episode'],
+            disabledSurfaces: [],
+        }]);
+        expect(editor.settings.ratingTagScopeOverrides).toEqual({
+            version: 1,
+            disabledItemTypes: [],
+            disabledSurfaces: [],
+        });
+        expect(reinitialize).not.toHaveBeenCalled();
+
+        save.resolve(acknowledgement);
+        await vi.waitFor(() => expect(reinitialize).toHaveBeenCalledTimes(1));
+        expect(editor.settings.ratingTagScopeOverrides).toEqual({
+            version: 1,
+            disabledItemTypes: ['Episode'],
+            disabledSurfaces: [],
+        });
+    });
+
+    it('keeps the acknowledged rating scope when its save fails', async () => {
+        buildDom('inherit');
+        const editor = makeEditor(true);
+        const save = deferred<typeof acknowledgement>();
+        vi.mocked(editor.saveSettings).mockReturnValueOnce(save.promise);
+        const reinitializedValues: unknown[] = [];
+        (JC as typeof JC & { reinitializeRatingTags?: () => void }).reinitializeRatingTags = vi.fn(() => {
+            reinitializedValues.push(editor.settings.ratingTagScopeOverrides);
+        });
+        wireSettingsListeners(context(editor));
+
+        const nextUp = document.querySelector<HTMLInputElement>('[data-rating-scope-value="NextUp"]')!;
+        nextUp.checked = false;
+        nextUp.dispatchEvent(new Event('change', { bubbles: true }));
+        save.reject(new Error('rejected'));
+
+        await vi.waitFor(() => expect(reinitializedValues.length).toBeGreaterThan(0));
+        expect(reinitializedValues.at(-1)).toEqual({
+            version: 1,
+            disabledItemTypes: [],
+            disabledSurfaces: [],
+        });
+    });
+
+    it('persists a target rating scope without changing the actor renderer', async () => {
+        buildDom('inherit');
+        const editor = makeEditor(false);
+        const actorSettings = {
+            ratingTagsEnabled: true,
+            ratingTagScopeOverrides: {
+                version: 1,
+                disabledItemTypes: [] as string[],
+                disabledSurfaces: [] as string[],
+            },
+        };
+        JC.currentSettings = actorSettings;
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeRatingTags?: () => void }).reinitializeRatingTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        const episode = document.querySelector<HTMLInputElement>('[data-rating-scope-value="Episode"]')!;
+        episode.checked = false;
+        episode.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(1));
+        expect(editor.settings.ratingTagScopeOverrides).toEqual({
+            version: 1,
+            disabledItemTypes: ['Episode'],
+            disabledSurfaces: [],
+        });
+        expect(JC.currentSettings).toBe(actorSettings);
         expect(reinitialize).not.toHaveBeenCalled();
     });
 });

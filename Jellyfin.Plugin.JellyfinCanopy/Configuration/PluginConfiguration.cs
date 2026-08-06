@@ -518,6 +518,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public int AudioInfoTagOrder { get; set; } = 6;
         public bool LanguageTagsEnabled { get; set; }
         public bool RatingTagsEnabled { get; set; }
+        /// <summary>
+        /// Gets or sets the administrator's schema-versioned rating-tag deny
+        /// policy. Per-user denies are additive and cannot re-enable it.
+        /// </summary>
+        public RatingTagScopePolicy RatingTagScopePolicy { get; set; } = RatingTagScopePolicyV1.CreateEmpty();
         public bool PeopleTagsEnabled { get; set; }
         public int TagsCacheTtlDays { get; set; }
         public bool DisableTagsOnSearchPage { get; set; }

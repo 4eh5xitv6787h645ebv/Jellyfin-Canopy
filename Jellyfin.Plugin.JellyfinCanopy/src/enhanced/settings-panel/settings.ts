@@ -8,6 +8,12 @@
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { canonicalizeAudioLanguagePreference } from '../../tags/audio-track-selection';
+import {
+    RATING_TAG_ITEM_TYPES,
+    RATING_TAG_SCOPE_SCHEMA_VERSION,
+    RATING_TAG_SURFACES,
+    type RatingTagScopePolicy,
+} from '../../tags/rating-tag-scope';
 import { showReleaseNotesNotification } from './release-notes';
 import type { PanelContext } from './panel';
 import {
@@ -121,6 +127,16 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         succeeded: boolean;
     };
     let pendingAudioGeneration: AudioGeneration | null = null;
+    let ratingScopeIntent = 0;
+    let acknowledgedRatingScopeGeneration = 0;
+    let acknowledgedRatingScope: unknown = settings.ratingTagScopeOverrides;
+    type RatingScopeGeneration = {
+        id: number;
+        value: RatingTagScopePolicy;
+        inFlight: number;
+        succeeded: boolean;
+    };
+    let pendingRatingScopeGeneration: RatingScopeGeneration | null = null;
     const publishAcknowledgedAudioLanguage = (showSavedToast: boolean): void => {
         const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
             ? JC.currentSettings as Record<string, any>
@@ -155,30 +171,112 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             publishAcknowledgedAudioLanguage(false);
         }
     };
+    const publishAcknowledgedRatingScope = (showSavedToast: boolean): void => {
+        const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
+            ? JC.currentSettings as Record<string, any>
+            : settings;
+        const changed = liveSettings.ratingTagScopeOverrides !== acknowledgedRatingScope;
+        liveSettings.ratingTagScopeOverrides = acknowledgedRatingScope;
+        if (liveSettings !== settings) settings.ratingTagScopeOverrides = acknowledgedRatingScope;
+        if ((changed || showSavedToast) && liveSettings.ratingTagsEnabled
+            && typeof (JC as any).reinitializeRatingTags === 'function') {
+            (JC as any).reinitializeRatingTags();
+        }
+        if (showSavedToast) toast(JC.t!('panel_settings_rating_scope_saved'));
+    };
+    const settleRatingScopeCarrier = (generation: RatingScopeGeneration, saved: boolean): void => {
+        generation.inFlight = Math.max(0, generation.inFlight - 1);
+        if (!editor.isCurrent() || !JC.identity.isCurrent(editor.actor)) return;
+        if (saved) {
+            generation.succeeded = true;
+            if (generation.id >= acknowledgedRatingScopeGeneration) {
+                acknowledgedRatingScopeGeneration = generation.id;
+                acknowledgedRatingScope = generation.value;
+            }
+            if (pendingRatingScopeGeneration === generation) {
+                pendingRatingScopeGeneration = null;
+                publishAcknowledgedRatingScope(true);
+            }
+            return;
+        }
+        if (!generation.succeeded && generation.inFlight === 0
+            && pendingRatingScopeGeneration === generation) {
+            pendingRatingScopeGeneration = null;
+            publishAcknowledgedRatingScope(false);
+        }
+    };
     const persistSettings = (): Promise<boolean> => {
-        const generation = pendingAudioGeneration;
-        if (!appliesToActor || !generation) {
+        const audioGeneration = pendingAudioGeneration;
+        const ratingGeneration = pendingRatingScopeGeneration;
+        if (!appliesToActor || (!audioGeneration && !ratingGeneration)) {
             return persistEditorSettings(ctx, editor);
         }
         // All settings saves serialize the whole self-owned object. Overlay the
         // pending audio intent for every synchronous capture so an unrelated
         // setting edit cannot persist the renderer's older acknowledged value.
-        settings.preferredAudioLanguage = generation.value;
+        if (audioGeneration) settings.preferredAudioLanguage = audioGeneration.value;
+        if (ratingGeneration) settings.ratingTagScopeOverrides = ratingGeneration.value;
         let request: Promise<boolean>;
         try {
             request = persistEditorSettings(
                 ctx,
                 editor,
-                () => pendingAudioGeneration !== null
-                    && (pendingAudioGeneration !== generation || generation.inFlight > 1),
+                () => (audioGeneration !== null && pendingAudioGeneration !== null
+                        && (pendingAudioGeneration !== audioGeneration || audioGeneration.inFlight > 1))
+                    || (ratingGeneration !== null && pendingRatingScopeGeneration !== null
+                        && (pendingRatingScopeGeneration !== ratingGeneration || ratingGeneration.inFlight > 1)),
             );
         } finally {
-            settings.preferredAudioLanguage = acknowledgedAudioLanguage;
+            if (audioGeneration) settings.preferredAudioLanguage = acknowledgedAudioLanguage;
+            if (ratingGeneration) settings.ratingTagScopeOverrides = acknowledgedRatingScope;
         }
-        generation.inFlight++;
-        void request.then((saved) => settleAudioCarrier(generation, saved));
+        if (audioGeneration) {
+            audioGeneration.inFlight++;
+            void request.then((saved) => settleAudioCarrier(audioGeneration, saved));
+        }
+        if (ratingGeneration) {
+            ratingGeneration.inFlight++;
+            void request.then((saved) => settleRatingScopeCarrier(ratingGeneration, saved));
+        }
         return request;
     };
+
+    const ratingScopeContainer = document.getElementById('ratingTagScopeOverrides');
+    ratingScopeContainer?.addEventListener('change', (event) => {
+        const input = (event.target as HTMLElement).closest<HTMLInputElement>('[data-rating-scope-kind][data-rating-scope-value]');
+        if (!input || input.disabled) return;
+        input.dataset.userDenied = input.checked ? 'false' : 'true';
+        const deniedItemTypes = new Set<string>();
+        const deniedSurfaces = new Set<string>();
+        ratingScopeContainer.querySelectorAll<HTMLInputElement>('[data-rating-scope-kind][data-rating-scope-value]')
+            .forEach((candidate) => {
+                if (candidate.dataset.userDenied !== 'true') return;
+                const value = candidate.dataset.ratingScopeValue;
+                if (!value) return;
+                if (candidate.dataset.ratingScopeKind === 'itemType') deniedItemTypes.add(value);
+                else deniedSurfaces.add(value);
+            });
+        const value: RatingTagScopePolicy = Object.freeze({
+            version: RATING_TAG_SCOPE_SCHEMA_VERSION,
+            disabledItemTypes: Object.freeze(RATING_TAG_ITEM_TYPES.filter((entry) => deniedItemTypes.has(entry))),
+            disabledSurfaces: Object.freeze(RATING_TAG_SURFACES.filter((entry) => deniedSurfaces.has(entry))),
+        });
+        if (!appliesToActor) {
+            settings.ratingTagScopeOverrides = value;
+            void persistSettings();
+            resetAutoCloseTimer();
+            return;
+        }
+        const generation: RatingScopeGeneration = {
+            id: ++ratingScopeIntent,
+            value,
+            inFlight: 0,
+            succeeded: false,
+        };
+        pendingRatingScopeGeneration = generation;
+        void persistSettings();
+        resetAutoCloseTimer();
+    });
 
     const addSettingToggleListener = (id: string, settingKey: string, featureKey: string, requiresRefresh = false) => {
         document.getElementById(id)!.addEventListener('change', (e) => {

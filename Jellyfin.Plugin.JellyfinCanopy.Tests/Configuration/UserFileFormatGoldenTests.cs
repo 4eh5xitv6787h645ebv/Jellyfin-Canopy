@@ -85,6 +85,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
                 SourceTagOrder = null,
                 DynamicRangeTagOrder = 0,
                 QualityTagsPosition = "bottom-right",
+                RatingTagScopeOverrides = new RatingTagScopePolicy
+                {
+                    Version = 1,
+                    DisabledItemTypes = new List<string> { "Episode", "BoxSet" },
+                    DisabledSurfaces = new List<string> { "NextUp" }
+                },
                 // Non-ASCII BMP + escapes: raw é/映画, escaped quote and backslash.
                 LastOpenedTab = "élsewhere-映画 \"tab\" c:\\path",
                 DisplayLanguage = "français",
@@ -102,6 +108,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Configuration
             Assert.Null(back.SourceTagOrder);
             Assert.Equal(2, back.ResolutionTagOrder);
             Assert.Equal(0, back.DynamicRangeTagOrder);
+            Assert.Equal(
+                new[] { "Episode", "BoxSet" },
+                back.RatingTagScopeOverrides.DisabledItemTypes);
+            Assert.Equal(
+                new[] { "NextUp" },
+                back.RatingTagScopeOverrides.DisabledSurfaces);
         }
 
         [Fact]

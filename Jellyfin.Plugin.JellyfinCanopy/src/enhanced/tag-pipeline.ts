@@ -377,6 +377,8 @@ const projectionDependencyIndex = new TagProjectionDependencyIndex();
 
 /** Renderer config as registered by the tag modules. */
 type RendererConfig = {
+    /** Stable semantic scope for the source card image. */
+    scopeSignature?: ((el: HTMLElement) => string) | null;
     /** (el, item, extras) => void. Renders the overlay. `extras` contains: { firstEpisode, parentSeries } */
     render: (el: HTMLElement, item: any, extras?: any) => void;
     /** Checked before rendering. */
@@ -402,6 +404,7 @@ type RendererConfig = {
 };
 
 type RendererEntry = Required<Pick<RendererConfig, 'render' | 'isEnabled'>> & {
+    scopeSignature: ((el: HTMLElement) => string) | null;
     renderFromCache: ((el: HTMLElement, itemId: string) => boolean) | null;
     renderFromServerCache: ((el: HTMLElement, entry: any, itemId: string) => void) | null;
     onServerCacheRefresh: ((updatedIds: string[] | null) => void) | null;
@@ -417,6 +420,7 @@ interface QueueEntry {
     renderTarget: HTMLElement;
     itemId: string;
     itemType: string | null;
+    scopeSignature: string;
     claim: object;
 }
 
@@ -425,12 +429,14 @@ function queueEntryStillOwnsItem(entry: QueueEntry, itemId: string): boolean {
     return queuedClaimByElement.get(entry.el) === entry.claim
         && document.contains(entry.el)
         && entry.renderTarget.isConnected
-        && getItemId(entry.el) === itemId;
+        && getItemId(entry.el) === itemId
+        && currentScopeSignature(entry.el) === entry.scopeSignature;
 }
 
 const renderers = new Map<string, RendererEntry>(); // name → { render, isEnabled, needsFirstEpisode, needsParentSeries }
 let processedCards = new WeakSet<Element>(); // let, not const — needs reassignment on reinit
 let renderedItemByElement = new WeakMap<Element, string>();
+let renderedScopeSignatureByElement = new WeakMap<Element, string>();
 const queuedClaimByElement = new WeakMap<Element, object>();
 const pendingProjectionIds = new Set<string>();
 // Batch-mode watched flips bypass every local/helper cache and must be satisfied
@@ -466,15 +472,30 @@ let navigationUnsubscribe: (() => void) | null = null;
 let activeIdentityEpoch: number | null = null;
 let identityActivationGeneration = 0;
 
+/**
+ * Snapshot every enabled renderer's semantic scope for one source card image.
+ * Including the renderer name and JSON encoding keeps the aggregate unambiguous
+ * when several renderers contribute independent scope dimensions.
+ */
+function currentScopeSignature(el: HTMLElement): string {
+    const signatures: Array<[string, string]> = [];
+    for (const [name, renderer] of renderers) {
+        if (!renderer.isEnabled() || !renderer.scopeSignature) continue;
+        signatures.push([name, renderer.scopeSignature(el)]);
+    }
+    return JSON.stringify(signatures);
+}
+
 function enqueueTagRequest(
     el: HTMLElement,
     renderTarget: HTMLElement,
     itemId: string,
     itemType: string | null,
+    scopeSignature: string,
 ): void {
     const claim = {};
     queuedClaimByElement.set(el, claim);
-    requestQueue.push({ el, renderTarget, itemId, itemType, claim });
+    requestQueue.push({ el, renderTarget, itemId, itemType, scopeSignature, claim });
 }
 
 /** Release a queued card only if this exact request still owns its marker. */
@@ -483,6 +504,7 @@ function releaseQueueEntry(entry: QueueEntry): void {
     queuedClaimByElement.delete(entry.el);
     processedCards.delete(entry.el);
     renderedItemByElement.delete(entry.el);
+    renderedScopeSignatureByElement.delete(entry.el);
 }
 
 /** Retire an accepted request claim without making the card eligible again. */
@@ -573,6 +595,7 @@ function shouldSkipElement(el: HTMLElement): boolean {
  */
 function registerRenderer(name: string, config: RendererConfig): void {
     renderers.set(name, {
+        scopeSignature: config.scopeSignature || null,
         render: config.render,
         renderFromCache: config.renderFromCache || null,
         renderFromServerCache: config.renderFromServerCache || null,
@@ -766,6 +789,7 @@ async function loadServerCache(): Promise<void> {
         clearRendererProjectionState(true);
         processedCards = new WeakSet();
         renderedItemByElement = new WeakMap();
+        renderedScopeSignatureByElement = new WeakMap();
         projectionDependencyIndex.replaceAll(entries);
         serverCache = entries; // an authoritative empty cache is still a loaded cache
         serverCacheVersion = Number(resp?.version) || 0;
@@ -994,6 +1018,7 @@ async function refreshUnknownServerProjection(ids: string[]): Promise<void> {
     clearRendererProjectionState(true);
     processedCards = new WeakSet();
     renderedItemByElement = new WeakMap();
+    renderedScopeSignatureByElement = new WeakMap();
     await refreshServerCache(true);
 }
 
@@ -1259,6 +1284,7 @@ function clearRenderedCard(el: HTMLElement): void {
     }
     processedCards.delete(el);
     renderedItemByElement.delete(el);
+    renderedScopeSignatureByElement.delete(el);
     queuedClaimByElement.delete(el);
 }
 
@@ -1331,6 +1357,7 @@ function beginBatchProjectionGeneration(userId: string): void {
     clearRendererProjectionState(true);
     processedCards = new WeakSet();
     renderedItemByElement = new WeakMap();
+    renderedScopeSignatureByElement = new WeakMap();
     projectionResetPending = false;
 }
 
@@ -1384,6 +1411,7 @@ function resetServerProjection(clearDom: boolean, resumeRetiredQueue = true): vo
     clearRendererProjectionState(clearDom);
     processedCards = new WeakSet();
     renderedItemByElement = new WeakMap();
+    renderedScopeSignatureByElement = new WeakMap();
 }
 
 /**
@@ -1474,10 +1502,15 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     if (!activeUserKey) return;
     if (!tagCacheOwnerUserId && activeUserKey) tagCacheOwnerUserId = activeUserKey;
 
-    // Virtualized/recycled card elements can survive while their data-id changes.
-    // A WeakSet alone would preserve the old item's overlays forever.
+    // Virtualized/recycled card elements can survive while their item or semantic
+    // UI surface changes. A WeakSet alone would preserve stale overlays forever.
+    const scopeSignature = currentScopeSignature(el);
     const renderedItemId = renderedItemByElement.get(el);
-    if (processedCards.has(el) && renderedItemId !== itemId) clearRenderedCard(el);
+    const renderedScopeSignature = renderedScopeSignatureByElement.get(el);
+    if (processedCards.has(el)
+        && (renderedItemId !== itemId || renderedScopeSignature !== scopeSignature)) {
+        clearRenderedCard(el);
+    }
     if (processedCards.has(el)) return;
 
     const serverMode = JC.pluginConfig?.TagCacheServerMode === true;
@@ -1497,6 +1530,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     if (shouldSkipElement(el)) {
         processedCards.add(el);
         renderedItemByElement.set(el, itemId);
+        renderedScopeSignatureByElement.set(el, scopeSignature);
         return;
     }
 
@@ -1504,6 +1538,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     if (itemType && !MEDIA_TYPES.has(itemType)) {
         processedCards.add(el);
         renderedItemByElement.set(el, itemId);
+        renderedScopeSignatureByElement.set(el, scopeSignature);
         return;
     }
 
@@ -1514,6 +1549,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
 
     processedCards.add(el);
     renderedItemByElement.set(el, itemId);
+    renderedScopeSignatureByElement.set(el, scopeSignature);
     const renderTarget = resolveRenderTarget(el);
 
     // Try server cache first (all tag data pre-computed in one object). A watched
@@ -1533,7 +1569,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     }
 
     if (forceFresh) {
-        enqueueTagRequest(el, renderTarget, itemId, itemType);
+        enqueueTagRequest(el, renderTarget, itemId, itemType, scopeSignature);
         return;
     }
 
@@ -1552,7 +1588,7 @@ function processCard(el: HTMLElement, fadeIn: boolean): void {
     if (fadeIn) withFadeIn(renderTarget, renderCached); else renderCached();
 
     if (!allCacheHits) {
-        enqueueTagRequest(el, renderTarget, itemId, itemType);
+        enqueueTagRequest(el, renderTarget, itemId, itemType, scopeSignature);
     }
 }
 
@@ -1624,7 +1660,10 @@ function runScan(): void {
     for (const el of elements) {
         const currentId = getItemId(el);
         const renderedId = renderedItemByElement.get(el);
-        if (!processedCards.has(el) || (currentId !== null && currentId !== renderedId)) {
+        const renderedScopeSignature = renderedScopeSignatureByElement.get(el);
+        if (!processedCards.has(el)
+            || (currentId !== null && currentId !== renderedId)
+            || renderedScopeSignature !== currentScopeSignature(el)) {
             unprocessed.push(el);
         }
     }
@@ -2174,6 +2213,7 @@ async function initialize(
         clearRendererProjectionState(true);
         processedCards = new WeakSet();
         renderedItemByElement = new WeakMap();
+        renderedScopeSignatureByElement = new WeakMap();
     } else if (JC.pluginConfig?.SpoilerBlurEnabled === true) {
         beginBatchProjectionGeneration(activeUserId);
     }

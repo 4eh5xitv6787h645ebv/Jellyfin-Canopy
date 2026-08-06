@@ -246,6 +246,80 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void RatingTagScopeOverrides_CanonicalizeAndInvalidShapesDoNotAdvanceState()
+        {
+            SeedSettings();
+
+            var accepted = Controller(0).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings
+                {
+                    Revision = 0,
+                    RatingTagScopeOverrides = new RatingTagScopePolicy
+                    {
+                        Version = 1,
+                        DisabledItemTypes = new List<string> { " boxset ", "EPISODE" },
+                        DisabledSurfaces = new List<string> { "other", " nextup " }
+                    }
+                });
+            var acknowledgement = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(
+                Assert.IsType<OkObjectResult>(accepted).Value);
+            Assert.Equal(
+                new[] { "Episode", "BoxSet" },
+                acknowledgement.Data!.RatingTagScopeOverrides.DisabledItemTypes);
+            Assert.Equal(
+                new[] { "NextUp", "Other" },
+                acknowledgement.Data.RatingTagScopeOverrides.DisabledSurfaces);
+
+            var stored = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.Equal(1, stored.Revision);
+            Assert.Equal(
+                new[] { "Episode", "BoxSet" },
+                stored.RatingTagScopeOverrides.DisabledItemTypes);
+
+            var invalidPolicies = new[]
+            {
+                new RatingTagScopePolicy
+                {
+                    Version = 1,
+                    DisabledItemTypes = new List<string> { "Person" }
+                },
+                new RatingTagScopePolicy
+                {
+                    Version = 2
+                },
+                new RatingTagScopePolicy
+                {
+                    Version = 1,
+                    DisabledSurfaces = Enumerable.Repeat(
+                        "Other",
+                        RatingTagScopePolicyV1.Surfaces.Count + 1).ToList()
+                }
+            };
+
+            foreach (var invalid in invalidPolicies)
+            {
+                var rejected = Controller(1).SaveUserSettingsSettings(
+                    UserId,
+                    new UserSettings
+                    {
+                        Revision = 1,
+                        RatingTagScopeOverrides = invalid
+                    });
+                Assert.IsType<BadRequestObjectResult>(rejected);
+            }
+
+            stored = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+            Assert.Equal(1, stored.Revision);
+            Assert.Equal(
+                new[] { "Episode", "BoxSet" },
+                stored.RatingTagScopeOverrides.DisabledItemTypes);
+            Assert.Equal(
+                new[] { "NextUp", "Other" },
+                stored.RatingTagScopeOverrides.DisabledSurfaces);
+        }
+
+        [Fact]
         public void InvalidPluginDefaults_AreNeverSeededOrResetIntoUserFiles()
         {
             _provider.Current = new PluginConfiguration { PauseScreenDelaySeconds = 0 };

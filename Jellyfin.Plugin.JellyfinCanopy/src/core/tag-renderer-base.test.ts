@@ -137,6 +137,32 @@ describe('tag-renderer-base STANDARD_IGNORE_SELECTORS stay container-scoped (MIS
 });
 
 describe('tag-renderer-base projection invalidation (BI-SEC-035)', () => {
+    it('passes the optional semantic scope signature through to the unified pipeline', () => {
+        const registerRenderer = vi.fn();
+        JC.tagPipeline = { registerRenderer };
+        const scopeSignature = vi.fn((el: HTMLElement) => el.dataset.surface || 'ordinary');
+        const spec: TagSpec = {
+            logPrefix: 'scope-signature-test',
+            settingKey: 'qualityTagsEnabled',
+            containerClass: 'scope-signature-overlay',
+            taggedAttr: 'jcScopeSignatureTagged',
+            pipeline: {
+                scopeSignature,
+                render: () => undefined,
+            },
+        };
+
+        register(`scope-signature-${Date.now()}`, spec);
+        const image = document.createElement('div');
+        image.dataset.surface = 'nextup';
+        const config = registerRenderer.mock.calls.at(-1)![1] as {
+            scopeSignature(el: HTMLElement): string;
+        };
+
+        expect(config.scopeSignature(image)).toBe('nextup');
+        expect(scopeSignature).toHaveBeenCalledWith(image);
+    });
+
     it('clears targeted persistent/hot values plus the overlay and tagged marker', () => {
         const registerRenderer = vi.fn();
         JC.tagPipeline = { registerRenderer };

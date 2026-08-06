@@ -2664,6 +2664,57 @@
                     }
                 }
             },
+            RatingTagScopePolicy: {
+                load: function (el, value) {
+                    const itemTypes = ['Movie', 'Episode', 'Series', 'Season', 'BoxSet'];
+                    const surfaces = ['NextUp', 'ContinueWatching', 'HomeOther', 'Other'];
+                    const record = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+                    const version = record && (record.Version !== undefined ? record.Version : record.version);
+                    const rawTypes = record && (record.DisabledItemTypes !== undefined ? record.DisabledItemTypes : record.disabledItemTypes);
+                    const rawSurfaces = record && (record.DisabledSurfaces !== undefined ? record.DisabledSurfaces : record.disabledSurfaces);
+                    const legacy = value == null || ((version === 0 || version === undefined)
+                        && (!rawTypes || rawTypes.length === 0)
+                        && (!rawSurfaces || rawSurfaces.length === 0));
+                    const canonicalize = function (raw, allowed) {
+                        if (!Array.isArray(raw) || raw.length > allowed.length) return null;
+                        const selected = new Set();
+                        for (const entry of raw) {
+                            if (typeof entry !== 'string') return null;
+                            const match = allowed.find(candidate => candidate.toLowerCase() === entry.trim().toLowerCase());
+                            if (!match) return null;
+                            selected.add(match);
+                        }
+                        return selected;
+                    };
+                    const disabledTypes = legacy ? new Set() : canonicalize(rawTypes, itemTypes);
+                    const disabledSurfaces = legacy ? new Set() : canonicalize(rawSurfaces, surfaces);
+                    const valid = legacy || (version === 1 && disabledTypes !== null && disabledSurfaces !== null);
+                    const effectiveTypes = valid ? disabledTypes : new Set(itemTypes);
+                    const effectiveSurfaces = valid ? disabledSurfaces : new Set(surfaces);
+                    el.querySelectorAll('[data-rating-scope-kind]').forEach(function (checkbox) {
+                        const disabled = checkbox.dataset.ratingScopeKind === 'itemType'
+                            ? effectiveTypes.has(checkbox.value)
+                            : effectiveSurfaces.has(checkbox.value);
+                        checkbox.checked = !disabled;
+                    });
+                    const warning = document.getElementById('ratingTagScopePolicyError');
+                    if (warning) warning.style.display = valid ? 'none' : 'block';
+                },
+                save: function (el) {
+                    const disabledItemTypes = [];
+                    const disabledSurfaces = [];
+                    el.querySelectorAll('[data-rating-scope-kind]').forEach(function (checkbox) {
+                        if (checkbox.checked) return;
+                        if (checkbox.dataset.ratingScopeKind === 'itemType') disabledItemTypes.push(checkbox.value);
+                        else disabledSurfaces.push(checkbox.value);
+                    });
+                    return {
+                        Version: 1,
+                        DisabledItemTypes: disabledItemTypes,
+                        DisabledSurfaces: disabledSurfaces
+                    };
+                }
+            },
         };
 
         function configBoundFields() {

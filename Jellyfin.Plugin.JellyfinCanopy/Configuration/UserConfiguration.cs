@@ -60,6 +60,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool GenreTagsEnabled { get; set; }
         public bool LanguageTagsEnabled { get; set; }
         public bool RatingTagsEnabled { get; set; }
+        public RatingTagScopePolicy RatingTagScopeOverrides { get; set; } = RatingTagScopePolicyV1.CreateEmpty();
         public bool PeopleTagsEnabled { get; set; }
         public bool AnimeFillerWarningsEnabled { get; set; } = true;
         public bool TagsHideOnHover { get; set; }
