@@ -13,6 +13,12 @@ async function flushPromises(): Promise<void> {
     for (let index = 0; index < 8; index++) await Promise.resolve();
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+}
+
 function mountDetailsPage(itemId: string): HTMLElement {
     window.history.replaceState(null, '', `/web/index.html#/details?id=${itemId}`);
     const page = document.createElement('div');
@@ -111,6 +117,98 @@ describe('details-page identity dispatcher', () => {
         await flushPromises();
 
         expect(getItem).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders the details source independently from poster settings without another item request', async () => {
+        mountDetailsPage('source-independent');
+        const getItem = vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'source-independent',
+            Type: 'Movie',
+            MediaSources: [{ Path: '/media/Movie.BluRay.disc' }],
+        });
+        JC.currentSettings = {
+            showFileSource: true,
+            qualityTagsEnabled: false,
+            showSourceTag: false,
+        };
+
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+
+        const chip = document.querySelector<HTMLElement>('.mediaInfoItem-fileSource');
+        expect(chip?.dataset.fileSource).toBe('BluRay');
+        expect(getItem).toHaveBeenCalledTimes(1);
+        expect(getItem).toHaveBeenCalledWith('pageusera', 'source-independent');
+    });
+
+    it('removes a stale source when the host reuses the details page for an unknown item', async () => {
+        const page = mountDetailsPage('source-a');
+        const getItem = vi.spyOn(ApiClient, 'getItem')
+            .mockResolvedValueOnce({
+                Id: 'source-a', Type: 'Movie',
+                MediaSources: [{ Path: '/media/A.DVD.disc' }],
+            })
+            .mockResolvedValueOnce({
+                Id: 'source-b', Type: 'Movie',
+                MediaSources: [{ Path: '/media/B.mkv' }],
+            });
+        JC.currentSettings = { showFileSource: true };
+
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        expect(page.querySelector<HTMLElement>('.mediaInfoItem-fileSource')?.dataset.fileSource).toBe('DVD');
+
+        window.history.replaceState(null, '', '/web/index.html#/details?id=source-b');
+        recordDetailsViewShown(page);
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+
+        expect(getItem).toHaveBeenCalledTimes(2);
+        expect(page.querySelector('.mediaInfoItem-fileSource')).toBeNull();
+    });
+
+    it('cannot publish a held old item after a newer details source owns the page', async () => {
+        const page = mountDetailsPage('held-source-a');
+        const held = deferred<unknown>();
+        vi.spyOn(ApiClient, 'getItem')
+            .mockReturnValueOnce(held.promise)
+            .mockResolvedValueOnce({
+                Id: 'held-source-b', Type: 'Episode',
+                MediaSources: [{ Path: '/media/B.HDTV.disc' }],
+            });
+        JC.currentSettings = { showFileSource: true };
+
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+
+        window.history.replaceState(null, '', '/web/index.html#/details?id=held-source-b');
+        recordDetailsViewShown(page);
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        expect(page.querySelector<HTMLElement>('.mediaInfoItem-fileSource')?.dataset.fileSource).toBe('HDTV');
+
+        held.resolve({
+            Id: 'held-source-a', Type: 'Movie',
+            MediaSources: [{ Path: '/media/A.BluRay.disc' }],
+        });
+        await flushPromises();
+        vi.advanceTimersByTime(1_000);
+        await flushPromises();
+
+        expect(page.querySelector<HTMLElement>('.mediaInfoItem-fileSource')?.dataset.fileSource).toBe('HDTV');
     });
 
     it('retries a first-activation Spoiler-only detail exactly once after readiness', async () => {

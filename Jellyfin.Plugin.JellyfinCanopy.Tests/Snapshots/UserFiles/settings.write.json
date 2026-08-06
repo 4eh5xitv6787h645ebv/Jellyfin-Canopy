@@ -25,6 +25,7 @@
   "WatchProgressMode": "time",
   "WatchProgressTimeFormat": "minutes",
   "ShowFileSizes": false,
+  "ShowFileSource": true,
   "ShowAudioLanguages": false,
   "QualityTagsEnabled": false,
   "ShowResolutionTag": false,

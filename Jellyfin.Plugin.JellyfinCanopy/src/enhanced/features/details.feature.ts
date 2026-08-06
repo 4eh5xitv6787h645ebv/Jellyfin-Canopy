@@ -5,6 +5,7 @@ import { initializeDetailsPage, installDetailsPage } from './details-page';
 export function isDetailsEnhancementsEnabled(): boolean {
     return JC.currentSettings?.showWatchProgress === true
         || JC.currentSettings?.showFileSizes === true
+        || JC.currentSettings?.showFileSource === true
         || JC.currentSettings?.showAudioLanguages === true
         || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
         || JC.pluginConfig?.HiddenContentEnabled === true

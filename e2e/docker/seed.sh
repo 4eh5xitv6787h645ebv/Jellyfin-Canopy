@@ -270,6 +270,10 @@ REGIONAL_LANGUAGE_CONTAINER_PATH="/media/${REGIONAL_LANGUAGE_RELATIVE_PATH}"
 MULTILINGUAL_AUDIO_NAME="Echo Meridian"
 MULTILINGUAL_AUDIO_RELATIVE_PATH="Movies/Echo Meridian (2025).mkv"
 MULTILINGUAL_AUDIO_CONTAINER_PATH="/media/${MULTILINGUAL_AUDIO_RELATIVE_PATH}"
+FILE_SOURCE_NAME="$(jq -er '.fileSource.name | select(type == "string" and length > 0)' "${FIXTURE_CONTRACT}")"
+FILE_SOURCE_RELATIVE_PATH="$(jq -er '.fileSource.relativePath | select(type == "string" and endswith(".disc.mkv"))' "${FIXTURE_CONTRACT}")"
+FILE_SOURCE_CANONICAL_VALUE="$(jq -er '.fileSource.canonicalValue | select(. == "BluRay")' "${FIXTURE_CONTRACT}")"
+FILE_SOURCE_CONTAINER_PATH="/media/${FILE_SOURCE_RELATIVE_PATH}"
 
 # ── 1. clean state + plugin install ─────────────────────────────────────────
 log "resetting project ${E2E_PROJECT} state under ${STATE_DIR} (config/cache/media/mock)"
@@ -390,6 +394,7 @@ make_clip "Movies/Gamma Quest (2023).mp4" 660
 # the pinned Jellyfin 12 image exposes the regional tag before Playwright runs.
 make_clip "${REGIONAL_LANGUAGE_RELATIVE_PATH}" 770 5 pt-BR
 make_multilingual_clip "${MULTILINGUAL_AUDIO_RELATIVE_PATH}"
+make_clip "${FILE_SOURCE_RELATIVE_PATH}" 825
 log "generating dedicated Auto-Skip movie (${AUTOSKIP_DURATION}s, seed ${SEED_NONCE})"
 mkdir -p "${MEDIA_DIR}/${AUTOSKIP_RELATIVE_DIR}"
 make_clip "${AUTOSKIP_RELATIVE_PATH}" 880 "${AUTOSKIP_DURATION}"
@@ -701,6 +706,8 @@ REGIONAL_LANGUAGE_MATCH_COUNT=0
 REGIONAL_LANGUAGE_TAGS='[]'
 MULTILINGUAL_AUDIO_MATCH_COUNT=0
 MULTILINGUAL_AUDIO_TRACKS='[]'
+FILE_SOURCE_MATCH_COUNT=0
+FILE_SOURCE_MEDIA_PATH_COUNT=0
 for _ in $(seq 1 60); do
     AUTOSKIP_SCAN_JSON="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Fields=Path,MediaSources,MediaStreams")"
     MOVIES="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r '.TotalRecordCount // 0')"
@@ -743,19 +750,29 @@ for _ in $(seq 1 60); do
             }]
          | unique_by(.language, .codec, .channels, .isDefault)
          | sort_by(.language)')"
-    if [ "${MOVIES}" -ge 6 ] 2>/dev/null \
+    FILE_SOURCE_MATCH_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
+        --arg path "${FILE_SOURCE_CONTAINER_PATH}" \
+        '[.Items[]? | select(.Path == $path)] | length')"
+    FILE_SOURCE_MEDIA_PATH_COUNT="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r \
+        --arg path "${FILE_SOURCE_CONTAINER_PATH}" \
+        '[first(.Items[]? | select(.Path == $path)) as $item
+          | ($item.MediaSources // [])[]?
+          | select(.Path == $path)] | length')"
+    if [ "${MOVIES}" -ge 7 ] 2>/dev/null \
         && [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_TICKS}" -ge "${AUTOSKIP_MIN_TICKS}" ] 2>/dev/null \
         && [ "${REGIONAL_LANGUAGE_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${REGIONAL_LANGUAGE_TAGS}" = '["pt-br"]' ] \
         && [ "${MULTILINGUAL_AUDIO_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
-        && [ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ]; then
+        && [ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ] \
+        && [ "${FILE_SOURCE_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
+        && [ "${FILE_SOURCE_MEDIA_PATH_COUNT}" -eq 1 ] 2>/dev/null; then
         break
     fi
     sleep 5
 done
-[ "${MOVIES}" -ge 6 ] || fail "library scan indexed only ${MOVIES} movies (expected at least 6)"
+[ "${MOVIES}" -ge 7 ] || fail "library scan indexed only ${MOVIES} movies (expected at least 7)"
 [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] \
     || fail "Auto-Skip fixture '${AUTOSKIP_NAME}' (ID <missing>, duration <missing>) was not indexed at ${AUTOSKIP_CONTAINER_PATH}"
 [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
@@ -772,6 +789,11 @@ log "verified regional-language fixture tags: ${REGIONAL_LANGUAGE_TAGS}"
 [ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ] \
     || fail "multilingual-audio fixture exposed ${MULTILINGUAL_AUDIO_TRACKS}; expected the pinned en-US default AAC 5.1 and pt-BR E-AC-3 stereo tracks"
 log "verified multilingual-audio fixture tracks: ${MULTILINGUAL_AUDIO_TRACKS}"
+[ "${FILE_SOURCE_MATCH_COUNT}" -eq 1 ] \
+    || fail "file-source fixture '${FILE_SOURCE_NAME}' was not indexed at ${FILE_SOURCE_CONTAINER_PATH}"
+[ "${FILE_SOURCE_MEDIA_PATH_COUNT}" -eq 1 ] \
+    || fail "file-source fixture '${FILE_SOURCE_NAME}' did not expose its exact .disc media-source path"
+log "verified file-source fixture: ${FILE_SOURCE_CANONICAL_VALUE} at ${FILE_SOURCE_CONTAINER_PATH}"
 
 log "waiting for the explicit library scan to complete before metadata writes"
 LIBRARY_SCAN_STATE=""

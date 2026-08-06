@@ -336,6 +336,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             Assert.Equal("time", stored.WatchProgressMode);
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void MissingSettings_SeedFileSourceVisibilityFromPluginDefault(bool showFileSource)
+        {
+            _provider.Current = new PluginConfiguration { ShowFileSource = showFileSource };
+
+            var get = Assert.IsType<OkObjectResult>(
+                Controller().GetUserSettingsSettings(UserId));
+            var response = Assert.IsType<UserSettings>(get.Value);
+            var stored = _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json");
+
+            Assert.Equal(showFileSource, response.ShowFileSource);
+            Assert.Equal(showFileSource, stored.ShowFileSource);
+        }
+
         [Fact]
         public void MissingSettings_WithUnavailablePluginConfiguration_FailGetAndTransactionWithoutAFile()
         {

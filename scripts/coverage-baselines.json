@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2920,
-        "totalLines": 3305
+        "coveredLines": 2944,
+        "totalLines": 3329
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2920,
-        "maximumCoveredLines": 2920
+        "minimumCoveredLines": 2944,
+        "maximumCoveredLines": 2944
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #669 adds media-type and stable UI-surface rating-tag scope resolution, admin/user deny-list precedence, live stale-tag invalidation, same-item surface-recycling and async personal-review ownership fencing, and acknowledgement-safe per-user persistence. Two clean full client runs on this exact 3,305-line core scope and 2,359-test tree both passed every test and measured 2,920/3,305 (88.351%), advancing the prior 2,919-line high-water by one covered line with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,920/3,305 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #670 adds the shared ambiguity-safe file-source detector used by poster badges and item details, including canonical source normalization, symmetric generic-versus-specific evidence merging, legacy BluRay suffix compatibility, and multi-version consensus handling. Two clean full client runs on this exact 3,329-line core scope and 2,399-test tree both passed every test and measured 2,944/3,329 (88.435%), advancing the prior 2,943-line high-water by one fully covered line and improving the reviewed ratio from 88.431% with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,944/3,329 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45111,
-        "totalLines": 54905
+        "coveredLines": 45122,
+        "totalLines": 54910
       },
       "observations": {
         "cleanRuns": 5,
-        "minimumCoveredLines": 45101,
-        "maximumCoveredLines": 45111
+        "minimumCoveredLines": 45115,
+        "maximumCoveredLines": 45122
       },
       "tolerance": {
-        "missingCoveredLines": 10,
-        "rationale": "Issue #669 adds the versioned rating-tag scope policy, canonical admin and per-user persistence, malformed-payload rejection, public configuration projection, and focused server contract/snapshot coverage. Five clean full-suite runs on this exact 54,905-line source and 4,300-test scope passed every test: two local .NET 10.0.9 runs measured 45,102 and 45,101 covered lines, and three hosted GitHub Actions runs measured 45,106, 45,107, and 45,111. The reviewed high-water is therefore 45,111/54,905 (82.162%) and the exact observed floor is 45,101/54,905 (82.144%); the ten-line timing-dependent instrumentation spread is 0.018 percentage points, far inside the 0.15pp policy bound and improves the prior reviewed ratio. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 7,
+        "rationale": "Issue #670 adds the independently persisted ShowFileSource setting to the canonical admin and per-user configuration contracts and covers the fail-closed unknown-target and unsupported-evidence branches in the admin target settings controller. Three clean local .NET 10.0.10 full-suite runs on this exact 54,910-line source and 4,302-test scope passed every test and each measured 45,115/54,910 covered lines (82.162%). The first hosted Unit run at exact head bdf916990739dc39f273601544d7546e50614e68 also passed all 4,302 tests and measured 45,121/54,910 (82.173%): https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/actions/runs/31081606003/job/92551460291. The next hosted Unit run at exact amended head f0bd15ebdb818629302bb49b033167b2c53cf4db again passed all 4,302 tests and measured 45,122/54,910 (82.174%): https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/actions/runs/31098714654/job/92606837612. The reviewed high-water is therefore 45,122/54,910, while the directly observed identical-scope floor remains 45,115/54,910; the seven-line spread is 0.012748 percentage points, within the 0.15-point policy maximum. One separate non-clean 4,301/4,302 local run is excluded from the five-run coverage envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

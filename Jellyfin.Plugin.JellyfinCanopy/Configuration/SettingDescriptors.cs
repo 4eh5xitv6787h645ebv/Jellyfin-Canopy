@@ -166,6 +166,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("RandomUnwatchedOnly", c => c.RandomUnwatchedOnly, nameof(UserSettings.RandomUnwatchedOnly)),
                 PublicUser("ShowWatchProgress", c => c.ShowWatchProgress, nameof(UserSettings.ShowWatchProgress)),
                 PublicUser("ShowFileSizes", c => c.ShowFileSizes, nameof(UserSettings.ShowFileSizes)),
+                PublicUser("ShowFileSource", c => c.ShowFileSource, nameof(UserSettings.ShowFileSource)),
                 PublicUser("RemoveContinueWatchingEnabled", c => c.RemoveContinueWatchingEnabled, nameof(UserSettings.RemoveContinueWatchingEnabled)),
                 PublicUser("HideFavoritesTab", c => c.HideFavoritesTab, nameof(UserSettings.HideFavoritesTab)),
                 PublicUser("ShowAudioLanguages", c => c.ShowAudioLanguages, nameof(UserSettings.ShowAudioLanguages)),

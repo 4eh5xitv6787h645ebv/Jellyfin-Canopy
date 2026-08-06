@@ -738,6 +738,10 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         Assert.IsType<NotFoundObjectResult>(
             Controller().GetAdminTargetUserSettings(unknown.ToString("D")));
         Assert.IsType<NotFoundObjectResult>(
+            Controller(ifMatch: 0).SaveAdminTargetUserSettings(
+                unknown.ToString("N"),
+                new UserSettings { Revision = 0, ShowFileSource = true }));
+        Assert.IsType<NotFoundObjectResult>(
             Controller(ifMatch: 0).SaveAdminTargetUserShortcuts(
                 unknown.ToString("N"),
                 new UserShortcuts { Revision = 0 }));
@@ -745,6 +749,10 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             Controller().GetAdminTargetUserFileEvidence(
                 unknown.ToString("N"),
                 "settings.json"));
+        Assert.IsType<NotFoundObjectResult>(
+            Controller().GetAdminTargetUserFileEvidence(
+                TargetId,
+                "unsupported.json"));
 
         Assert.False(Directory.Exists(UserDirectory(unknown)));
         Assert.False(Directory.Exists(UserDirectory(Guid.Empty)));

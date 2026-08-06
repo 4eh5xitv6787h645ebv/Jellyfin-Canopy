@@ -85,6 +85,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             WatchProgressDefaultMode = "percentage";
             WatchProgressTimeFormat = "hours";
             ShowFileSizes = false;
+            ShowFileSource = false;
             RemoveContinueWatchingEnabled = false;
             HideFavoritesTab = false;
             ShowAudioLanguages = true;
@@ -479,6 +480,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string WatchProgressDefaultMode { get; set; }
         public string WatchProgressTimeFormat { get; set; }
         public bool ShowFileSizes { get; set; }
+        public bool ShowFileSource { get; set; }
         public bool RemoveContinueWatchingEnabled { get; set; }
 
         /// <summary>

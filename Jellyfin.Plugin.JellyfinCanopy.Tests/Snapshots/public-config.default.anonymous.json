@@ -277,6 +277,7 @@
   "ShowDynamicRangeTag": true,
   "ShowElsewhereOnSeerr": false,
   "ShowFileSizes": false,
+  "ShowFileSource": false,
   "ShowLetterboxdLinkAsText": false,
   "ShowRatingInPlayer": true,
   "ShowReleaseDates": false,

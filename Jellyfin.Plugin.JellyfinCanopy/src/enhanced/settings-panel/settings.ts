@@ -357,6 +357,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             if (appliesToActor && id === 'hideFavoritesTabToggle') (JC as any).applyHideFavoritesTab?.();
             if (appliesToActor && id === 'showWatchProgressToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-watchProgress').forEach(el => el.remove());
             if (appliesToActor && id === 'showFileSizesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSize').forEach(el => el.remove());
+            if (appliesToActor && id === 'showFileSourceToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-fileSource').forEach(el => el.remove());
             if (appliesToActor && id === 'showAudioLanguagesToggle' && !(e.target as HTMLInputElement).checked) document.querySelectorAll('.mediaInfoItem-audioLanguage').forEach(el => el.remove());
             resetAutoCloseTimer();
         });
@@ -388,6 +389,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                 });
             }
     addSettingToggleListener('showFileSizesToggle', 'showFileSizes', 'feature_file_size_display');
+    addSettingToggleListener('showFileSourceToggle', 'showFileSource', 'panel_settings_ui_file_source');
     addSettingToggleListener('showAudioLanguagesToggle', 'showAudioLanguages', 'feature_audio_language_display');
     addSettingToggleListener('removeContinueWatchingToggle', 'removeContinueWatchingEnabled', 'feature_remove_continue_watching');
     addSettingToggleListener('hideFavoritesTabToggle', 'hideFavoritesTab', 'feature_hide_favorites_tab');

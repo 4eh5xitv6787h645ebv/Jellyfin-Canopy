@@ -139,6 +139,24 @@ describe('built-in detail integration catalog', () => {
         }
     });
 
+    it('loads details for the file-source setting without coupling it to poster source tags', () => {
+        const details = descriptor('details-enhancements');
+        JC.pluginConfig = {};
+        JC.currentSettings = {
+            showFileSource: true,
+            qualityTagsEnabled: false,
+            showSourceTag: false,
+        };
+        expect(details.isEnabled(state)).toBe(true);
+
+        JC.currentSettings = {
+            showFileSource: false,
+            qualityTagsEnabled: true,
+            showSourceTag: true,
+        };
+        expect(details.isEnabled(state)).toBe(false);
+    });
+
     it('enforces TMDB prerequisites independently for release dates, Elsewhere, and TMDB reviews', () => {
         JC.currentSettings = { showWatchProgress: false };
         JC.pluginConfig = {

@@ -1,6 +1,6 @@
 // #466 finding 5 — Jellyfin 12 modern compresses the details metadata row
 // between its native action buttons at intermediate phone/tablet widths.
-// Exercise the real details page, all three Canopy media-info chips, and both
+// Exercise the real details page, all four Canopy media-info chips, and the
 // supported modern layout across the complete breakpoint-island sweep.
 import type { Locator, Page } from 'playwright/test';
 import {
@@ -64,13 +64,13 @@ async function capture(page: Page, ribbon: Locator, fileName: string): Promise<v
     });
 }
 
-/** Choose a movie whose eventual audio chip stays deterministic and compact. */
-async function movieWithAtMostThreeAudioLanguages(page: Page): Promise<string> {
+/** Choose the real .disc fixture whose audio chip stays deterministic and compact. */
+async function fileSourceMovieWithAtMostThreeAudioLanguages(page: Page): Promise<string> {
     const itemId = await page.evaluate(async () => {
         const api = (window as any).ApiClient;
         const url = api.getUrl(
             '/Items?IncludeItemTypes=Movie&Recursive=true&Limit=50'
-            + '&Fields=MediaSources,MediaStreams'
+            + '&Fields=Path,MediaSources,MediaStreams'
             + `&userId=${api.getCurrentUserId()}`
         );
         const result = await api.ajax({ type: 'GET', url, dataType: 'json' });
@@ -89,11 +89,12 @@ async function movieWithAtMostThreeAudioLanguages(page: Page): Promise<string> {
                     .map((stream: any) => stream.Language || stream.DisplayLanguage)
                     .filter(Boolean)
             );
-            return languages.size <= 3;
+            return item.Path === '/media/Movies/JC File Source BluRay.disc.mkv'
+                && languages.size <= 3;
         });
-        return suitable?.Id || items[0]?.Id || null;
+        return suitable?.Id || null;
     });
-    expect(itemId, 'the seeded library must contain a movie').toBeTruthy();
+    expect(itemId, 'the seeded library must contain the exact .disc file-source fixture').toBeTruthy();
     return itemId as string;
 }
 
@@ -109,6 +110,7 @@ interface DetailsGeometry {
     chipContentsWithinClient: boolean[];
     visibleChipCount: number;
     maxActionOverlapArea: number;
+    trackSelectionsOverlapArea: number;
     visibleActionCount: number;
     buttonsWithinActions: boolean;
     hostWithinInfoWrapper: boolean;
@@ -129,8 +131,9 @@ async function readDetailsGeometry(page: Page, width: number): Promise<DetailsGe
         const infoWrapper = visiblePage.querySelector<HTMLElement>('.infoWrapper')!;
         const host = visiblePage.querySelector<HTMLElement>('.itemMiscInfo-primary')!;
         const actions = visiblePage.querySelector<HTMLElement>('.mainDetailButtons')!;
+        const trackSelections = visiblePage.querySelector<HTMLElement>('.trackSelections')!;
         const chips = Array.from(host.querySelectorAll<HTMLElement>(
-            '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-audioLanguage'
+            '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-fileSource, .mediaInfoItem-audioLanguage'
         ));
         const actionButtons = Array.from(actions.querySelectorAll<HTMLElement>('button, .detailButton'))
             .filter((button) => button.getClientRects().length > 0);
@@ -245,6 +248,10 @@ async function readDetailsGeometry(page: Page, width: number): Promise<DetailsGe
             chipContentsWithinClient: chips.map(contentWithinClientHorizontally),
             visibleChipCount: chips.filter((chip) => chip.getClientRects().length > 0).length,
             maxActionOverlapArea: Math.max(0, ...overlapAreas),
+            trackSelectionsOverlapArea: intersectionArea(
+                hostRect,
+                trackSelections.getBoundingClientRect()
+            ),
             visibleActionCount: actionButtons.length,
             buttonsWithinActions: actionButtons.every((button) =>
                 withinClientHorizontally(button.getBoundingClientRect(), actions)),
@@ -316,11 +323,12 @@ test.describe('responsive details media info (#466 finding 5)', () => {
 
             // This is page-local test setup, not persisted user/config state.
             // Setting it before navigation makes the real details feature
-            // loader activate all three chips on the target route.
+            // loader activate all four chips on the target route.
             await page.evaluate(() => {
                 const canopy = (window as any).JellyfinCanopy;
                 canopy.currentSettings.showWatchProgress = true;
                 canopy.currentSettings.showFileSizes = true;
+                canopy.currentSettings.showFileSource = true;
                 canopy.currentSettings.showAudioLanguages = true;
                 canopy.currentSettings.watchProgressMode = 'percentage';
             });
@@ -341,7 +349,7 @@ test.describe('responsive details media info (#466 finding 5)', () => {
             }));
 
             try {
-                const itemId = await movieWithAtMostThreeAudioLanguages(page);
+                const itemId = await fileSourceMovieWithAtMostThreeAudioLanguages(page);
                 await showRoute(page, `/details?id=${itemId}`);
                 await waitForHash(page, itemId);
 
@@ -349,14 +357,16 @@ test.describe('responsive details media info (#466 finding 5)', () => {
                 const host = visible.locator('.itemMiscInfo-primary');
                 const watchProgress = host.locator('.mediaInfoItem-watchProgress');
                 const fileSize = host.locator('.mediaInfoItem-fileSize');
+                const fileSource = host.locator('.mediaInfoItem-fileSource');
                 const audioLanguages = host.locator('.mediaInfoItem-audioLanguage');
                 await expect(host).toBeVisible({ timeout: 30_000 });
                 await expect(watchProgress).toContainText('42%', { timeout: 30_000 });
                 await expect(fileSize).toContainText(/\d[\d.]*\s*GB/, { timeout: 30_000 });
+                await expect(fileSource).toContainText('BluRay', { timeout: 30_000 });
                 await expect(audioLanguages).toBeVisible({ timeout: 30_000 });
                 await expect(host.locator(
-                    '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-audioLanguage'
-                )).toHaveCount(3);
+                    '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-fileSource, .mediaInfoItem-audioLanguage'
+                )).toHaveCount(4);
 
                 for (const width of WIDTHS) {
                     await page.setViewportSize({ width, height: 900 });
@@ -375,8 +385,8 @@ test.describe('responsive details media info (#466 finding 5)', () => {
                         .toBeGreaterThan(0);
                     expect(geometry.visibleActionCount, `${width}px native actions remain present`)
                         .toBeGreaterThan(0);
-                    expect(geometry.visibleChipCount, `${width}px all three Canopy chips remain present`)
-                        .toBe(3);
+                    expect(geometry.visibleChipCount, `${width}px all four Canopy chips remain present`)
+                        .toBe(4);
                     expect(geometry.hostOverflow, `${width}px metadata host overflow`)
                         .toBeLessThanOrEqual(1);
                     expect(geometry.infoWrapperOverflow, `${width}px info wrapper overflow`)
@@ -400,6 +410,10 @@ test.describe('responsive details media info (#466 finding 5)', () => {
                     expect(
                         geometry.maxActionOverlapArea,
                         `${width}px Canopy chips do not overlap native action buttons`
+                    ).toBeLessThanOrEqual(1);
+                    expect(
+                        geometry.trackSelectionsOverlapArea,
+                        `${width}px metadata does not overlap native track selectors`
                     ).toBeLessThanOrEqual(1);
                     expect(geometry.actionsWithinRibbon, `${width}px actions stay in ribbon`)
                         .toBe(true);

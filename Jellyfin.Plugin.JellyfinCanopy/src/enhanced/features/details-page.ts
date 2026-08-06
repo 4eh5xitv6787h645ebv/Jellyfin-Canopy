@@ -13,6 +13,7 @@ import { getItemCached } from '../helpers';
 import {
     displayWatchProgress,
     displayItemSize,
+    displayFileSource,
     displayAudioLanguages,
     resetDetailsMediaInfo,
 } from './details-media-info';
@@ -27,6 +28,7 @@ import type { IdentityContext } from '../../types/jc';
 // Cache the last item id and type to avoid repeated ApiClient calls
 let lastDetailsItemId: string | null = null;
 let lastDetailsItemType: string | null = null;
+let lastDetailsItem: any = null;
 let itemTypeFetchInProgress: Promise<unknown> | null = null;
 // PERF(R9): fail open — a transient failure of the item-type fetch used to
 // leave the page bare for the whole view (nothing re-runs the dispatcher on a
@@ -83,6 +85,9 @@ const SPOILER_GUARD_READY_EVENT = 'jc:spoiler-guard-ready';
 
 // Types that support file size and watch progress
 const FEATURES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet', 'Playlist'];
+// A physical source belongs to one playable file. Containers/aggregates would
+// require choosing a representative child and therefore remain silent.
+const FILE_SOURCE_SUPPORTED_TYPES = ['Episode', 'Movie'];
 // Types that support audio languages (excludes BoxSet and Playlist)
 const AUDIO_LANGUAGES_SUPPORTED_TYPES = ['Episode', 'Season', 'Series', 'Movie', 'BoxSet'];
 
@@ -435,6 +440,7 @@ function runHandleItemDetails(context: IdentityContext): void {
             clearSpoilerReadiness();
             lastDetailsItemId = itemId;
             lastDetailsItemType = null;
+            lastDetailsItem = null;
             itemTypeFetchInProgress = null;
             itemTypeFetchAttempts = 0;
             for (const timer of itemTypeRetryTimers) clearTimeout(timer);
@@ -463,6 +469,7 @@ function runHandleItemDetails(context: IdentityContext): void {
                             scheduleHandleItemDetails(context);
                             return;
                         }
+                        lastDetailsItem = item;
                         lastDetailsItemType = item?.Type || null;
                         itemTypeFetchAttempts = 0;
                         // Re-run once type is known to render features
@@ -560,6 +567,11 @@ function runHandleItemDetails(context: IdentityContext): void {
         if (JC?.currentSettings?.showFileSizes) {
             void displayItemSize(itemId, container);
         }
+        if (JC?.currentSettings?.showFileSource
+            && FILE_SOURCE_SUPPORTED_TYPES.includes(lastDetailsItemType)
+            && lastDetailsItem) {
+            displayFileSource(itemId, container, lastDetailsItem);
+        }
         if (JC?.currentSettings?.showAudioLanguages && AUDIO_LANGUAGES_SUPPORTED_TYPES.includes(lastDetailsItemType)) {
             void displayAudioLanguages(itemId, container);
         }
@@ -604,6 +616,7 @@ export function resetDetailsPage(): void {
     }
     lastDetailsItemId = null;
     lastDetailsItemType = null;
+    lastDetailsItem = null;
     itemTypeFetchInProgress = null;
     itemTypeFetchAttempts = 0;
     for (const timer of itemTypeRetryTimers) clearTimeout(timer);

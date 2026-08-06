@@ -151,7 +151,7 @@ function initScript() {
         '.genre-overlay-container', '.quality-overlay-container',
         '.language-overlay-container', '.rating-overlay-container',
         '.arr-link', '.arr-dropdown', '.arr-badge',
-        '.mediaInfoItem-watchProgress', '.mediaInfoItem-fileSize', '.mediaInfoItem-audioLanguage',
+        '.mediaInfoItem-watchProgress', '.mediaInfoItem-fileSize', '.mediaInfoItem-fileSource', '.mediaInfoItem-audioLanguage',
         '#streaming-result-container', '.jellyfin-elsewhere'
     ].join(',');
     const isJeNode = (node) => {
@@ -206,7 +206,7 @@ function initScript() {
     const HEADER_ANCHOR = '.MuiToolbar-root';
     const HEADER_DECOR = '#randomItemButton,#enhancedSettingsBtn';
     const DETAIL_ANCHOR = '.mainDetailButtons';
-    const DETAIL_DECOR = '.arr-link,.mediaInfoItem-watchProgress,.mediaInfoItem-fileSize,.mediaInfoItem-audioLanguage,#streaming-result-container';
+    const DETAIL_DECOR = '.arr-link,.mediaInfoItem-watchProgress,.mediaInfoItem-fileSize,.mediaInfoItem-fileSource,.mediaInfoItem-audioLanguage,#streaming-result-container';
     const cardTimes = new WeakMap();
     const seenDecor = new WeakSet();
     const anchorTimes = { header: -1, detail: -1 };

@@ -1,6 +1,6 @@
 // src/enhanced/features/details-media-info.ts
 //
-// Details-page media-info chips: watch progress, file size and audio languages.
+// Details chips: watch progress, file size/source and audio languages.
 // (Converted from js/enhanced/features-details-media-info.js — bodies semantically
 // identical; the JC.internals.features pieces are now real module exports.)
 
@@ -13,6 +13,7 @@ import {
 } from '../../core/media-language';
 import type { MediaLanguageIdentity } from '../../core/media-language';
 import { injectCss } from '../../core/ui-kit';
+import { detectFileSource } from '../../core/file-source';
 import { getItemCached } from '../helpers';
 import type { IdentityContext } from '../../types/jc';
 
@@ -167,8 +168,44 @@ export function resetDetailsMediaInfo(): void {
     audioLanguageCache.clear();
     document.getElementById(AUDIO_LANGUAGES_SCROLL_STYLE_ID)?.remove();
     document.querySelectorAll(
-        '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-audioLanguage',
+        '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-fileSource, .mediaInfoItem-audioLanguage',
     ).forEach((node) => node.remove());
+}
+
+/**
+ * Shows a normalized physical-media source on Movie/Episode detail pages.
+ * The caller owns item authorization and current-page identity; this renderer
+ * is synchronous so it cannot publish into a later or hidden page.
+ */
+export function displayFileSource(itemId: string, container: HTMLElement, item: unknown): void {
+    const source = detectFileSource(item);
+    const existing = container.querySelector<HTMLElement>('.mediaInfoItem-fileSource');
+    if (!source) {
+        existing?.remove();
+        return;
+    }
+    if (existing?.dataset.itemId === itemId && existing.dataset.fileSource === source) return;
+    existing?.remove();
+
+    const chip = document.createElement('div');
+    chip.className = 'mediaInfoItem mediaInfoItem-fileSource';
+    chip.dataset.itemId = itemId;
+    chip.dataset.fileSource = source;
+    chip.title = JC.t!('file_source_tooltip');
+    chip.setAttribute('aria-label', `${JC.t!('file_source_tooltip')}: ${source}`);
+    chip.style.display = 'flex';
+    chip.style.verticalAlign = 'middle';
+    chip.style.alignItems = 'center';
+    chip.style.margin = '0 1em 0 0 !important';
+
+    const icon = document.createElement('span');
+    icon.className = 'material-icons';
+    icon.style.fontSize = 'inherit';
+    icon.style.marginRight = '0.3em';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'album';
+    chip.append(icon, document.createTextNode(source));
+    container.appendChild(chip);
 }
 
 /** Effective read-side TTL: transient errors expire fast (PERF(R9)), real answers keep the full TTL. */

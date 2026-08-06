@@ -283,6 +283,7 @@
   "ShowDynamicRangeTag": false,
   "ShowElsewhereOnSeerr": true,
   "ShowFileSizes": true,
+  "ShowFileSource": true,
   "ShowLetterboxdLinkAsText": true,
   "ShowRatingInPlayer": false,
   "ShowReleaseDates": true,
@@ -295,8 +296,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1240,
-  "SpecialFormatTagOrder": 1241,
+  "SourceTagOrder": 1241,
+  "SpecialFormatTagOrder": 1242,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
@@ -312,11 +313,11 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1274,
+  "TagsCacheTtlDays": 1275,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1277,
+  "ToastDuration": 1278,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1280
+  "VideoCodecTagOrder": 1281
 }

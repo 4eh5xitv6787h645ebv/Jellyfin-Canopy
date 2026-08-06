@@ -1090,6 +1090,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 WatchProgressMode = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressDefaultMode) ? "percentage" : defaultConfig.WatchProgressDefaultMode,
                 WatchProgressTimeFormat = string.IsNullOrWhiteSpace(defaultConfig.WatchProgressTimeFormat) ? "hours" : defaultConfig.WatchProgressTimeFormat,
                 ShowFileSizes = defaultConfig.ShowFileSizes,
+                ShowFileSource = defaultConfig.ShowFileSource,
                 ShowAudioLanguages = defaultConfig.ShowAudioLanguages,
                 QualityTagsEnabled = defaultConfig.QualityTagsEnabled,
                 ShowResolutionTag = defaultConfig.ShowResolutionTag,

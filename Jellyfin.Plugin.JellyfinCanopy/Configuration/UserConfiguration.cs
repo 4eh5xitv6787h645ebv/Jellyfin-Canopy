@@ -39,6 +39,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public string WatchProgressMode { get; set; } = "percentage";
         public string WatchProgressTimeFormat { get; set; } = "hours";
         public bool ShowFileSizes { get; set; }
+        public bool ShowFileSource { get; set; }
         public bool ShowAudioLanguages { get; set; }
         public bool QualityTagsEnabled { get; set; }
         public bool ShowResolutionTag { get; set; } = true;
