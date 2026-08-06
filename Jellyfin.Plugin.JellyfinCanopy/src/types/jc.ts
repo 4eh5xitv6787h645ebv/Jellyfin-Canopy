@@ -22,6 +22,8 @@ import type { JellyfinCanopyPublicApi } from '../facade';
  */
 export interface PluginConfig {
     DisableTagsOnSearchPage?: boolean;
+    /** Administrator's fixed-enum schema-v1 rating-tag deny policy. */
+    RatingTagScopePolicy?: unknown;
     TagCacheServerMode?: boolean;
     EnableTagsLocalStorageFallback?: boolean;
     TagsCacheTtlDays?: number;
@@ -49,6 +51,8 @@ export interface PluginConfig {
  */
 export interface UserSettings {
     animeFillerWarningsEnabled?: boolean;
+    /** Additive per-user rating-tag denies; administrator denies still win. */
+    ratingTagScopeOverrides?: unknown;
     /** null inherits admin, empty selects Automatic, otherwise canonical BCP-47. */
     preferredAudioLanguage?: string | null;
     [key: string]: unknown;
@@ -668,6 +672,8 @@ export interface TagRendererContext {
 }
 
 export interface TagPipelineSpec {
+    /** Stable semantic render scope for a card image; changes force invalidation and rerender. */
+    scopeSignature?(el: HTMLElement): string;
     render(ctx: TagRendererContext, el: HTMLElement, item: unknown, extras?: unknown): void;
     renderFromCache?(ctx: TagRendererContext, el: HTMLElement, itemId: string): boolean;
     renderFromServerCache?(ctx: TagRendererContext, el: HTMLElement, entry: unknown, itemId: string): void;

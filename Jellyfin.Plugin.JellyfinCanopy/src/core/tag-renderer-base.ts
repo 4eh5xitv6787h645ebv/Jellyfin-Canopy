@@ -472,6 +472,9 @@ function createTag(name: string, spec: TagSpec): TagInstance {
             return;
         }
         JC.tagPipeline.registerRenderer(name, {
+            scopeSignature: p.scopeSignature
+                ? (el: HTMLElement) => p.scopeSignature!(el)
+                : undefined,
             render: (el: HTMLElement, item: unknown, extras?: unknown) => {
                 const renderContext = state.context;
                 if (!isContextCurrent(renderContext)) return;

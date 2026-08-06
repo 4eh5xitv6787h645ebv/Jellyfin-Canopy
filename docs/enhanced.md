@@ -314,12 +314,18 @@ Poster and detail-page language displays use the same canonical resolver and the
 
 Surface critic and audience scores where you're browsing. Rating Tags show **TMDB** star ratings and **Rotten Tomatoes** critic scores (fresh/rotten icons), stacked vertically on the poster and color-coded by value.
 
+Both administrators and users can limit which poster ratings appear. The fixed item-type scopes are **Movie**, **Episode**, **Series**, **Season**, and **Collection**; the fixed surface scopes are **Next Up**, **Continue Watching**, **other Home rows**, and **all other poster surfaces**. These are Canopy-owned semantic identifiers, so they do not depend on translated row headings or custom CSS selectors. All scopes are allowed by default for existing and new installations.
+
+The administrator policy is a ceiling: a user may hide additional item types or surfaces in **Canopy User Settings**, but cannot re-enable a scope disabled in **Dashboard** → **Plugins** → **Jellyfin Canopy** → **Display** → **Media Tags**. A user's scope edit affects their active browser only after the server acknowledges the save; editing another user's scopes never changes the administrator's current view. An acknowledged live change clears stale public and personal-rating poster chips before rescanning the page. Rating scope does not affect detail-page ratings or the player OSD.
+
 Rotten Tomatoes values use Jellyfin's direct **0–100 percentage** contract: a stored value of `7` displays as **7%**, not 70%. Finite numeric values from 0 through 100 are rounded for display; invalid, non-numeric, negative, or over-100 critic values are omitted. A Season or Episode inherits its Series ratings only when both of its own rating fields are missing, so valid zero and single-digit critic scores are preserved.
 
 Ratings can also appear **in the player**. **Show Rating in Video Player** displays the item's TMDB and Rotten Tomatoes ratings in the video-player OSD, shown before the "Ends at" time.
 
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
+| **Rating tag scope** (`RatingTagScopePolicy`) | Admin ceiling | All item types and surfaces allowed | Prevents poster rating tags on selected semantic item types or surfaces for every user. |
+| **Show rating tags on** (`ratingTagScopeOverrides`) | Per-user | No additional restrictions | Lets a user hide more poster-rating scopes without overriding administrator restrictions. |
 | **Show Rating in Video Player** (`ShowRatingInPlayer`) | Admin only | **on** | Shows TMDB and Rotten Tomatoes ratings in the player OSD (before "Ends at"). Set it in the **Media Tags** section of the config page (**Display** tab). |
 
 #### People Tags

@@ -53,6 +53,7 @@ describe('user review tag identity ownership', () => {
         const item = { Type: 'Movie', ProviderIds: { Tmdb: '123' } };
         const containerA = document.createElement('div');
         containerA.className = 'cardImageContainer';
+        containerA.style.backgroundImage = 'url("/Items/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Images/Primary")';
         document.body.appendChild(containerA);
 
         const appendA = surface.appendUserRatingToContainer!(containerA, item);
@@ -61,6 +62,7 @@ describe('user review tag identity ownership', () => {
         JC.identity.transition('review-server-b', 'review-user-b', 'review-test-b');
         const containerB = document.createElement('div');
         containerB.className = 'cardImageContainer';
+        containerB.style.backgroundImage = 'url("/Items/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/Images/Primary")';
         document.body.appendChild(containerB);
         const appendB = surface.appendUserRatingToContainer!(containerB, item);
         expect(plugin).toHaveBeenCalledTimes(2);
@@ -74,5 +76,89 @@ describe('user review tag identity ownership', () => {
         await appendB;
         expect(containerB.querySelector('.jc-userreview-tag .rating-text')?.textContent).toBe('8');
         expect(containerB.querySelector('.jc-userreview-tag')?.getAttribute('data-jc-identity-owned')).toBe('true');
+    });
+
+    it('rechecks scope after an asynchronous review read before painting', async () => {
+        const response = deferred<any>();
+        JC.core.api = { plugin: vi.fn().mockReturnValue(response.promise) } as unknown as typeof JC.core.api;
+        const container = document.createElement('div');
+        container.className = 'cardImageContainer';
+        container.style.backgroundImage = 'url("/Items/cccccccccccccccccccccccccccccccc/Images/Primary")';
+        document.body.appendChild(container);
+        const item = { Type: 'Episode', ProviderIds: { Tmdb: '456' } };
+
+        const append = surface.appendUserRatingToContainer!(container, item);
+        JC.currentSettings = {
+            ...JC.currentSettings,
+            ratingTagScopeOverrides: {
+                version: 1,
+                disabledItemTypes: ['Episode'],
+                disabledSurfaces: [],
+            },
+        };
+        response.resolve({ reviews: [{ rating: 5 }] });
+        await append;
+
+        expect(container.querySelector('.rating-overlay-container')).toBeNull();
+        expect(container.querySelector('.jc-userreview-tag')).toBeNull();
+    });
+
+    it('does not paint a delayed Movie review after the card is recycled for an Episode', async () => {
+        const response = deferred<any>();
+        JC.core.api = { plugin: vi.fn().mockReturnValue(response.promise) } as unknown as typeof JC.core.api;
+        const owner = document.createElement('div');
+        owner.className = 'card';
+        owner.dataset.id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        owner.dataset.type = 'Movie';
+        const container = document.createElement('div');
+        container.className = 'cardImageContainer';
+        owner.appendChild(container);
+        document.body.appendChild(owner);
+
+        const append = surface.appendUserRatingToContainer!(container, {
+            Id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            Type: 'Movie',
+            ProviderIds: { Tmdb: '789' },
+        });
+        owner.dataset.id = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        owner.dataset.type = 'Episode';
+        JC.currentSettings = {
+            ...JC.currentSettings,
+            ratingTagScopeOverrides: {
+                version: 1,
+                disabledItemTypes: ['Episode'],
+                disabledSurfaces: [],
+            },
+        };
+        response.resolve({ reviews: [{ rating: 5 }] });
+        await append;
+
+        expect(container.querySelector('.rating-overlay-container')).toBeNull();
+        expect(container.querySelector('.jc-userreview-tag')).toBeNull();
+    });
+
+    it('accepts an existing overlay under the pipeline host and preserves item ownership', async () => {
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({ reviews: [{ rating: 4 }] }),
+        } as unknown as typeof JC.core.api;
+        const owner = document.createElement('div');
+        owner.className = 'card';
+        owner.dataset.id = 'dddddddddddddddddddddddddddddddd';
+        owner.dataset.type = 'Movie';
+        const host = document.createElement('div');
+        host.className = 'jc-tag-host';
+        const overlay = document.createElement('div');
+        overlay.className = 'rating-overlay-container';
+        host.appendChild(overlay);
+        owner.appendChild(host);
+        document.body.appendChild(owner);
+
+        await surface.appendUserRatingToContainer!(overlay, {
+            Id: 'dddddddddddddddddddddddddddddddd',
+            Type: 'Movie',
+            ProviderIds: { Tmdb: '987' },
+        });
+
+        expect(overlay.querySelector('.jc-userreview-tag .rating-text')?.textContent).toBe('8');
     });
 });

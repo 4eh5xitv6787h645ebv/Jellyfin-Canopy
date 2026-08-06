@@ -903,6 +903,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             if (state is UserSettings settings)
             {
                 settings.IsAdmin = IsUserAdministrator(authorizedUserId);
+                if (RatingTagScopePolicyV1.TryNormalize(
+                        settings.RatingTagScopeOverrides,
+                        out var normalizedRatingScope))
+                {
+                    settings.RatingTagScopeOverrides = normalizedRatingScope;
+                }
             }
         }
 
@@ -1104,6 +1110,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 GenreTagsEnabled = defaultConfig.GenreTagsEnabled,
                 LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
                 RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
+                // The administrator policy remains a live ceiling; a new
+                // user's own additive deny set therefore starts empty.
+                RatingTagScopeOverrides = RatingTagScopePolicyV1.CreateEmpty(),
                 PeopleTagsEnabled = defaultConfig.PeopleTagsEnabled,
                 AnimeFillerWarningsEnabled = defaultConfig.AnimeFillerWarningsDefaultEnabled,
                 TagsHideOnHover = defaultConfig.TagsHideOnHover,

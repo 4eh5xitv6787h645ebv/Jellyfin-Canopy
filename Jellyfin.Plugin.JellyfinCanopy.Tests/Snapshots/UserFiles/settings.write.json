@@ -43,6 +43,16 @@
   "GenreTagsEnabled": false,
   "LanguageTagsEnabled": false,
   "RatingTagsEnabled": false,
+  "RatingTagScopeOverrides": {
+    "Version": 1,
+    "DisabledItemTypes": [
+      "Episode",
+      "BoxSet"
+    ],
+    "DisabledSurfaces": [
+      "NextUp"
+    ]
+  },
   "PeopleTagsEnabled": false,
   "AnimeFillerWarningsEnabled": true,
   "TagsHideOnHover": false,

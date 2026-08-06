@@ -187,6 +187,7 @@ const TARGET_EDITABLE_SETTING_KEYS = new Set([
         key => key !== 'lastOpenedTab' && key !== 'isAdmin',
     ),
     'animeFillerWarningsEnabled',
+    'ratingTagScopeOverrides',
 ]);
 
 function resolveTargetSettings(
@@ -222,6 +223,14 @@ function resolveTargetSettings(
         userSettings,
         'preferredAudioLanguage',
     ) ? userSettings.preferredAudioLanguage : null;
+    merged.ratingTagScopeOverrides = Object.prototype.hasOwnProperty.call(
+        userSettings,
+        'ratingTagScopeOverrides',
+    ) ? userSettings.ratingTagScopeOverrides : {
+        version: 1,
+        disabledItemTypes: [],
+        disabledSurfaces: [],
+    };
     // Panel navigation is editor-local in target mode. Preserve even an empty
     // or absent wire value so an unrelated preference save cannot materialize
     // the actor runtime's default tab into the target file.

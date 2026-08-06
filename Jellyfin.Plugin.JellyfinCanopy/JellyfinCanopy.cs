@@ -240,6 +240,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 }
 
                 NormalizePreferredAudioLanguageForUpdate(config);
+                NormalizeRatingTagScopePolicyForUpdate(config);
                 SanitizeExternalUrlFields(config);
             }
 
@@ -259,6 +260,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
 
             config.PreferredAudioLanguage = normalized!;
+        }
+
+        internal static void NormalizeRatingTagScopePolicyForUpdate(PluginConfiguration config)
+        {
+            if (!RatingTagScopePolicyV1.TryNormalize(
+                    config.RatingTagScopePolicy,
+                    out var normalized))
+            {
+                throw new ArgumentException(
+                    "RatingTagScopePolicy must use schema version 1 and supported item-type/surface identifiers.",
+                    nameof(config));
+            }
+
+            config.RatingTagScopePolicy = normalized;
         }
 
         // Armed while a startup migration failure is being handled. Enhanced import

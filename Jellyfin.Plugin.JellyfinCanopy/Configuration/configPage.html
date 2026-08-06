@@ -360,6 +360,23 @@
                                 <div class="fieldDescription">Show TMDB and Rotten Tomatoes ratings on poster cards.</div>
                             </div>
 
+                            <div id="ratingTagScopePolicy" data-config-key="RatingTagScopePolicy" style="margin:12px 0; padding:12px; border:1px solid rgba(255,255,255,.14); border-radius:6px;">
+                                <div style="font-weight:600; margin-bottom:6px;">Rating tag scope</div>
+                                <div class="fieldDescription" style="margin-bottom:10px;">Checked item types and named surfaces may show rating tags. Users may hide additional scopes but cannot re-enable an administrator-disabled scope.</div>
+                                <div style="font-weight:600; margin-bottom:4px;">Item types</div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="itemType" value="Movie" checked is="emby-checkbox"/><span>Movies</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="itemType" value="Episode" checked is="emby-checkbox"/><span>Episodes</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="itemType" value="Series" checked is="emby-checkbox"/><span>Series</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="itemType" value="Season" checked is="emby-checkbox"/><span>Seasons</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="itemType" value="BoxSet" checked is="emby-checkbox"/><span>Collections</span></label></div>
+                                <div style="font-weight:600; margin:10px 0 4px;">Named surfaces</div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="surface" value="NextUp" checked is="emby-checkbox"/><span>Next Up</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="surface" value="ContinueWatching" checked is="emby-checkbox"/><span>Continue Watching</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="surface" value="HomeOther" checked is="emby-checkbox"/><span>Other Home rows</span></label></div>
+                                <div class="checkboxContainer"><label><input type="checkbox" data-rating-scope-kind="surface" value="Other" checked is="emby-checkbox"/><span>All other poster surfaces</span></label></div>
+                                <div id="ratingTagScopePolicyError" class="fieldDescription" role="alert" style="display:none; margin-top:8px; color:#ffb4ab;">The saved policy used an unsupported schema or identifier. All known scopes are disabled below until this configuration is saved as schema v1.</div>
+                            </div>
+
                             <div class="jc-tag-row">
                                 <div class="checkboxContainer"><label><input id="peopleTagsEnabled" data-config-key="PeopleTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable People Tags</span></label></div>
                             </div>

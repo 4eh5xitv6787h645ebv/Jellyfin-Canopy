@@ -16,6 +16,11 @@ import { escapeHtml } from '../../core/ui-kit';
 import { cssColorOr } from '../../core/css-safe';
 import { GITHUB_REPO } from './release-notes';
 import type { PanelContext } from './panel';
+import {
+    RATING_TAG_ITEM_TYPES,
+    RATING_TAG_SURFACES,
+    normalizeRatingTagScopePolicy,
+} from '../../tags/rating-tag-scope';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -502,6 +507,45 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                             <div data-pos="bottom-right" style="border-radius:2px; transition:background 0.2s;"></div>
                                         </div>
                                     </label>
+                                    ${(() => {
+                                        const admin = normalizeRatingTagScopePolicy(JC.pluginConfig.RatingTagScopePolicy);
+                                        const user = normalizeRatingTagScopePolicy(settings.ratingTagScopeOverrides);
+                                        const itemLabels: Record<string, string> = {
+                                            Movie: tWithFallback('seerr_card_badge_movie', 'Movie'),
+                                            Episode: tWithFallback('seerr_report_issue_episode', 'Episode'),
+                                            Series: tWithFallback('seerr_card_badge_series', 'Series'),
+                                            Season: tWithFallback('seerr_report_issue_season', 'Season'),
+                                            BoxSet: tWithFallback('seerr_card_badge_collection', 'Collection'),
+                                        };
+                                        const surfaceLabels: Record<string, string> = {
+                                            NextUp: tWithFallback('remove_surface_next_up', 'Next Up'),
+                                            ContinueWatching: tWithFallback('remove_surface_continue_watching', 'Continue Watching'),
+                                            HomeOther: tWithFallback('panel_settings_rating_scope_home_other', 'Other Home rows'),
+                                            Other: tWithFallback('panel_settings_rating_scope_other', 'All other poster surfaces'),
+                                        };
+                                        const renderToggle = (kind: 'itemType' | 'surface', value: string, label: string): string => {
+                                            const adminList = new Set<string>(kind === 'itemType'
+                                                ? admin?.disabledItemTypes || []
+                                                : admin?.disabledSurfaces || []);
+                                            const userList = new Set<string>(kind === 'itemType'
+                                                ? user?.disabledItemTypes || []
+                                                : user?.disabledSurfaces || []);
+                                            const adminDenied = !admin || adminList.has(value);
+                                            const userDenied = !user || userList.has(value);
+                                            return `<label style="display:flex; align-items:center; gap:8px; min-width:150px; cursor:${adminDenied ? 'not-allowed' : 'pointer'}; opacity:${adminDenied ? '0.55' : '1'};">
+                                                <input type="checkbox" data-rating-scope-kind="${kind}" data-rating-scope-value="${value}" data-user-denied="${userDenied ? 'true' : 'false'}" ${!adminDenied && !userDenied ? 'checked' : ''} ${adminDenied ? 'disabled' : ''} style="width:16px; height:16px; accent-color:${toggleAccentColor};">
+                                                <span>${escapeHtml(label)}</span>
+                                            </label>`;
+                                        };
+                                        return `<div id="ratingTagScopeOverrides" style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.12);">
+                                            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">${escapeHtml(tWithFallback('panel_settings_rating_scope_title', 'Show rating tags on'))}</div>
+                                            <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-bottom:8px;">${escapeHtml(tWithFallback('panel_settings_rating_scope_desc', 'Your choices can hide additional ratings. Scopes disabled by your administrator stay unavailable.'))}</div>
+                                            <div style="font-size:12px; font-weight:600; margin-bottom:5px;">${escapeHtml(tWithFallback('panel_settings_rating_scope_types', 'Item types'))}</div>
+                                            <div style="display:flex; flex-wrap:wrap; gap:7px 14px;">${RATING_TAG_ITEM_TYPES.map(value => renderToggle('itemType', value, itemLabels[value])).join('')}</div>
+                                            <div style="font-size:12px; font-weight:600; margin:9px 0 5px;">${escapeHtml(tWithFallback('panel_settings_rating_scope_surfaces', 'Named surfaces'))}</div>
+                                            <div style="display:flex; flex-wrap:wrap; gap:7px 14px;">${RATING_TAG_SURFACES.map(value => renderToggle('surface', value, surfaceLabels[value])).join('')}</div>
+                                        </div>`;
+                                    })()}
                                 </div>
                             <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">

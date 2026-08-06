@@ -198,6 +198,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("GenreTagsEnabled", c => c.GenreTagsEnabled, nameof(UserSettings.GenreTagsEnabled)),
                 PublicUser("LanguageTagsEnabled", c => c.LanguageTagsEnabled, nameof(UserSettings.LanguageTagsEnabled)),
                 PublicUser("RatingTagsEnabled", c => c.RatingTagsEnabled, nameof(UserSettings.RatingTagsEnabled)),
+                PublicUser("RatingTagScopePolicy", c => c.RatingTagScopePolicy, nameof(UserSettings.RatingTagScopeOverrides)),
                 PublicUser("PeopleTagsEnabled", c => c.PeopleTagsEnabled, nameof(UserSettings.PeopleTagsEnabled)),
                 Public("AnimeFillerWarningsEnabled", c => c.AnimeFillerWarningsEnabled),
                 PublicUser("AnimeFillerWarningsDefaultEnabled", c => c.AnimeFillerWarningsDefaultEnabled, nameof(UserSettings.AnimeFillerWarningsEnabled)),

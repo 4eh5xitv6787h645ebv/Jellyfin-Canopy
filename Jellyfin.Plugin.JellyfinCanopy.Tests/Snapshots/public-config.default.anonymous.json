@@ -112,6 +112,11 @@
   "RandomIncludeMovies": true,
   "RandomIncludeShows": true,
   "RandomUnwatchedOnly": false,
+  "RatingTagScopePolicy": {
+    "DisabledItemTypes": [],
+    "DisabledSurfaces": [],
+    "Version": 1
+  },
   "RatingTagsEnabled": false,
   "RatingTagsPosition": "bottom-right",
   "RemoveContinueWatchingEnabled": false,

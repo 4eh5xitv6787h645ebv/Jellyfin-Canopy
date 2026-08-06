@@ -112,12 +112,23 @@
   "RandomIncludeMovies": false,
   "RandomIncludeShows": false,
   "RandomUnwatchedOnly": true,
+  "RatingTagScopePolicy": {
+    "DisabledItemTypes": [
+      "Episode",
+      "BoxSet"
+    ],
+    "DisabledSurfaces": [
+      "NextUp",
+      "HomeOther"
+    ],
+    "Version": 1
+  },
   "RatingTagsEnabled": true,
   "RatingTagsPosition": "cfg-RatingTagsPosition",
   "RemoveContinueWatchingEnabled": true,
   "RequestApprovalsEnabled": false,
   "RequestsAllowSeerrStatusAndHistoryForRegularUsers": false,
-  "ResolutionTagOrder": 1179,
+  "ResolutionTagOrder": 1180,
   "ReviewsExpandedByDefault": true,
   "SeerrAutoImportUsers": true,
   "SeerrBaseUrl": "cfg-SeerrUrls",
@@ -284,8 +295,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1239,
-  "SpecialFormatTagOrder": 1240,
+  "SourceTagOrder": 1240,
+  "SpecialFormatTagOrder": 1241,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
@@ -301,11 +312,11 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1273,
+  "TagsCacheTtlDays": 1274,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1276,
+  "ToastDuration": 1277,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1279
+  "VideoCodecTagOrder": 1280
 }

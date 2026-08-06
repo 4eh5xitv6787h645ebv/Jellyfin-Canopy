@@ -128,6 +128,64 @@ describe('rating tag projection parity', () => {
         expect(host.querySelector('.rating-tag-tmdb .rating-text')?.textContent).toBe('9.2');
     });
 
+    it('enforces the live scope policy on live, local-cache, and server-cache producers', () => {
+        JC.pluginConfig = {
+            ...JC.pluginConfig,
+            SpoilerBlurEnabled: false,
+            RatingTagScopePolicy: {
+                Version: 1,
+                DisabledItemTypes: ['Series'],
+                DisabledSurfaces: [],
+            },
+        };
+        JC.currentSettings = {
+            ratingTagsEnabled: true,
+            ratingTagScopeOverrides: {
+                version: 1,
+                disabledItemTypes: ['Episode'],
+                disabledSurfaces: [],
+            },
+        };
+
+        const episode = cardHost();
+        renderer.render(episode.host, {
+            Id: 'scope-episode',
+            Type: 'Episode',
+            CommunityRating: 8.2,
+            CriticRating: 82,
+        });
+        expect(episode.host.querySelector('.rating-overlay-container')).toBeNull();
+        expect(episode.card.dataset.jcRatingTagged).toBe('1');
+
+        const movie = cardHost();
+        renderer.render(movie.host, {
+            Id: 'scope-movie',
+            Type: 'Movie',
+            CommunityRating: 7.5,
+            CriticRating: 75,
+        });
+        expect(movie.host.querySelector('.rating-overlay-container')).not.toBeNull();
+
+        JC.currentSettings.ratingTagScopeOverrides = {
+            version: 1,
+            disabledItemTypes: ['Movie'],
+            disabledSurfaces: [],
+        };
+        const cachedMovie = cardHost();
+        expect(renderer.renderFromCache(cachedMovie.host, 'scope-movie')).toBe(true);
+        expect(cachedMovie.host.querySelector('.rating-overlay-container')).toBeNull();
+        expect(cachedMovie.card.dataset.jcRatingTagged).toBe('1');
+
+        const series = cardHost();
+        renderer.renderFromServerCache(series.host, {
+            Type: 'Series',
+            CommunityRating: 9.1,
+            CriticRating: 91,
+        }, 'scope-series');
+        expect(series.host.querySelector('.rating-overlay-container')).toBeNull();
+        expect(series.card.dataset.jcRatingTagged).toBe('1');
+    });
+
     it('treats live tag-data RatingSuppressed as authoritative before parent fallback', () => {
         const { card, host } = cardHost();
 
@@ -253,7 +311,7 @@ describe('rating tag projection parity', () => {
         expect(host.querySelector('.rating-overlay-container')).toBeNull();
     });
 
-    it('loads persistent browser cache, rejects only its pre-contract row, and rewrites v2', () => {
+    it('loads persistent browser cache, rejects its pre-scope row, and rewrites v3', () => {
         JC.pluginConfig = {
             ...JC.pluginConfig,
             SpoilerBlurEnabled: false,
@@ -277,7 +335,7 @@ describe('rating tag projection parity', () => {
             JSON.stringify({
                 [staleItemId]: { tmdb: null, critic: 70, sgType: 'Movie' },
                 [currentItemId]: {
-                    schemaVersion: 2,
+                    schemaVersion: 3,
                     tmdb: null,
                     critic: 7,
                     sgType: 'Movie',

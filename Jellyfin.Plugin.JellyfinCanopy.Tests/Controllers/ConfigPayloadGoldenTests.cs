@@ -193,6 +193,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 }
             }
 
+            // Nested policies are deliberately not mutated by the primitive
+            // reflection loop. Give this one a distinctive safe value so both
+            // the key and exact nested projection are pinned by the goldens.
+            config.RatingTagScopePolicy = new RatingTagScopePolicy
+            {
+                Version = 1,
+                DisabledItemTypes = new List<string> { "Episode", "BoxSet" },
+                DisabledSurfaces = new List<string> { "NextUp", "HomeOther" }
+            };
+
             return config;
         }
 
