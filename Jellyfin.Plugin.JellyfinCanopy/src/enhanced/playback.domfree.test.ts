@@ -627,6 +627,157 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
+    describe('exhaustive-review batch (memory freshness, id-less race, overlay coherence)', () => {
+        const ITEM_A = 'a1'.repeat(16);
+        const ITEM_B = 'b2'.repeat(16);
+
+        function sessionForItem(id: string): Record<string, unknown> {
+            const session = ownSession();
+            (session.NowPlayingItem as Record<string, unknown>).Id = id;
+            return session;
+        }
+
+        it('a DOM fallback clears the optimistic memory (no stale continue on the next API press)', async () => {
+            mountVideo();
+            const { commands } = installApi([ownSession()]);
+            JC.cycleSubtitleTrack!(); // API press: 2 → 3, memory = 3
+            await flushPromises();
+            expect((commands[0].body as { Arguments: { Index: string } }).Arguments.Index).toBe('3');
+
+            const savedApi = JC.core.api;
+            JC.core.api = undefined; // no API → synchronous DOM fallback path
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            trigger.setAttribute('title', 'Subtitles');
+            vi.spyOn(trigger, 'click').mockImplementation(() => undefined);
+            document.body.appendChild(trigger);
+            JC.cycleSubtitleTrack!(); // fallback engaged → memory must die
+            JC.core.api = savedApi;
+
+            JC.cycleSubtitleTrack!(); // PlayState (2) is authoritative again → 3, NOT -1
+            await flushPromises();
+            expect((commands[1].body as { Arguments: { Index: string } }).Arguments.Index).toBe('3');
+        });
+
+        it('a MediaSourceId change voids the remembered index', async () => {
+            mountVideo();
+            const session = ownSession();
+            (session.PlayState as Record<string, unknown>).MediaSourceId = 'source-1';
+            const { commands } = installApi([session]);
+            JC.cycleSubtitleTrack!(); // memory = 3 scoped to source-1
+            await flushPromises();
+            (session.PlayState as Record<string, unknown>).MediaSourceId = 'source-2';
+            JC.cycleSubtitleTrack!(); // new source renumbers streams → PlayState wins
+            await flushPromises();
+            expect(commands.map((c) => (c.body as { Arguments: { Index: string } }).Arguments.Index))
+                .toEqual(['3', '3']);
+        });
+
+        it('PlayState acknowledging the commanded index retires the memory; the cycle stays coherent', async () => {
+            mountVideo();
+            const session = ownSession();
+            const { commands } = installApi([session]);
+            JC.cycleSubtitleTrack!(); // 2 → 3, memory = 3
+            await flushPromises();
+            (session.PlayState as Record<string, unknown>).SubtitleStreamIndex = 3; // server acknowledges
+            JC.cycleSubtitleTrack!(); // ack retires the old memory; 3 → -1, new memory = -1
+            await flushPromises();
+            JC.cycleSubtitleTrack!(); // continues from the unacknowledged -1 → 2
+            await flushPromises();
+            expect(commands.map((c) => (c.body as { Arguments: { Index: string } }).Arguments.Index))
+                .toEqual(['3', '-1', '2']);
+        });
+
+        it('BLOB: a press-time probe resolving after a surface change is NOT accepted as ownership', async () => {
+            const video = mountVideo();
+            const resolvers: Array<(v: unknown) => void> = [];
+            const commands: string[] = [];
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolvers.push(r); });
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            trigger.setAttribute('title', 'Audio');
+            const triggerClick = vi.spyOn(trigger, 'click').mockImplementation(() => undefined);
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            // Surface moves while the press-time probe is pending; the probe
+            // then reports the NEW item for both press and op probes.
+            video.remove();
+            mountVideo();
+            resolvers.forEach((r) => r([sessionForItem(ITEM_B)]));
+            await flushPromises();
+
+            expect(commands).toHaveLength(0); // ownership unproven → never commands
+            expect(triggerClick).toHaveBeenCalledTimes(1); // surface-guarded fallback
+        });
+
+        it('BLOB: an established press with a moved surface needs a fresh matching proof before POST', async () => {
+            const video = mountVideo();
+            const commands: string[] = [];
+            let probeCount = 0;
+            let resolveOpProbe!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    probeCount += 1;
+                    if (probeCount === 1) return Promise.resolve([sessionForItem(ITEM_A)]); // press probe (surface intact)
+                    if (probeCount === 2) return new Promise((r) => { resolveOpProbe = r; }); // op probe deferred
+                    return Promise.resolve([sessionForItem(ITEM_B)]); // fresh proof: next episode landed
+                }
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await flushPromises(); // press probe resolves (ITEM_A, surface unchanged)
+            // Surface moves; the deferred op probe then returns a STALE ITEM_A response.
+            video.remove();
+            mountVideo();
+            resolveOpProbe([sessionForItem(ITEM_A)]);
+            await flushPromises();
+
+            expect(commands).toHaveLength(0); // fresh proof said ITEM_B → swallowed
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('overlay: a session sampled for the old item is not rendered against the new video', async () => {
+            const ITEM = 'e5'.repeat(16);
+            const video = document.createElement('video');
+            let src = `http://jf.test/Videos/${ITEM}/stream.mp4?MediaSourceId=1`;
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            let resolveSessions!: (v: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.togglePlaybackInfo!();
+            const overlay = document.querySelector('[data-jc-playback-info="true"]')!;
+            await Promise.resolve();
+            await Promise.resolve();
+            // Next episode: source changes while the probe is in flight; the
+            // response still describes the old item.
+            src = 'blob:next-episode';
+            resolveSessions([ownSession()]); // PlayMethod DirectPlay from the OLD sample
+            await flushPromises();
+
+            expect(overlay.textContent).not.toContain('DirectPlay'); // mixed sample discarded
+        });
+    });
+
     describe('aspect ratio without panels', () => {
         it('cycles auto → cover → fill → auto via the native localStorage key and object-fit', () => {
             const video = mountVideo();

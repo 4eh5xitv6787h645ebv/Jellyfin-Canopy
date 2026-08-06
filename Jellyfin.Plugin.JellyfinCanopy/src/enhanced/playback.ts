@@ -724,6 +724,7 @@ const OFF_STREAM_INDEX = -1;
 interface LastCommandedTrack {
     sessionId: string;
     itemId: string;
+    mediaSourceId: string | null;
     index: number;
     at: number;
 }
@@ -732,9 +733,31 @@ interface LastCommandedTrack {
 // subtitle command must not evict the remembered audio index (or vice versa).
 let _lastCommandedTrack: Partial<Record<TrackSheetKind, LastCommandedTrack>> = {};
 
-function rememberedTrackIndex(kind: TrackSheetKind, sessionId: string, itemId: string): number | null {
+function forgetCommandedTrack(kind: TrackSheetKind): void {
+    delete _lastCommandedTrack[kind];
+}
+
+function rememberedTrackIndex(
+    kind: TrackSheetKind,
+    sessionId: string,
+    itemId: string,
+    mediaSourceId: string | null,
+    reported: number | null | undefined,
+): number | null {
     const last = _lastCommandedTrack[kind];
     if (!last || last.sessionId !== sessionId || last.itemId !== itemId) return null;
+    // A media-source switch renumbers streams; the optimistic index is void.
+    if (last.mediaSourceId !== (mediaSourceId ?? null)) {
+        forgetCommandedTrack(kind);
+        return null;
+    }
+    // PlayState acknowledged the command — it is authoritative again; retiring
+    // the memory also lets a later EXTERNAL selection (menu, another remote)
+    // win instead of being overridden for the rest of the window.
+    if (typeof reported === 'number' && reported === last.index) {
+        forgetCommandedTrack(kind);
+        return null;
+    }
     if (performance.now() - last.at > TRACK_COMMAND_MEMORY_MS) return null;
     return last.index;
 }
@@ -768,11 +791,26 @@ function currentTrackPressItemHint(): string | null {
     return normalizeTrackItemId(parseItemIdFromVideosSrc(src) ?? getCurrentVideoItemId());
 }
 
+interface TrackPressOwnership {
+    /** Resolved press-time item id, or null when ownership could not be proven. */
+    readonly item: Promise<string | null>;
+    /** True when the id came from a press-time probe (id-less source). */
+    readonly idless: boolean;
+    /** Element/source snapshot at the keypress (id-less presses only). */
+    readonly video: HTMLVideoElement | null;
+    readonly src: string;
+}
+
+function pressSurfaceUnchanged(press: TrackPressOwnership): boolean {
+    const video = getVideo();
+    return video === press.video && (video?.currentSrc || video?.src || '') === press.src;
+}
+
 async function cycleTrackViaApi(
     kind: TrackSheetKind,
     context: IdentityContext,
     expectedGeneration: number,
-    pressItem: Promise<string | null>,
+    press: TrackPressOwnership,
 ): Promise<boolean> {
     const api = JC.core?.api;
     if (!api || typeof api.jf !== 'function') return false;
@@ -784,7 +822,7 @@ async function cycleTrackViaApi(
     const baselineStale = (): boolean =>
         !isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true;
     if (baselineStale()) return true;
-    const [pressItemId, session] = await Promise.all([pressItem, probeOwnSession(context)]);
+    const [pressItemId, session] = await Promise.all([press.item, probeOwnSession(context)]);
     if (baselineStale()) return true; // stale press — swallow
     // Unproven press ownership never commands: every press resolves an item
     // id (source-parsed or press-time probe), so a null here means the
@@ -821,7 +859,7 @@ async function cycleTrackViaApi(
     const reported = kind === 'subtitle'
         ? session.PlayState?.SubtitleStreamIndex
         : session.PlayState?.AudioStreamIndex;
-    const current = rememberedTrackIndex(kind, sessionId, itemId)
+    const current = rememberedTrackIndex(kind, sessionId, itemId, session.PlayState?.MediaSourceId ?? null, reported)
         ?? (typeof reported === 'number' ? reported : OFF_STREAM_INDEX);
     const position = candidates.indexOf(current);
     const next = candidates[(position + 1) % candidates.length]; // unknown current (-1 lookup miss) → first candidate
@@ -832,6 +870,15 @@ async function cycleTrackViaApi(
     // disagrees with the press item, the press is stale — swallow.
     const itemBeforeCommand = currentTrackPressItemHint();
     if (itemBeforeCommand && itemBeforeCommand !== pressItemId) return true;
+    // Id-less presses can't be checked by source id, so a surface that moved
+    // since the keypress needs a FRESH ownership proof: probe again and
+    // require the same item (allows our own command's same-item restart,
+    // rejects a landed next episode even when the earlier probe was stale).
+    if (press.idless && !pressSurfaceUnchanged(press)) {
+        const fresh = await probeOwnSession(context);
+        if (baselineStale()) return true;
+        if (normalizeTrackItemId(fresh?.NowPlayingItem?.Id) !== pressItemId) return true;
+    }
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
@@ -857,7 +904,13 @@ async function cycleTrackViaApi(
     // toast or the command memory. The memory is keyed by session+item, so a
     // write after a genuine item change self-invalidates on the next press.
     if (baselineStale()) return true;
-    _lastCommandedTrack[kind] = { sessionId, itemId, index: next, at: performance.now() };
+    _lastCommandedTrack[kind] = {
+        sessionId,
+        itemId,
+        mediaSourceId: session.PlayState?.MediaSourceId ?? null,
+        index: next,
+        at: performance.now(),
+    };
     const nextStream = next === OFF_STREAM_INDEX ? undefined : streams.find((s) => s.Index === next);
     const name = JC.escapeHtml(trackDisplayName(nextStream));
     toast(kind === 'subtitle'
@@ -882,30 +935,48 @@ function cycleTrack(kind: TrackSheetKind): void {
     if (!api || typeof api.jf !== 'function') {
         // No API client — take the DOM path synchronously (also keeps the
         // sheet-machinery tests deterministic without a settled microtask).
+        // The optimistic memory never outlives a fallback: the visible menu
+        // is authoritative and may land anywhere.
+        forgetCommandedTrack(kind);
         startTrackCycle(kind);
         return;
     }
     const expectedGeneration = playbackGeneration;
     // Press-time ownership, captured BEFORE queueing. Id-bearing sources
     // resolve synchronously; id-less (hls.js blob) sources fire an
-    // authoritative own-session probe at the keypress itself, so a press
-    // queued behind a pending command still owns the item the user saw.
+    // authoritative own-session probe at the keypress itself, accepted only
+    // if the element/source surface is still the keypress surface when it
+    // resolves — otherwise ownership stays unproven.
     const pressItemHint = currentTrackPressItemHint();
-    const pressItem: Promise<string | null> = pressItemHint
-        ? Promise.resolve(pressItemHint)
-        : probeOwnSession(context)
-            .then((s) => normalizeTrackItemId(s?.NowPlayingItem?.Id))
-            .catch(() => null);
+    const pressVideo = pressItemHint ? null : getVideo();
+    const press: TrackPressOwnership = {
+        idless: !pressItemHint,
+        video: pressVideo,
+        src: pressVideo?.currentSrc || pressVideo?.src || '',
+        item: pressItemHint
+            ? Promise.resolve(pressItemHint)
+            : probeOwnSession(context)
+                .then((s) => normalizeTrackItemId(s?.NowPlayingItem?.Id))
+                .catch(() => null),
+    };
+    if (press.idless) {
+        const raw = press.item;
+        (press as { item: Promise<string | null> }).item =
+            raw.then((id) => (pressSurfaceUnchanged(press) ? id : null));
+    }
     _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
         let handled = false;
         try {
-            handled = await cycleTrackViaApi(kind, context, expectedGeneration, pressItem);
+            handled = await cycleTrackViaApi(kind, context, expectedGeneration, press);
         } catch (err) {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
         }
         if (handled) return;
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
+        // Every DOM fallback invalidates the optimistic memory for this kind:
+        // the menu is authoritative and its selection is not observed here.
+        forgetCommandedTrack(kind);
         startTrackCycle(kind);
     });
 }
@@ -1108,6 +1179,7 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
         destroyPlaybackInfoOverlay();
         return;
     }
+    const sampledSrc = video.currentSrc || video.src || '';
     const session = await probeOwnSession(context);
     if (_playbackInfoOverlay !== overlay || !JC.identity.isCurrent(context)) return;
     const currentVideo = getVideo();
@@ -1115,7 +1187,17 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
         destroyPlaybackInfoOverlay();
         return;
     }
-    renderPlaybackInfo(currentVideo, session);
+    // The session sample and the video must describe the same playback. A
+    // next-episode swap on the same /video route (new element or source, or a
+    // derivable item id disagreeing with the probed session) discards this
+    // mixed sample; the next tick renders a coherent one.
+    const currentSrc = currentVideo.currentSrc || currentVideo.src || '';
+    const derivableItem = normalizeTrackItemId(parseItemIdFromVideosSrc(currentSrc));
+    const sessionItem = normalizeTrackItemId(session?.NowPlayingItem?.Id);
+    const coherent = currentVideo === video
+        && currentSrc === sampledSrc
+        && !(derivableItem && sessionItem && derivableItem !== sessionItem);
+    if (coherent) renderPlaybackInfo(currentVideo, session);
     schedulePlaybackInfoRefresh(context, overlay);
 }
 
