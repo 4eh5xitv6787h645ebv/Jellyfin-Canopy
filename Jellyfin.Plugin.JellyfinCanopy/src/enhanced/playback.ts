@@ -751,23 +751,36 @@ function trackDisplayName(stream: OwnSessionStream | undefined): string {
  * fully handled (including "no tracks" toasts); false → caller falls back to
  * the DOM sheet path.
  */
+interface PressSurface {
+    readonly video: HTMLVideoElement | null;
+    readonly src: string;
+}
+
+/** Ownership snapshot taken synchronously at the keypress itself. */
+function capturePressSurface(): PressSurface {
+    const video = getVideo();
+    return { video, src: video?.currentSrc || video?.src || '' };
+}
+
 async function cycleTrackViaApi(
     kind: TrackSheetKind,
     context: IdentityContext,
     expectedGeneration: number,
+    press: PressSurface,
 ): Promise<boolean> {
     const api = JC.core?.api;
     if (!api || typeof api.jf !== 'function') return false;
-    // Ownership snapshot for the press: a next-episode swap (new element or
-    // new source) between the probe and the POST would command track indexes
-    // computed for the OLD item. Any staleness swallows the press.
-    const pressVideo = getVideo();
-    const pressSrc = pressVideo?.currentSrc || pressVideo?.src || '';
+    // Ownership snapshot from the press: a next-episode swap (new element or
+    // new source) between the keypress and the POST would command track
+    // indexes for an item the user was not looking at. Any staleness swallows
+    // the press. The snapshot is captured at the keypress (before any queueing
+    // behind an earlier pending command), not when this operation starts.
     const pressIsStale = (): boolean => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return true;
         const video = getVideo();
-        return video !== pressVideo || (video?.currentSrc || video?.src || '') !== pressSrc;
+        return video !== press.video || (video?.currentSrc || video?.src || '') !== press.src;
     };
+    if (pressIsStale()) return true; // surface already moved while queued
     const session = await probeOwnSession(context);
     if (pressIsStale()) return true; // stale press — swallow
     const sessionId = session?.Id;
@@ -851,11 +864,12 @@ function cycleTrack(kind: TrackSheetKind): void {
         return;
     }
     const expectedGeneration = playbackGeneration;
+    const press = capturePressSurface(); // at the keypress, before queueing
     _trackCycleChains[kind] = _trackCycleChains[kind].then(async () => {
         if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return;
         let handled = false;
         try {
-            handled = await cycleTrackViaApi(kind, context, expectedGeneration);
+            handled = await cycleTrackViaApi(kind, context, expectedGeneration, press);
         } catch (err) {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
         }

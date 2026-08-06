@@ -344,6 +344,41 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
+    describe('queued press with press-time snapshot (final-confirmation regression 3)', () => {
+        it('a press queued behind a pending command is swallowed when the surface moves before it runs', async () => {
+            const video = document.createElement('video');
+            let src = 'http://jf.test/Videos/item-1/stream?MediaSourceId=1';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (v: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([ownSession()]);
+                commands.push({ path, ...options });
+                return new Promise((r) => { resolveCommand = r; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!(); // press A: probe + POST (pending)
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+            JC.cycleSubtitleTrack!(); // press B: queued behind A, snapshot taken NOW
+            // Next episode swaps the surface while B waits in the queue.
+            src = 'http://jf.test/Videos/item-2/stream?MediaSourceId=1';
+            resolveCommand({}); // A succeeds
+            await flushPromises();
+            await flushPromises();
+            await flushPromises();
+
+            expect(commands).toHaveLength(1); // B swallowed: no command for the new item
+            expect(triggerClick).not.toHaveBeenCalled(); // and no menu fallback
+        });
+    });
+
     describe('failed POST with a stale surface (final-confirmation regression 2)', () => {
         it('a source change during a FAILED command swallows the press instead of menu fallback', async () => {
             const video = document.createElement('video');
