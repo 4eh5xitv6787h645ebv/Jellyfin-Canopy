@@ -59,7 +59,7 @@ function captureObservedHostWrites(element: HTMLElement, mutations: MutationReco
         // even when its value happens to equal our canonical render. A value
         // comparison alone cannot distinguish that case from an untouched
         // element. Plugin-owned writes are synchronously drained separately.
-        if (mutation.type === 'characterData') {
+        if (mutation.type === 'characterData' || mutation.type === 'childList') {
             state.sourceText = element.textContent;
             captured = true;
         } else if (mutation.type === 'attributes') {
@@ -146,6 +146,7 @@ function observeRatingMutations(
         attributes: true,
         attributeFilter: [CONFIG.attributeName, 'aria-label', 'title'],
         characterData: true,
+        childList: true,
         subtree: true,
     });
     ratingMutationObservers.set(element, observer);

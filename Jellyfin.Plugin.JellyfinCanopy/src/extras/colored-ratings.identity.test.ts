@@ -139,6 +139,26 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.dataset.jcColoredRating).toBeUndefined();
     });
 
+    it('retains a delayed equal canonical host text-child replacement through reset', async () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        // React can replace the text child via textContent instead of mutating
+        // the retained Text node. The resulting childList record is ownership
+        // evidence even though the visible value is unchanged.
+        await vi.advanceTimersByTimeAsync(600);
+        rating.textContent = 'FSK-12';
+        await vi.advanceTimersByTimeAsync(250);
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
     it('updates plugin-owned accessibility metadata from FSK to non-FSK', async () => {
         const rating = addRating('DE-12');
         JC.initializeColoredRatings!();
@@ -274,6 +294,24 @@ describe('colored ratings identity lifecycle', () => {
         // No microtask/timer yield: teardown must drain the observer record
         // before disconnect() would otherwise discard it.
         rating.firstChild!.nodeValue = 'FSK-12';
+        rating.remove();
+        switchIdentity('ratings-server-b', 'ratings-user-b');
+
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
+    it('drains an equal canonical host text-child replacement before detached identity teardown', () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        // No observer delivery or timer yield: teardown must drain the queued
+        // childList record before disconnecting the element-scoped observer.
+        rating.textContent = 'FSK-12';
         rating.remove();
         switchIdentity('ratings-server-b', 'ratings-user-b');
 
