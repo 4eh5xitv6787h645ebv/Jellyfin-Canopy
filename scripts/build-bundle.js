@@ -59,6 +59,7 @@ const ESM_ENTRIES = Object.freeze({
     'arr-search': path.join(SRC_ROOT, 'arr', 'search', 'feature.ts'),
     'letterboxd-links': path.join(SRC_ROOT, 'others', 'letterboxd-links.feature.ts'),
     'maintainerr-item-status': path.join(SRC_ROOT, 'entries', 'maintainerr-item-status.ts'),
+    'qbittorrent-item-telemetry': path.join(SRC_ROOT, 'entries', 'qbittorrent-item-telemetry.ts'),
     'maintainerr-page': path.join(SRC_ROOT, 'entries', 'maintainerr-page.ts'),
     'native-tabs': path.join(SRC_ROOT, 'entries', 'native-tabs.ts'),
     'requests-page': path.join(SRC_ROOT, 'entries', 'requests-page.ts'),

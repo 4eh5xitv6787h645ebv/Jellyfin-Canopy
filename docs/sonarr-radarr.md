@@ -421,6 +421,53 @@ Found on the **Pages** tab under "Requests Page".
 | **Download History Window (days)** | 7 | Requests 1–30 days of Sonarr/Radarr history; collection remains subject to the per-instance cap. |
 | **Show Seerr request status and history to regular users** | On | Controls both the server-scoped Seerr request list and sanitized download relations embedded in Seerr media responses. When off, regular-user proxy responses contain empty download relations. Source affinity, ownership, parental limits, and library visibility still apply. |
 
+### Optional qBittorrent item telemetry
+
+Canopy can add compact, read-only torrent health to movie and episode details.
+This is separate from the Sonarr/Radarr lifecycle: it reports the current
+qBittorrent transfer state, bounded progress and ratio, a redacted tracker
+identity, and relevant timestamps for an item that already exists in Jellyfin.
+The compact timestamp shows last activity when available, otherwise completion,
+then the added time; it is omitted when qBittorrent supplies none of those
+values. It is disabled by default.
+
+To configure it, expand **qBittorrent read-only telemetry** in the **Requests
+Page** settings, enter the Web UI connection, and add one path mapping per line.
+Each mapping is the qBittorrent root, a `|` separator, and the corresponding
+Jellyfin root. Save before using **Test saved connection**. Canopy requires at
+least one valid mapping and refuses ambiguous equal-strength matches. A more
+specific configured qBittorrent root wins over a broader root.
+
+The browser never receives the qBittorrent URL, username, password, torrent
+name, info hash, raw filesystem path, tracker URL, peer topology, or upstream
+error body. The endpoint first resolves the exact item through Jellyfin's
+current-user library lookup. Only then may it consult the server-held torrent
+snapshot. Regular-user visibility has a separate opt-in and administrators
+cannot grant access to an item Jellyfin itself hides from that user.
+
+The integration uses qBittorrent's login endpoint, the read-only torrent-list
+endpoint, and a best-effort logout bounded to two seconds. Logout destroys only
+the short-lived Web API session created for that snapshot; it is not a torrent
+mutation. Both legacy `SID` cookies and qBittorrent 5.2's port-specific
+`QBT_SID_<port>` cookies are accepted, but no other response cookie is replayed.
+It does not expose pause, resume, delete, reannounce,
+priority, category, tag, file-selection, or any other mutation. Redirects,
+ambient cookies, system credentials, and outbound proxies are disabled for the
+connection; the same connect-time address guard used for other local services
+blocks metadata and link-local targets.
+
+One normalized snapshot of at most 2,000 torrents and 2 MiB is shared by the
+server for 30 seconds; raw response bytes are discarded after parsing and the
+normalized paths are actively dropped when that TTL expires, even if nobody
+requests telemetry again. Failed
+reads have a two-second server backoff. On the client, polling is visible-page
+and navigation/account owned, runs every 30–300 seconds, exponentially backs
+off to eight times the configured interval after failures, and aborts on item,
+account, configuration, or navigation changes. Because qBittorrent is an
+operator-local service rather than a shared fleet upstream, fleet jitter is
+not applicable; the fixed single-flight cache prevents user count from
+multiplying upstream request rate.
+
 ### Why there is no direct SABnzbd history
 
 Canopy deliberately reads the lifecycle Sonarr and Radarr own. Their queue models collapse the underlying download client's download, verification, unpacking, and handoff details into the signals ARR uses to decide whether import can proceed. A direct SABnzbd integration would not currently have an owner for credential/configuration storage, SSRF-safe connection policy, bounded polling, or deterministic SAB job-to-ARR/media correlation; adding an ad hoc client would jeopardize the lifecycle, privacy, and bounded-work guarantees above.

@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Årsak",
   "pi_container": "Beholder",
   "pi_audio": "Lyd",
-  "pi_subtitle": "Undertekster"
+  "pi_subtitle": "Undertekster",
+  "qbittorrent_state_downloading": "Laster ned",
+  "qbittorrent_state_seeding": "Deler",
+  "qbittorrent_state_stalled": "Stanset",
+  "qbittorrent_state_queued": "I kø",
+  "qbittorrent_state_paused": "Satt på pause",
+  "qbittorrent_state_checking": "Kontrollerer",
+  "qbittorrent_state_error": "Overføringsfeil",
+  "qbittorrent_state_unknown": "Torrent aktiv",
+  "qbittorrent_unavailable": "Torrenttelemetri er utilgjengelig",
+  "qbittorrent_timestamp_last_activity": "Siste aktivitet",
+  "qbittorrent_timestamp_completed": "Fullført",
+  "qbittorrent_timestamp_added": "Lagt til"
 }

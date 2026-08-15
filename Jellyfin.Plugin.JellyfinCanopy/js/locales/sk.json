@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Dôvod",
   "pi_container": "Kontajner",
   "pi_audio": "Zvuk",
-  "pi_subtitle": "Titulky"
+  "pi_subtitle": "Titulky",
+  "qbittorrent_state_downloading": "Sťahovanie",
+  "qbittorrent_state_seeding": "Zdieľanie",
+  "qbittorrent_state_stalled": "Zastavené",
+  "qbittorrent_state_queued": "Vo fronte",
+  "qbittorrent_state_paused": "Pozastavené",
+  "qbittorrent_state_checking": "Kontrola",
+  "qbittorrent_state_error": "Chyba prenosu",
+  "qbittorrent_state_unknown": "Torrent je aktívny",
+  "qbittorrent_unavailable": "Telemetria torrentu nie je dostupná",
+  "qbittorrent_timestamp_last_activity": "Posledná aktivita",
+  "qbittorrent_timestamp_completed": "Dokončené",
+  "qbittorrent_timestamp_added": "Pridané"
 }

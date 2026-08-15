@@ -157,6 +157,32 @@ public sealed class SeerrIntegrationEntryPointGuardTests
             "PluginHttpClients.CreateMaintainerrClient",
             "HttpCompletionOption.ResponseHeadersRead",
             "deadline.Token"),
+        // Optional qBittorrent telemetry has one read dispatch wrapped in a
+        // bounded authentication-session lifecycle. Login and logout mutate
+        // only the operation-local Web API session; no torrent mutation route
+        // exists. All three use the guarded, no-redirect named client.
+        ["Services/Qbittorrent/QbittorrentTelemetryService.cs:FetchSnapshotAsync"] = new(
+            1,
+            "ArrUrlGuard.IsAllowedUrlAsync(capture.BaseUrl, operation.Token)",
+            "CreateClient(HttpClientName)",
+            "\"api/v2/torrents/info\"",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "ReadBoundedAsync(response, MaximumResponseBytes, operation.Token)",
+            "LogoutBestEffortAsync(client, capture, session)"),
+        ["Services/Qbittorrent/QbittorrentTelemetryService.cs:LoginAsync"] = new(
+            1,
+            "BuildRequest(HttpMethod.Post, capture, \"api/v2/auth/login\", session: null)",
+            "FormUrlEncodedContent",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "ReadBoundedAsync(response, 64, cancellationToken)"),
+        ["Services/Qbittorrent/QbittorrentTelemetryService.cs:LogoutBestEffortAsync"] = new(
+            1,
+            "BuildRequest(",
+            "HttpMethod.Post",
+            "\"api/v2/auth/logout\"",
+            "LogoutDeadline",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "cleanup.Token"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
         // Service auto-discovery transport: the single raw GET used by both
         // probe kinds. Credential-free, over the guarded no-redirect Discovery

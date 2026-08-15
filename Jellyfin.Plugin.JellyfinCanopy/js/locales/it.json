@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Motivo",
   "pi_container": "Contenitore",
   "pi_audio": "Audio",
-  "pi_subtitle": "Sottotitoli"
+  "pi_subtitle": "Sottotitoli",
+  "qbittorrent_state_downloading": "Download in corso",
+  "qbittorrent_state_seeding": "Condivisione in corso",
+  "qbittorrent_state_stalled": "In stallo",
+  "qbittorrent_state_queued": "In coda",
+  "qbittorrent_state_paused": "In pausa",
+  "qbittorrent_state_checking": "Verifica in corso",
+  "qbittorrent_state_error": "Errore di trasferimento",
+  "qbittorrent_state_unknown": "Torrent attivo",
+  "qbittorrent_unavailable": "Telemetria torrent non disponibile",
+  "qbittorrent_timestamp_last_activity": "Ultima attività",
+  "qbittorrent_timestamp_completed": "Completato",
+  "qbittorrent_timestamp_added": "Aggiunto"
 }

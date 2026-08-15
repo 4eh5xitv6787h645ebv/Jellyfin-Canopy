@@ -65,6 +65,7 @@ public sealed class MonitorSubscriptionLifecycleTests
             Capabilities = new PlatformActionCapabilityService();
             PrepareHandles = new PlatformPrepareHandleOwner();
             PreparedContexts = new PlatformPreparedActionContextOwner(Capabilities);
+            Qbittorrent = new StubQbittorrentTelemetryService();
             Notifier = new LiveNotifierService(
                 null!,
                 Sessions,
@@ -76,6 +77,7 @@ public sealed class MonitorSubscriptionLifecycleTests
                 PrepareHandles,
                 PreparedContexts,
                 new StubTagCacheLifecycle(),
+                Qbittorrent,
                 NullLogger<LiveNotifierService>.Instance);
         }
 
@@ -96,6 +98,8 @@ public sealed class MonitorSubscriptionLifecycleTests
         public PlatformPrepareHandleOwner PrepareHandles { get; }
 
         public PlatformPreparedActionContextOwner PreparedContexts { get; }
+
+        public StubQbittorrentTelemetryService Qbittorrent { get; }
 
         public LiveNotifierService Notifier { get; }
 
@@ -140,6 +144,18 @@ public sealed class MonitorSubscriptionLifecycleTests
             Capabilities.Dispose();
             PrepareHandles.Dispose();
         }
+    }
+
+    [Fact]
+    public async Task ConfigurationSaveSynchronouslyDropsQbittorrentSnapshotAuthority()
+    {
+        var fixture = new Fixture(new PluginConfiguration());
+
+        var notification = fixture.SaveConfigurationAsync(new PluginConfiguration());
+
+        Assert.Equal(1, fixture.Qbittorrent.InvalidationCount);
+        await notification;
+        fixture.DisposeMonitors();
     }
 
     private static PluginConfiguration Config(

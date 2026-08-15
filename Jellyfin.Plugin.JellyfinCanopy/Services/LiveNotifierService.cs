@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Qbittorrent;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
@@ -65,6 +66,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly PlatformPreparedActionContextOwner _platformPreparedContexts;
         private readonly ILogger<LiveNotifierService> _logger;
         private readonly ITagCacheLifecycle _tagCacheLifecycle;
+        private readonly IQbittorrentTelemetryService _qbittorrentTelemetry;
 
         private BasePlugin<PluginConfiguration>? _plugin;
         private EventHandler<BasePluginConfiguration>? _handler;
@@ -80,6 +82,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             PlatformPrepareHandleOwner platformPrepareHandles,
             PlatformPreparedActionContextOwner platformPreparedContexts,
             ITagCacheLifecycle tagCacheLifecycle,
+            IQbittorrentTelemetryService qbittorrentTelemetry,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -93,6 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _platformPreparedContexts = platformPreparedContexts ?? throw new ArgumentNullException(nameof(platformPreparedContexts));
             _logger = logger;
             _tagCacheLifecycle = tagCacheLifecycle ?? throw new ArgumentNullException(nameof(tagCacheLifecycle));
+            _qbittorrentTelemetry = qbittorrentTelemetry ?? throw new ArgumentNullException(nameof(qbittorrentTelemetry));
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -155,6 +159,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // before session I/O can yield, so disabling and re-enabling Platform v1
             // can never revive an action issued under an earlier configuration.
             InvalidatePlatformAuthority();
+
+            // Raw torrent paths and failure state are configuration authority.
+            // Drop them synchronously on every save before any session I/O yields.
+            _qbittorrentTelemetry.InvalidateCachedState();
 
             // Revoke or create tag-cache authority synchronously before the first
             // session-I/O await. Disable cannot leave a late build publication alive;

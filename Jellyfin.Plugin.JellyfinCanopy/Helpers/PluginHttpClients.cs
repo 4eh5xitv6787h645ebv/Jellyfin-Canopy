@@ -48,6 +48,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         /// </summary>
         public const string MaintainerrClient = "JellyfinCanopyMaintainerr";
 
+        /// <summary>Read-only qBittorrent Web API client with operation-local session handling.</summary>
+        public const string QbittorrentClient = "JellyfinCanopyQbittorrentTelemetry";
+
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
         {
             // Same fallback pattern as SeerrHttpHelper.CreateClient: if the named
@@ -104,6 +107,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
             handler.Credentials = null;
             // A proxy would resolve/connect to the target on our behalf, bypassing
             // ArrUrlGuard's authoritative connect-time DNS-rebinding check.
+            handler.UseProxy = false;
+            return handler;
+        }
+
+        internal static SocketsHttpHandler CreateQbittorrentHandler()
+        {
+            var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);
+            // Authentication cookies are parsed into one operation-local session and
+            // attached manually. The pooled handler never owns credentials.
+            handler.UseCookies = false;
+            handler.Credentials = null;
             handler.UseProxy = false;
             return handler;
         }

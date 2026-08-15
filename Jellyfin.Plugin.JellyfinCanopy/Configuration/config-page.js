@@ -88,6 +88,8 @@
             const testMaintainerrBtn = document.getElementById('testMaintainerrBtn');
             const maintainerrStatusIndicator = document.getElementById('maintainerrStatusIndicator');
             const maintainerrStatusText = document.getElementById('maintainerrStatusText');
+            const testQbittorrentBtn = document.getElementById('testQbittorrentBtn');
+            const testQbittorrentStatus = document.getElementById('testQbittorrentStatus');
 
             const tmdbStatusIndicator = document.getElementById('tmdbStatusIndicator');
 
@@ -3271,6 +3273,25 @@
             }
         }
 
+        async function persistQbittorrentConnection(values, clear) {
+            if (!clear && !values.url && !values.username && !values.password && !values.pathMappings) return;
+            await ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('/JellyfinCanopy/qbittorrent/connection'),
+                contentType: 'application/json',
+                dataType: 'json',
+                data: JSON.stringify(clear
+                    ? { action: 'clear' }
+                    : {
+                        action: 'update',
+                        url: values.url || null,
+                        username: values.username || null,
+                        password: values.password || null,
+                        pathMappings: values.pathMappings || null
+                    })
+            });
+        }
+
         async function persistConfigurationAndMaintenance(config, broadcast) {
             const status = await getMaintenanceStatus();
             if (config.MaintenanceModeEnabled) {
@@ -3308,10 +3329,32 @@
             saveBtns.forEach(function(b) { b.disabled = true; });
 
             try {
+                const qbittorrentInputs = {
+                    url: document.getElementById('qbittorrentUrl'),
+                    username: document.getElementById('qbittorrentUsername'),
+                    password: document.getElementById('qbittorrentPassword'),
+                    pathMappings: document.getElementById('qbittorrentPathMappings')
+                };
+                const clearQbittorrentConnection = document.getElementById('qbittorrentClearConnection');
+                const qbittorrentConnection = {
+                    url: qbittorrentInputs.url.value.trim(),
+                    username: qbittorrentInputs.username.value.trim(),
+                    password: qbittorrentInputs.password.value || '',
+                    pathMappings: qbittorrentInputs.pathMappings.value.trim()
+                };
+                if (clearQbittorrentConnection.checked === true
+                    && Object.values(qbittorrentConnection).some(Boolean)) {
+                    throw new Error('Clear the replacement connection values or uncheck “Clear the saved qBittorrent connection”.');
+                }
                 const config = await buildConfigFromForm();
                 // Everything mutated up to this snapshot is in `config`.
                 const dirtyRevisionAtSnapshot = jcDirtyRevisionNow();
                 const result = await persistConfigurationAndMaintenance(config, true);
+                await persistQbittorrentConnection(
+                    qbittorrentConnection,
+                    clearQbittorrentConnection.checked === true);
+                Object.values(qbittorrentInputs).forEach(function(input) { input.value = ''; });
+                clearQbittorrentConnection.checked = false;
 
                 Dashboard.processPluginConfigurationUpdateResult(result);
                 // Clean only if nothing was edited while the save was in flight.
@@ -6048,6 +6091,32 @@
         });
         testSeerrBtn.addEventListener('click', testSeerrConnection);
         testMaintainerrBtn.addEventListener('click', testMaintainerrConnection);
+        testQbittorrentBtn.addEventListener('click', async function() {
+            testQbittorrentBtn.disabled = true;
+            testQbittorrentBtn.setAttribute('aria-busy', 'true');
+            testQbittorrentStatus.textContent = ' Testing…';
+            try {
+                await ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('/JellyfinCanopy/qbittorrent/test'),
+                    dataType: 'json'
+                });
+                testQbittorrentStatus.textContent = ' Connected';
+                Dashboard.alert({
+                    title: 'qBittorrent connected',
+                    message: 'The saved read-only telemetry connection is available.'
+                });
+            } catch (_) {
+                testQbittorrentStatus.textContent = ' Unavailable';
+                Dashboard.alert({
+                    title: 'qBittorrent connection failed',
+                    message: 'Save valid connection and path-mapping settings, then try again.'
+                });
+            } finally {
+                testQbittorrentBtn.disabled = false;
+                testQbittorrentBtn.setAttribute('aria-busy', 'false');
+            }
+        });
 
         /* jc-seerr-scan-helpers:start */
         function jcNormalizeSeerrIdentityDomain(value) {

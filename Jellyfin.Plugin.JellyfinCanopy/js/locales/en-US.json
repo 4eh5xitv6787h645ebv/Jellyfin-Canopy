@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Reason",
   "pi_container": "Container",
   "pi_audio": "Audio",
-  "pi_subtitle": "Subtitles"
+  "pi_subtitle": "Subtitles",
+  "qbittorrent_state_downloading": "Downloading",
+  "qbittorrent_state_seeding": "Seeding",
+  "qbittorrent_state_stalled": "Stalled",
+  "qbittorrent_state_queued": "Queued",
+  "qbittorrent_state_paused": "Paused",
+  "qbittorrent_state_checking": "Checking",
+  "qbittorrent_state_error": "Transfer error",
+  "qbittorrent_state_unknown": "Torrent active",
+  "qbittorrent_unavailable": "Torrent telemetry unavailable",
+  "qbittorrent_timestamp_last_activity": "Last activity",
+  "qbittorrent_timestamp_completed": "Completed",
+  "qbittorrent_timestamp_added": "Added"
 }

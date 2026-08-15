@@ -99,6 +99,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             RegisterMaintainerrHttpClient(serviceCollection);
+            RegisterQbittorrentHttpClient(serviceCollection);
             // Discovery probes server-chosen private-network candidates and is
             // credential-free; suppress default URI logging like Maintainerr's
             // (candidate URLs are private-network topology).
@@ -187,6 +188,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
             serviceCollection.AddSingleton<Services.Arr.ArrDownloadActivityService>();
+            serviceCollection.AddSingleton<Services.Qbittorrent.IQbittorrentTelemetryService,
+                Services.Qbittorrent.QbittorrentTelemetryService>();
             // Exact, bounded, current-user requester-tag attribution for Calendar filtering.
             serviceCollection.AddSingleton<Services.Arr.CalendarRequesterTagResolver>();
             // Search / Interactive Search feature: itemId → arr identity resolution, instance
@@ -344,6 +347,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 // endpoint-enum logs are permitted for this named client.
                 .RemoveAllLoggers()
                 .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateMaintainerrHandler);
+        }
+
+        internal static void RegisterQbittorrentHttpClient(IServiceCollection serviceCollection)
+        {
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.QbittorrentClient)
+                // Login form fields, session cookies, private topology and torrent
+                // paths must never reach the default IHttpClientFactory loggers.
+                .RemoveAllLoggers()
+                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateQbittorrentHandler);
         }
     }
 }

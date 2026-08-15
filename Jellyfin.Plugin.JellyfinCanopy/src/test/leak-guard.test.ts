@@ -55,6 +55,10 @@ const ALLOWLIST: AllowlistEntry[] = [{
     rule: 'ttl-map',
     owner: 'itemCache',
     why: 'Boot-local resolved DTO LRU is capped at 500; sharing the split primitive exceeds cold-output budgets.',
+}, {
+    file: 'qbittorrent/item-telemetry.ts',
+    rule: 'retry-cap',
+    why: 'Intentional detail-page polling owns one timer and one request, both aborted on scope, identity, item, or config teardown; failure backoff is capped at 8x.',
 }];
 
 // ─────────────────────────────────────────────────────────────────────────────

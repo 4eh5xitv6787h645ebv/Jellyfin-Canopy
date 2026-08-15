@@ -1097,6 +1097,51 @@
                                 <div class="fieldDescription jc-field-desc-xl">How often to refresh download status automatically. Minimum is 30 seconds and applies only when auto-refresh is enabled.</div>
                             </div>
 
+                            <details class="jc-details-section">
+                                <summary>qBittorrent read-only telemetry</summary>
+                                <div class="jc-details-body">
+                                    <div class="checkboxContainer"><label><input id="qbittorrentTelemetryEnabled" data-config-key="QbittorrentTelemetryEnabled" is="emby-checkbox" type="checkbox"/><span>Show qBittorrent telemetry on managed item details</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="qbittorrentTelemetryEnabled">
+                                        <div class="fieldDescription jc-field-desc-xl">Adds read-only transfer health to authorized movie and episode details. No pause, delete, reannounce, priority, or other torrent controls are provided.</div>
+                                    </div>
+                                    <div class="checkboxContainer" data-gated-by="qbittorrentTelemetryEnabled"><label><input id="qbittorrentTelemetryForRegularUsers" data-config-key="QbittorrentTelemetryForRegularUsers" is="emby-checkbox" type="checkbox"/><span>Show telemetry to regular users</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="qbittorrentTelemetryForRegularUsers">
+                                        <div class="fieldDescription jc-field-desc-xl">Regular users receive telemetry only after Jellyfin authorizes the exact item for that caller. Administrators can always see enabled telemetry.</div>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <label class="inputLabel" for="qbittorrentUrl">qBittorrent Web UI URL</label>
+                                        <input id="qbittorrentUrl" is="emby-input" type="url" autocomplete="off" placeholder="Leave blank to keep the saved URL" maxlength="2048"/>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <label class="inputLabel" for="qbittorrentUsername">qBittorrent username</label>
+                                        <input id="qbittorrentUsername" is="emby-input" type="text" autocomplete="off" placeholder="Leave blank to keep the saved username" maxlength="256"/>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <label class="inputLabel" for="qbittorrentPassword">qBittorrent password</label>
+                                        <input id="qbittorrentPassword" is="emby-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password" maxlength="512"/>
+                                    </div>
+                                    <div class="checkboxContainer" data-gated-by="qbittorrentTelemetryEnabled"><label><input id="qbittorrentClearConnection" is="emby-checkbox" type="checkbox"/><span>Clear the saved qBittorrent connection</span></label></div>
+                                    <div class="jc-setting-description" data-desc-for="qbittorrentPassword">
+                                        <div class="fieldDescription jc-field-desc-xl">The saved URL, username, password and path mappings are write-only: they are never returned by Jellyfin's plugin configuration API. Enter only the values that need replacing.</div>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <label class="inputLabel" for="qbittorrentPathMappings">Path mappings</label>
+                                        <textarea id="qbittorrentPathMappings" is="emby-textarea" rows="4" maxlength="8192" placeholder="Leave blank to keep saved mappings"></textarea>
+                                    </div>
+                                    <div class="jc-setting-description" data-desc-for="qbittorrentPathMappings">
+                                        <div class="fieldDescription jc-field-desc-xl">One qBittorrent-root-to-Jellyfin-root mapping per line, separated by <code>|</code>. Paths are used only for server-side matching and are never returned to clients or written to telemetry logs.</div>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <label class="inputLabel" for="qbittorrentPollIntervalSeconds">Telemetry poll interval (seconds)</label>
+                                        <input id="qbittorrentPollIntervalSeconds" data-config-key="QbittorrentPollIntervalSeconds" data-config-int="" data-config-fallback="30" is="emby-input" type="number" min="30" max="300" step="1"/>
+                                    </div>
+                                    <div class="inputContainer" data-gated-by="qbittorrentTelemetryEnabled">
+                                        <button is="emby-button" type="button" id="testQbittorrentBtn" class="emby-button raised button-submit">Test saved connection</button>
+                                        <span id="testQbittorrentStatus" role="status" aria-live="polite"></span>
+                                    </div>
+                                </div>
+                            </details>
+
                             <details class="jc-details-section" data-gated-by="downloadsPageEnabled,showDownloadsInRequests">
                                 <summary>Regular-user download activity visibility</summary>
                                 <div class="jc-details-body">

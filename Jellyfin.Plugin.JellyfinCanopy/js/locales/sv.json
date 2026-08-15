@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Orsak",
   "pi_container": "Behållare",
   "pi_audio": "Ljud",
-  "pi_subtitle": "Undertexter"
+  "pi_subtitle": "Undertexter",
+  "qbittorrent_state_downloading": "Laddar ned",
+  "qbittorrent_state_seeding": "Delar",
+  "qbittorrent_state_stalled": "Avstannad",
+  "qbittorrent_state_queued": "I kö",
+  "qbittorrent_state_paused": "Pausad",
+  "qbittorrent_state_checking": "Kontrollerar",
+  "qbittorrent_state_error": "Överföringsfel",
+  "qbittorrent_state_unknown": "Torrent aktiv",
+  "qbittorrent_unavailable": "Torrenttelemetri är inte tillgänglig",
+  "qbittorrent_timestamp_last_activity": "Senaste aktivitet",
+  "qbittorrent_timestamp_completed": "Slutförd",
+  "qbittorrent_timestamp_added": "Tillagd"
 }

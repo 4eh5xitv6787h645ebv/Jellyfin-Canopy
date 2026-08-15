@@ -308,6 +308,13 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
                     || JC.pluginConfig?.MaintainerrItemStatusForUsers === true
                 )
             )
+            || (
+                JC.pluginConfig?.QbittorrentTelemetryEnabled === true
+                && (
+                    JC.currentUser?.Policy?.IsAdministrator === true
+                    || JC.pluginConfig?.QbittorrentTelemetryForRegularUsers === true
+                )
+            )
         ),
         isApplicable: (state) => detailsRoute(state.routeKey),
     },
@@ -323,6 +330,20 @@ export const builtInFeatureDescriptors: readonly ClientFeatureDescriptor[] = Obj
             && (
                 JC.currentUser?.Policy?.IsAdministrator === true
                 || JC.pluginConfig?.MaintainerrItemStatusForUsers === true
+            ),
+        isApplicable: (state) => detailsRoute(state.routeKey),
+    },
+    {
+        id: 'qbittorrent-item-telemetry',
+        entry: 'qbittorrent-item-telemetry',
+        scope: 'navigation',
+        dependsOn: ['details-enhancements'],
+        restartOnConfigChange: true,
+        isEnabled: (state) => Boolean(state.identity)
+            && JC.pluginConfig?.QbittorrentTelemetryEnabled === true
+            && (
+                JC.currentUser?.Policy?.IsAdministrator === true
+                || JC.pluginConfig?.QbittorrentTelemetryForRegularUsers === true
             ),
         isApplicable: (state) => detailsRoute(state.routeKey),
     },

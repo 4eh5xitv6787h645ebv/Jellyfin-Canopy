@@ -78,6 +78,17 @@ public class PluginHttpClientsTests
     }
 
     [Fact]
+    public void QbittorrentHandler_OwnsNoAmbientCredentialsRedirectsCookiesOrProxy()
+    {
+        using var handler = PluginHttpClients.CreateQbittorrentHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseCookies);
+        Assert.False(handler.UseProxy);
+        Assert.Null(handler.Credentials);
+    }
+
+    [Fact]
     public async Task MaintainerrHandler_DoesNotReplayAnUpstreamResponseCookie()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -103,6 +114,29 @@ public class PluginHttpClientsTests
                 "\r\nCookie:",
                 request,
                 StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task QbittorrentHandler_DoesNotReplayAnUpstreamResponseCookie()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = Assert.IsType<IPEndPoint>(listener.LocalEndpoint);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var capturedRequests = CaptureRequestsAsync(listener, 2, deadline.Token);
+
+        using var handler = PluginHttpClients.CreateQbittorrentHandler();
+        using var client = new HttpClient(handler);
+        var target = new Uri($"http://127.0.0.1:{endpoint.Port}/api/v2/app/version", UriKind.Absolute);
+        using var first = await client.GetAsync(target, deadline.Token);
+        using var second = await client.GetAsync(target, deadline.Token);
+        var requests = await capturedRequests;
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.All(
+            requests,
+            request => Assert.DoesNotContain("\r\nCookie:", request, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -149,6 +183,34 @@ public class PluginHttpClientsTests
             logs.Messages,
             message => message.Contains(privateHostMarker, StringComparison.Ordinal)
                 || message.Contains(itemPathMarker, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task QbittorrentNamedClient_DoesNotLogPrivateTopologyOrApiPaths()
+    {
+        const string privateHostMarker = "qbittorrent-private-host-marker.invalid";
+        const string apiPathMarker = "qbittorrent-api-path-marker";
+        var logs = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Trace);
+            builder.AddProvider(logs);
+        });
+        PluginServiceRegistrator.RegisterQbittorrentHttpClient(services);
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var serviceProvider = services.BuildServiceProvider();
+        using var client = serviceProvider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(PluginHttpClients.QbittorrentClient);
+        client.Timeout = TimeSpan.FromSeconds(2);
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.GetAsync($"http://{privateHostMarker}/{apiPathMarker}", deadline.Token));
+
+        Assert.DoesNotContain(
+            logs.Messages,
+            message => message.Contains(privateHostMarker, StringComparison.Ordinal)
+                || message.Contains(apiPathMarker, StringComparison.Ordinal));
     }
 
     [Fact]

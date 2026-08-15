@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Motiu",
   "pi_container": "Contenidor",
   "pi_audio": "Àudio",
-  "pi_subtitle": "Subtítols"
+  "pi_subtitle": "Subtítols",
+  "qbittorrent_state_downloading": "Baixant",
+  "qbittorrent_state_seeding": "Compartint",
+  "qbittorrent_state_stalled": "Aturat",
+  "qbittorrent_state_queued": "A la cua",
+  "qbittorrent_state_paused": "En pausa",
+  "qbittorrent_state_checking": "Comprovant",
+  "qbittorrent_state_error": "Error de transferència",
+  "qbittorrent_state_unknown": "Torrent actiu",
+  "qbittorrent_unavailable": "Telemetria del torrent no disponible",
+  "qbittorrent_timestamp_last_activity": "Darrera activitat",
+  "qbittorrent_timestamp_completed": "Completat",
+  "qbittorrent_timestamp_added": "Afegit"
 }

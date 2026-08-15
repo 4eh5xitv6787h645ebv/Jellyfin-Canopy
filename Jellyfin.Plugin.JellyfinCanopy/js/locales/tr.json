@@ -996,5 +996,17 @@
   "pi_transcode_reason": "Neden",
   "pi_container": "Kapsayıcı",
   "pi_audio": "Ses",
-  "pi_subtitle": "Altyazılar"
+  "pi_subtitle": "Altyazılar",
+  "qbittorrent_state_downloading": "İndiriliyor",
+  "qbittorrent_state_seeding": "Paylaşılıyor",
+  "qbittorrent_state_stalled": "Durdu",
+  "qbittorrent_state_queued": "Sırada",
+  "qbittorrent_state_paused": "Duraklatıldı",
+  "qbittorrent_state_checking": "Kontrol ediliyor",
+  "qbittorrent_state_error": "Aktarım hatası",
+  "qbittorrent_state_unknown": "Torrent etkin",
+  "qbittorrent_unavailable": "Torrent telemetrisi kullanılamıyor",
+  "qbittorrent_timestamp_last_activity": "Son etkinlik",
+  "qbittorrent_timestamp_completed": "Tamamlandı",
+  "qbittorrent_timestamp_added": "Eklendi"
 }
