@@ -59,6 +59,34 @@ describe('loadSettings admin-default resolution (ENH-4)', () => {
         expect(loadWith({ preferredAudioLanguage: 'pt-BR' }, { PreferredAudioLanguage: 'fr-CA' }).preferredAudioLanguage).toBe('pt-BR');
     });
 
+    it('preserves the acting user language policy instead of discarding its nested object', () => {
+        const userPolicy = {
+            schemaVersion: 1,
+            languages: ['pt-BR', 'en-US'],
+            includeOriginal: false,
+        };
+        const adminPolicy = {
+            SchemaVersion: 1,
+            Languages: ['de-DE'],
+            IncludeOriginal: true,
+        };
+        expect(loadWith({ languageTagFilter: userPolicy }, { LanguageTagFilter: adminPolicy }).languageTagFilter)
+            .toBe(userPolicy);
+    });
+
+    it('keeps language-policy inheritance dynamic and corrupt nested state available to fail closed', () => {
+        const adminPolicy = {
+            SchemaVersion: 1,
+            Languages: ['de-DE'],
+            IncludeOriginal: false,
+        };
+        expect(loadWith({}, { LanguageTagFilter: adminPolicy }).languageTagFilter).toBeNull();
+        expect(loadWith({ languageTagFilter: null }, { LanguageTagFilter: adminPolicy }).languageTagFilter).toBeNull();
+        const corrupt = { schemaVersion: 9, languages: ['en-US'], includeOriginal: false };
+        expect(loadWith({ languageTagFilter: corrupt }, { LanguageTagFilter: adminPolicy }).languageTagFilter)
+            .toBe(corrupt);
+    });
+
     it('CLASS GUARD: every generic hardcoded key resolves from a distinctive PascalCase admin default', () => {
         // Enumerate the hardcoded default set + its values from an empty load.
         const hardcoded = loadWith({}, {});
