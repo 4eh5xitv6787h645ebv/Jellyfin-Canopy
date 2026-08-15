@@ -24,6 +24,213 @@ const FAMILIES = [
 ] as const;
 
 test.describe('tags', () => {
+    test.use({ serviceWorkers: 'block' });
+
+    test('language allowlist orders regional poster flags before the three-item limit', async ({ page, consoleErrors }) => {
+        await page.addInitScript(() => localStorage.setItem('layout', 'experimental'));
+        const cacheRoute = '**/JellyfinCanopy/tag-cache/**';
+        await page.route(cacheRoute, async (route) => {
+            const response = await route.fetch();
+            const body = await response.json() as Record<string, any>;
+            const items = body.items ?? body.Items;
+            if (items && typeof items === 'object') {
+                for (const entry of Object.values(items) as any[]) {
+                    if (entry && typeof entry === 'object' && entry.Type !== 'BoxSet') {
+                        entry.AudioLanguages = ['de-DE', 'en-US', 'fr-FR', 'pt-BR'];
+                    }
+                }
+            }
+            await route.fulfill({ response, json: body });
+        });
+        await loginAs(page, 'admin', consoleErrors);
+        const original = await page.evaluate(() => {
+            const settings = (window as any).JellyfinCanopy.currentSettings;
+            return ['languageTagsEnabled', 'languageTagFilter']
+                .reduce((snapshot: Record<string, { has: boolean; value: unknown }>, key) => {
+                    snapshot[key] = {
+                        has: Object.prototype.hasOwnProperty.call(settings, key),
+                        value: structuredClone(settings[key]),
+                    };
+                    return snapshot;
+                }, {});
+        });
+        const fixtureItemId = await page.evaluate(async () => {
+            const api = (window as any).ApiClient;
+            const result = await api.getItems(api.getCurrentUserId(), {
+                IncludeItemTypes: 'Movie',
+                Recursive: true,
+                Fields: 'Path,MediaSources,MediaStreams',
+                Limit: 100,
+            });
+            const item = (result?.Items || []).find((candidate: any) =>
+                candidate.Path === '/media/Movies/Echo Meridian (2025).mkv');
+            if (!item?.Id) throw new Error('issue 718 multilingual fixture is missing');
+            return item.Id as string;
+        });
+        try {
+            await showRoute(page, `/details?id=${fixtureItemId}`);
+            await waitForHash(page, fixtureItemId);
+            await page.waitForSelector('#itemDetailPage:not(.hide) .detailPagePrimaryContainer', {
+                timeout: 60_000,
+            });
+
+            const readPersistedPolicy = async (): Promise<unknown> => page.evaluate(async () => {
+                const api = (window as any).ApiClient;
+                const value = await api.ajax({
+                    type: 'GET',
+                    url: api.getUrl(
+                        `/JellyfinCanopy/user-settings/${encodeURIComponent(api.getCurrentUserId())}/settings.json`
+                    ),
+                    dataType: 'json',
+                });
+                const policy = value.LanguageTagFilter ?? value.languageTagFilter ?? null;
+                if (!policy) return null;
+                return {
+                    schemaVersion: policy.SchemaVersion ?? policy.schemaVersion,
+                    languages: structuredClone(policy.Languages ?? policy.languages),
+                    includeOriginal: policy.IncludeOriginal ?? policy.includeOriginal,
+                };
+            });
+            const openLanguageChoices = async () => {
+                await page.evaluate(() => { void (window as any).JellyfinCanopy.showEnhancedPanel(); });
+                const panel = page.locator('#jellyfin-canopy-panel');
+                await expect(panel).toBeVisible({ timeout: 15_000 });
+                await panel.locator('.tab-button[data-tab="ui"]').click();
+                await expect(panel.locator('.jc-pane[data-pane="ui"]')).toBeVisible();
+                const enabled = panel.locator('#languageTagsToggle');
+                if (!await enabled.isChecked()) await enabled.setChecked(true);
+                await panel.locator('#languageTagFilterMode').selectOption('custom');
+                return {
+                    panel,
+                    choices: panel.locator('#languageTagFilterLanguages'),
+                };
+            };
+            const closePanel = async (panel: ReturnType<typeof page.locator>): Promise<void> => {
+                await page.keyboard.press('Escape');
+                await expect(panel).toBeHidden({ timeout: 10_000 });
+            };
+
+            // The real settings surface is a bounded selection populated by the
+            // acting user's server-side accessible-library projection. It has no
+            // free-form input or DOM-derived datalist escape hatch.
+            const firstEditor = await openLanguageChoices();
+            const inventory = await page.evaluate(async () => {
+                const api = (window as any).ApiClient;
+                return api.ajax({
+                    type: 'GET',
+                    url: api.getUrl(
+                        `/JellyfinCanopy/language-tag-inventory/${encodeURIComponent(api.getCurrentUserId())}`
+                    ),
+                    dataType: 'json',
+                });
+            }) as Record<string, any>;
+            const inventoryLanguages = inventory.Languages ?? inventory.languages;
+            expect(inventoryLanguages).toEqual([...inventoryLanguages].sort());
+            expect(inventoryLanguages.length).toBeLessThanOrEqual(128);
+            expect(inventoryLanguages).toEqual(expect.arrayContaining(['en-US', 'pt-BR']));
+            expect(await firstEditor.choices.locator('option[data-known="true"]').allTextContents())
+                .toEqual(inventoryLanguages);
+            expect(await firstEditor.choices.evaluate((element) => element.tagName)).toBe('SELECT');
+            await expect(firstEditor.panel.locator('datalist')).toHaveCount(0);
+            await expect(firstEditor.panel.locator('#languageTagKnownValues')).toHaveCount(0);
+
+            // Establish one known policy through the real control, then change it
+            // again while the details route remains open. The second acknowledged
+            // save must replace both existing poster and details rows without a
+            // navigation or reload.
+            await firstEditor.choices.selectOption(['en-US']);
+            const englishPolicy = {
+                schemaVersion: 1,
+                languages: ['en-US'],
+                includeOriginal: false,
+            };
+            await expect.poll(readPersistedPolicy, {
+                timeout: 60_000,
+                message: 'the first inventory-backed policy is acknowledged',
+            }).toEqual(englishPolicy);
+            await closePanel(firstEditor.panel);
+
+            const detailsLanguages = page.locator(
+                '#itemDetailPage:not(.hide) .itemMiscInfo-primary '
+                + '.mediaInfoItem-audioLanguage .audio-language-item',
+            );
+            await expect(detailsLanguages).toHaveCount(1, { timeout: 60_000 });
+            await expect(detailsLanguages.first()).toHaveAttribute('data-lang', 'en-US');
+
+            const secondEditor = await openLanguageChoices();
+            await secondEditor.choices.selectOption(['en-US', 'pt-BR']);
+            await secondEditor.choices.locator('option[value="pt-BR"]').evaluate((option) => {
+                option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+            const movesToFirst = await secondEditor.choices.locator('option[value="pt-BR"]')
+                .evaluate((option) => (option as HTMLOptionElement).index);
+            for (let index = 0; index < movesToFirst; index++) {
+                await secondEditor.panel.locator('#languageTagFilterMoveUp').click();
+            }
+            const regionalPolicy = {
+                schemaVersion: 1,
+                languages: ['pt-BR', 'en-US'],
+                includeOriginal: false,
+            };
+            await expect.poll(readPersistedPolicy, {
+                timeout: 60_000,
+                message: 'the reordered inventory-backed policy is acknowledged',
+            }).toEqual(regionalPolicy);
+            await expect.poll(() => page.evaluate(() =>
+                structuredClone((window as any).JellyfinCanopy.currentSettings?.languageTagFilter ?? null)), {
+                timeout: 60_000,
+                message: 'the acknowledged policy is active in the acting-user runtime',
+            }).toEqual(regionalPolicy);
+            await closePanel(secondEditor.panel);
+
+            const detailPoster = page.locator(
+                '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
+                + '#itemDetailPage:not(.hide) .detailImageContainer .card',
+            ).filter({ has: page.locator('.language-overlay-container') }).first();
+            await expect(detailPoster.locator('.language-tag-presentation[data-region="BR"]'))
+                .toHaveCount(1, { timeout: 60_000 });
+            const posterRegions = await detailPoster.locator('.language-tag-presentation')
+                .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.region));
+            expect(posterRegions).toEqual(['BR', 'US']);
+            expect(posterRegions).toHaveLength(2);
+
+            await expect(detailsLanguages).toHaveCount(2, { timeout: 60_000 });
+            expect(await detailsLanguages.evaluateAll((nodes) => nodes.map((node) => ({
+                language: (node as HTMLElement).dataset.lang,
+                region: (node as HTMLElement).dataset.region,
+            })))).toEqual([
+                { language: 'pt-BR', region: 'BR' },
+                { language: 'en-US', region: 'US' },
+            ]);
+
+            await showRoute(page, '/home');
+            await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
+            const homeLanguageOverlay = page.locator('#indexPage .card .language-overlay-container').first();
+            await expect(homeLanguageOverlay.locator('.language-tag-presentation[data-region="BR"]'))
+                .toHaveCount(1, { timeout: 60_000 });
+            const cardRegions = await homeLanguageOverlay.locator('.language-tag-presentation')
+                .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.region));
+            expect(cardRegions).toEqual(['BR', 'US']);
+            expect(consoleErrors.real()).toEqual([]);
+        } finally {
+            await page.waitForFunction(() => !!(window as any).JellyfinCanopy.currentSettings, undefined, {
+                timeout: 60_000,
+            });
+            await page.evaluate(async (snapshot) => {
+                const canopy = (window as any).JellyfinCanopy;
+                for (const [key, state] of Object.entries(snapshot) as Array<[
+                    string,
+                    { has: boolean; value: unknown },
+                ]>) {
+                    if (state.has) canopy.currentSettings[key] = state.value;
+                    else delete canopy.currentSettings[key];
+                }
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+            }, original);
+            await page.unroute(cacheRoute);
+        }
+    });
+
     test('8K dimensions render from a title-sanitized server-cache projection', async ({ page, consoleErrors }) => {
         let injectedEntries = 0;
         const cacheRoute = '**/JellyfinCanopy/tag-cache/**';
@@ -400,6 +607,7 @@ test.describe('tags', () => {
                 Complete: true,
                 FullLanguages: ['en'],
                 PartialLanguages: [],
+                OriginalLanguages: [],
                 UnknownLanguages: [],
                 Truncated: false,
                 OmittedLanguageCount: 0,

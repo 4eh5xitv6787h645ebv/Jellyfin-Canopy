@@ -320,6 +320,46 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         }
 
         [Fact]
+        public void LanguageTagFilter_CanonicalizesResetsInheritsAndRejectsInvalidState()
+        {
+            SeedSettings();
+            var accepted = Controller(0).SaveUserSettingsSettings(UserId, new UserSettings
+            {
+                Revision = 0,
+                LanguageTagFilter = new LanguageTagFilterPolicy
+                {
+                    Languages = new List<string> { "pt-br", "en-US", "pt-PT" },
+                    IncludeOriginal = true
+                }
+            });
+            var acknowledgement = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(
+                Assert.IsType<OkObjectResult>(accepted).Value);
+            Assert.Equal(new[] { "pt-BR", "en-US", "pt-PT" }, acknowledgement.Data!.LanguageTagFilter!.Languages);
+            Assert.True(acknowledgement.Data.LanguageTagFilter.IncludeOriginal);
+
+            Assert.IsType<OkObjectResult>(Controller(1).SaveUserSettingsSettings(UserId, new UserSettings
+            {
+                Revision = 1,
+                LanguageTagFilter = new LanguageTagFilterPolicy()
+            }));
+            Assert.Empty(_manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").LanguageTagFilter!.Languages);
+
+            Assert.IsType<OkObjectResult>(Controller(2).SaveUserSettingsSettings(UserId, new UserSettings
+            {
+                Revision = 2,
+                LanguageTagFilter = null
+            }));
+            Assert.Null(_manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").LanguageTagFilter);
+
+            Assert.IsType<BadRequestObjectResult>(Controller(3).SaveUserSettingsSettings(UserId, new UserSettings
+            {
+                Revision = 3,
+                LanguageTagFilter = new LanguageTagFilterPolicy { SchemaVersion = 99 }
+            }));
+            Assert.Equal(3, _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").Revision);
+        }
+
+        [Fact]
         public void InvalidPluginDefaults_AreNeverSeededOrResetIntoUserFiles()
         {
             _provider.Current = new PluginConfiguration { PauseScreenDelaySeconds = 0 };

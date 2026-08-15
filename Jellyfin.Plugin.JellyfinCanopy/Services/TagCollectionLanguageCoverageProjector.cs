@@ -164,8 +164,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     .Where(resolved.ContainsKey)
                     .Select(memberId => resolved[memberId])
                     .Select(static member => member.ProbeSucceeded
-                        ? TagLanguageCoverageProjector.LanguageEpisodeEvidence.Observed(member.Languages)
-                        : TagLanguageCoverageProjector.LanguageEpisodeEvidence.Unknown(member.Languages));
+                        ? TagLanguageCoverageProjector.LanguageEpisodeEvidence.Observed(member.Languages, member.OriginalLanguage)
+                        : TagLanguageCoverageProjector.LanguageEpisodeEvidence.Unknown(member.Languages, member.OriginalLanguage));
                 result[Key(collectionId)] = Translate(
                     TagLanguageCoverageProjector.Aggregate(evidence, enumerationComplete: true));
             }
@@ -238,8 +238,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var current = entry.SourceRevision != 0
                 && (!currentRevision.HasValue || entry.SourceRevision == currentRevision.Value);
             return current
-                ? MemberEvidence.Observed(entry.AudioLanguages ?? Array.Empty<string>())
-                : MemberEvidence.Unknown(entry.AudioLanguages ?? Array.Empty<string>());
+                ? MemberEvidence.Observed(entry.AudioLanguages ?? Array.Empty<string>(), entry.OriginalLanguage)
+                : MemberEvidence.Unknown(entry.AudioLanguages ?? Array.Empty<string>(), entry.OriginalLanguage);
         }
 
         private static TagCollectionLanguageCoverage Translate(TagLanguageCoverage source)
@@ -251,6 +251,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 FullLanguages = source.FullLanguages,
                 PartialLanguages = source.PartialLanguages,
                 UnknownLanguages = source.UnknownLanguages,
+                OriginalLanguages = source.OriginalLanguages,
                 Truncated = source.Truncated,
                 OmittedLanguageCount = source.OmittedLanguageCount,
             };
@@ -260,11 +261,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private static string Key(Guid id) => id.ToString("N");
 
-        private readonly record struct MemberEvidence(bool ProbeSucceeded, string[] Languages)
+        private readonly record struct MemberEvidence(
+            bool ProbeSucceeded,
+            string[] Languages,
+            string? OriginalLanguage)
         {
-            internal static MemberEvidence Observed(string[] languages) => new(true, languages);
+            internal static MemberEvidence Observed(string[] languages, string? originalLanguage = null)
+                => new(true, languages, originalLanguage);
 
-            internal static MemberEvidence Unknown(string[] languages) => new(false, languages);
+            internal static MemberEvidence Unknown(string[] languages, string? originalLanguage = null)
+                => new(false, languages, originalLanguage);
         }
     }
 }

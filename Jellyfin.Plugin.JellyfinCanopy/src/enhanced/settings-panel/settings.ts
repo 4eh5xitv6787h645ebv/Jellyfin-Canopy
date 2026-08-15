@@ -8,6 +8,7 @@
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { canonicalizeAudioLanguagePreference } from '../../tags/audio-track-selection';
+import { LANGUAGE_TAG_FILTER_SCHEMA_VERSION, MAX_LANGUAGE_TAG_FILTER_ENTRIES } from '../../tags/language-tag-filter';
 import {
     applySubtitlePreviewStyle,
     clampSubtitleHorizontal,
@@ -27,6 +28,8 @@ import {
     createSelfPanelEditorContext,
     type PanelEditorContext,
 } from './editor-context';
+
+const LANGUAGE_FILTER_CHANGED_EVENT = 'jellyfin-canopy:language-filter-changed';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -82,7 +85,7 @@ function persistEditorSettings(
     try {
         request = editor.saveSettings();
     } catch (error) {
-        request = Promise.reject(error);
+        request = Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     return Promise.resolve(request).then(
         () => true,
@@ -134,6 +137,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     };
     let pendingAudioGeneration: AudioGeneration | null = null;
     let ratingScopeIntent = 0;
+    let languageFilterIntent = 0;
     let acknowledgedRatingScopeGeneration = 0;
     let acknowledgedRatingScope: unknown = settings.ratingTagScopeOverrides;
     type RatingScopeGeneration = {
@@ -143,6 +147,15 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         succeeded: boolean;
     };
     let pendingRatingScopeGeneration: RatingScopeGeneration | null = null;
+    let acknowledgedLanguageFilterGeneration = 0;
+    let acknowledgedLanguageFilter: unknown = settings.languageTagFilter;
+    type LanguageFilterGeneration = {
+        id: number;
+        value: unknown;
+        inFlight: number;
+        succeeded: boolean;
+    };
+    let pendingLanguageFilterGeneration: LanguageFilterGeneration | null = null;
     const publishAcknowledgedAudioLanguage = (showSavedToast: boolean): void => {
         const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
             ? JC.currentSettings as Record<string, any>
@@ -211,10 +224,48 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             publishAcknowledgedRatingScope(false);
         }
     };
+    const publishAcknowledgedLanguageFilter = (): void => {
+        const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
+            ? JC.currentSettings as Record<string, any>
+            : settings;
+        const changed = liveSettings.languageTagFilter !== acknowledgedLanguageFilter;
+        liveSettings.languageTagFilter = acknowledgedLanguageFilter;
+        if (liveSettings !== settings) settings.languageTagFilter = acknowledgedLanguageFilter;
+        if (changed && appliesToActor && JC.identity.isCurrent(editor.actor)) {
+            if (typeof (JC as any).reinitializeLanguageTags === 'function') {
+                (JC as any).reinitializeLanguageTags();
+            }
+            window.dispatchEvent(new CustomEvent(LANGUAGE_FILTER_CHANGED_EVENT, {
+                detail: editor.actor,
+            }));
+        }
+    };
+    const settleLanguageFilterCarrier = (generation: LanguageFilterGeneration, saved: boolean): void => {
+        generation.inFlight = Math.max(0, generation.inFlight - 1);
+        if (!editor.isCurrent() || !JC.identity.isCurrent(editor.actor)) return;
+        if (saved) {
+            generation.succeeded = true;
+            if (generation.id >= acknowledgedLanguageFilterGeneration) {
+                acknowledgedLanguageFilterGeneration = generation.id;
+                acknowledgedLanguageFilter = generation.value;
+            }
+            if (pendingLanguageFilterGeneration === generation) {
+                pendingLanguageFilterGeneration = null;
+                publishAcknowledgedLanguageFilter();
+            }
+            return;
+        }
+        if (!generation.succeeded && generation.inFlight === 0
+            && pendingLanguageFilterGeneration === generation) {
+            pendingLanguageFilterGeneration = null;
+            publishAcknowledgedLanguageFilter();
+        }
+    };
     const persistSettings = (): Promise<boolean> => {
         const audioGeneration = pendingAudioGeneration;
         const ratingGeneration = pendingRatingScopeGeneration;
-        if (!appliesToActor || (!audioGeneration && !ratingGeneration)) {
+        const languageFilterGeneration = pendingLanguageFilterGeneration;
+        if (!appliesToActor || (!audioGeneration && !ratingGeneration && !languageFilterGeneration)) {
             return persistEditorSettings(ctx, editor);
         }
         // All settings saves serialize the whole self-owned object. Overlay the
@@ -222,6 +273,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         // setting edit cannot persist the renderer's older acknowledged value.
         if (audioGeneration) settings.preferredAudioLanguage = audioGeneration.value;
         if (ratingGeneration) settings.ratingTagScopeOverrides = ratingGeneration.value;
+        if (languageFilterGeneration) settings.languageTagFilter = languageFilterGeneration.value;
         let request: Promise<boolean>;
         try {
             request = persistEditorSettings(
@@ -230,11 +282,15 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                 () => (audioGeneration !== null && pendingAudioGeneration !== null
                         && (pendingAudioGeneration !== audioGeneration || audioGeneration.inFlight > 1))
                     || (ratingGeneration !== null && pendingRatingScopeGeneration !== null
-                        && (pendingRatingScopeGeneration !== ratingGeneration || ratingGeneration.inFlight > 1)),
+                        && (pendingRatingScopeGeneration !== ratingGeneration || ratingGeneration.inFlight > 1))
+                    || (languageFilterGeneration !== null && pendingLanguageFilterGeneration !== null
+                        && (pendingLanguageFilterGeneration !== languageFilterGeneration
+                            || languageFilterGeneration.inFlight > 1)),
             );
         } finally {
             if (audioGeneration) settings.preferredAudioLanguage = acknowledgedAudioLanguage;
             if (ratingGeneration) settings.ratingTagScopeOverrides = acknowledgedRatingScope;
+            if (languageFilterGeneration) settings.languageTagFilter = acknowledgedLanguageFilter;
         }
         if (audioGeneration) {
             audioGeneration.inFlight++;
@@ -243,6 +299,10 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         if (ratingGeneration) {
             ratingGeneration.inFlight++;
             void request.then((saved) => settleRatingScopeCarrier(ratingGeneration, saved));
+        }
+        if (languageFilterGeneration) {
+            languageFilterGeneration.inFlight++;
+            void request.then((saved) => settleLanguageFilterCarrier(languageFilterGeneration, saved));
         }
         return request;
     };
@@ -476,6 +536,101 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     });
     audioLanguageInput?.addEventListener('change', commitAudioLanguagePreference);
     updateAudioLanguageInput();
+
+    const languageFilterMode = document.getElementById('languageTagFilterMode') as HTMLSelectElement | null;
+    const languageFilterInput = document.getElementById('languageTagFilterLanguages') as HTMLSelectElement | null;
+    const languageFilterOriginal = document.getElementById('languageTagFilterOriginal') as HTMLInputElement | null;
+    const languageFilterCustom = document.getElementById('languageTagFilterCustom');
+    const commitLanguageFilter = (): void => {
+        if (!languageFilterMode || !languageFilterInput || !languageFilterOriginal) return;
+        const intent = ++languageFilterIntent;
+        let next: unknown;
+        if (languageFilterMode.value === 'inherit') {
+            next = null;
+        } else {
+            const raw = Array.from(languageFilterInput.options)
+                .filter((option) => option.selected)
+                .map((option) => option.value);
+            const languages: string[] = [];
+            try {
+                if (raw.length > MAX_LANGUAGE_TAG_FILTER_ENTRIES) throw new Error('too many');
+                for (const value of raw) {
+                    const canonical = Intl.getCanonicalLocales(value)[0];
+                    if (!canonical || /^(?:und|root)$/i.test(canonical) || languages.includes(canonical)) throw new Error('invalid');
+                    languages.push(canonical);
+                }
+            } catch {
+                languageFilterInput.setCustomValidity(JC.t!('panel_settings_language_filter_invalid'));
+                languageFilterInput.reportValidity();
+                return;
+            }
+            languageFilterInput.setCustomValidity('');
+            next = { schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION, languages, includeOriginal: languageFilterOriginal.checked };
+        }
+        if (!appliesToActor) {
+            settings.languageTagFilter = next;
+            void persistSettings();
+        } else {
+            pendingLanguageFilterGeneration = {
+                id: intent,
+                value: next,
+                inFlight: 0,
+                succeeded: false,
+            };
+            void persistSettings();
+        }
+        resetAutoCloseTimer();
+    };
+    languageFilterMode?.addEventListener('change', () => {
+        if (languageFilterCustom) languageFilterCustom.style.display = languageFilterMode.value === 'custom' ? 'block' : 'none';
+        commitLanguageFilter();
+    });
+    const unavailableAtOpen = new Set(Array.from(languageFilterInput?.options || [])
+        .filter((option) => option.dataset.known === 'false' && option.selected)
+        .map((option) => option.value));
+    languageFilterInput?.addEventListener('change', () => {
+        Array.from(languageFilterInput.options).forEach((option) => {
+            if (option.dataset.known === 'false' && !option.selected) {
+                unavailableAtOpen.delete(option.value);
+                option.remove();
+            }
+        });
+        const forgedUnknown = Array.from(languageFilterInput.selectedOptions)
+            .some((option) => option.dataset.known !== 'true' && !unavailableAtOpen.has(option.value));
+        if (forgedUnknown) {
+            languageFilterInput.setCustomValidity(JC.t!('panel_settings_language_filter_invalid'));
+            languageFilterInput.reportValidity();
+            return;
+        }
+        commitLanguageFilter();
+    });
+    let activeLanguageOption: HTMLOptionElement | null = null;
+    languageFilterInput?.addEventListener('click', (event) => {
+        if (event.target instanceof HTMLOptionElement) activeLanguageOption = event.target;
+    });
+    languageFilterOriginal?.addEventListener('change', commitLanguageFilter);
+    document.getElementById('languageTagFilterReset')?.addEventListener('click', () => {
+        if (!languageFilterInput || !languageFilterOriginal) return;
+        Array.from(languageFilterInput.options).forEach((option) => { option.selected = false; });
+        languageFilterOriginal.checked = false;
+        if (languageFilterMode) languageFilterMode.value = 'inherit';
+        if (languageFilterCustom) languageFilterCustom.style.display = 'none';
+        commitLanguageFilter();
+    });
+    const moveLanguageSelection = (direction: -1 | 1): void => {
+        if (!languageFilterInput) return;
+        const option = activeLanguageOption?.selected
+            ? activeLanguageOption
+            : languageFilterInput.selectedOptions[0] || null;
+        if (!option) return;
+        const neighbor = direction < 0 ? option.previousElementSibling : option.nextElementSibling;
+        if (!(neighbor instanceof HTMLOptionElement)) return;
+        if (direction < 0) languageFilterInput.insertBefore(option, neighbor);
+        else languageFilterInput.insertBefore(neighbor, option);
+        commitLanguageFilter();
+    };
+    document.getElementById('languageTagFilterMoveUp')?.addEventListener('click', () => moveLanguageSelection(-1));
+    document.getElementById('languageTagFilterMoveDown')?.addEventListener('click', () => moveLanguageSelection(1));
 
     // Expand or collapse the 6 category rows when the user clicks the chevron.
     // The chevron rotation is driven by CSS via the aria-expanded attribute.

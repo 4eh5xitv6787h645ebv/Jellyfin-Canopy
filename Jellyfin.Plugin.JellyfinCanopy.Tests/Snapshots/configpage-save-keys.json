@@ -130,6 +130,7 @@
   "IGNORE_PROVIDERS",
   "IconStyle",
   "LanguageTagsEnabled",
+  "LanguageTagFilter",
   "LanguageTagsPosition",
   "LayoutEnforcement",
   "LetterboxdEnabled",

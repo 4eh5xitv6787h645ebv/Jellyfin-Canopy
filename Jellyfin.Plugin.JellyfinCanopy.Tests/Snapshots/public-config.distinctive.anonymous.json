@@ -50,7 +50,6 @@
   "DisableAllShortcuts": true,
   "DisableCustomSubtitleStyles": true,
   "DisableTagsOnSearchPage": true,
-  "DoubleTapSeekEnabled": true,
   "DiscoveryEnabled": false,
   "DiscoveryGenreRows": false,
   "DiscoveryLibraryTab": false,
@@ -59,6 +58,7 @@
   "DiscoveryRowTrending": false,
   "DiscoveryRowUpcoming": false,
   "DiscoveryRowWatchlist": true,
+  "DoubleTapSeekEnabled": true,
   "DownloadsAllowActiveForRegularUsers": false,
   "DownloadsAllowHistoryForRegularUsers": false,
   "DownloadsAllowProcessingForRegularUsers": false,
@@ -88,6 +88,14 @@
   "HideReviewsFromHiddenUsers": false,
   "IGNORE_PROVIDERS": "cfg-IGNORE_PROVIDERS",
   "IconStyle": "cfg-IconStyle",
+  "LanguageTagFilter": {
+    "IncludeOriginal": true,
+    "Languages": [
+      "de-DE",
+      "en-US"
+    ],
+    "SchemaVersion": 1
+  },
   "LanguageTagsEnabled": true,
   "LanguageTagsPosition": "cfg-LanguageTagsPosition",
   "LayoutEnforcement": "None",
@@ -132,7 +140,7 @@
   "RemoveContinueWatchingEnabled": true,
   "RequestApprovalsEnabled": false,
   "RequestsAllowSeerrStatusAndHistoryForRegularUsers": false,
-  "ResolutionTagOrder": 1188,
+  "ResolutionTagOrder": 1189,
   "ReviewsExpandedByDefault": true,
   "SeerrAutoImportUsers": true,
   "SeerrBaseUrl": "",
@@ -300,8 +308,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-  "SourceTagOrder": 1249,
-  "SpecialFormatTagOrder": 1250,
+  "SourceTagOrder": 1250,
+  "SpecialFormatTagOrder": 1251,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
@@ -317,11 +325,11 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
-  "TagsCacheTtlDays": 1283,
+  "TagsCacheTtlDays": 1284,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1286,
+  "ToastDuration": 1287,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1289
+  "VideoCodecTagOrder": 1290
 }

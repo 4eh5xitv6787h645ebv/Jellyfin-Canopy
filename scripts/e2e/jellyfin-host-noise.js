@@ -4,6 +4,7 @@
 const { URL } = require('node:url');
 
 const SCROLL_HANDLER_ERROR = 'pageerror: t.scrollHandler is not a function';
+const SCROLL_HANDLER_WEBKIT_ERROR = "pageerror: t.scrollHandler is not a function. (In 't.scrollHandler()', 't.scrollHandler' is null)";
 const HOME_TAB_PREFIX = "[Home] failed to get tab controller TypeError: Cannot read properties of undefined (reading 'querySelector')";
 const HOME_SELECTED_INDEX_ERROR = "pageerror: Cannot read properties of undefined (reading 'selectedIndex')";
 const HOME_LOGOUT_AXIOS_401 = 'AxiosError: Request failed with status code 401';
@@ -224,7 +225,7 @@ function isKnownJellyfinWebScrollHandlerError(detail) {
     const text = String(detail?.text || '');
     const stack = String(detail?.stack || '');
     return detail?.source === 'pageerror'
-        && text === SCROLL_HANDLER_ERROR
+        && (text === SCROLL_HANDLER_ERROR || text === SCROLL_HANDLER_WEBKIT_ERROR)
         && JELLYFIN_WEB_CHUNK_FRAME.test(stack)
         && !CANOPY_STACK_FRAME.test(stack);
 }
@@ -427,6 +428,7 @@ module.exports = {
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
+    SCROLL_HANDLER_WEBKIT_ERROR,
     hasValidConcurrentLogoutResponses,
     isExpectedCanopyPauseScreenImageProbe404,
     isKnownHiddenContentHostNoise,

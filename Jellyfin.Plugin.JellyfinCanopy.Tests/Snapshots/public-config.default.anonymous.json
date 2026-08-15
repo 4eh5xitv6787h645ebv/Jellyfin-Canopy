@@ -50,7 +50,6 @@
   "DisableAllShortcuts": false,
   "DisableCustomSubtitleStyles": false,
   "DisableTagsOnSearchPage": false,
-  "DoubleTapSeekEnabled": false,
   "DiscoveryEnabled": true,
   "DiscoveryGenreRows": true,
   "DiscoveryLibraryTab": true,
@@ -59,6 +58,7 @@
   "DiscoveryRowTrending": true,
   "DiscoveryRowUpcoming": true,
   "DiscoveryRowWatchlist": false,
+  "DoubleTapSeekEnabled": false,
   "DownloadsAllowActiveForRegularUsers": false,
   "DownloadsAllowHistoryForRegularUsers": false,
   "DownloadsAllowProcessingForRegularUsers": false,
@@ -88,6 +88,11 @@
   "HideReviewsFromHiddenUsers": true,
   "IGNORE_PROVIDERS": "",
   "IconStyle": "emoji",
+  "LanguageTagFilter": {
+    "IncludeOriginal": false,
+    "Languages": [],
+    "SchemaVersion": 1
+  },
   "LanguageTagsEnabled": false,
   "LanguageTagsPosition": "bottom-left",
   "LayoutEnforcement": "None",

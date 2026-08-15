@@ -46,6 +46,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 CommunityRating = 9.9f,
                 CriticRating = 88f,
                 AudioLanguages = new[] { "eng" },
+                OriginalLanguage = "ja",
                 StreamData = new TagStreamData { ItemName = "The Death of X" },
             };
 
@@ -60,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Equal(9.9f, original.CommunityRating);
             Assert.Equal(88f, original.CriticRating);
             Assert.Equal(new[] { "eng" }, original.AudioLanguages);
+            Assert.Equal("ja", original.OriginalLanguage);
             Assert.NotNull(original.StreamData);
             Assert.Equal(seriesN, original.SeriesId);
 
@@ -68,6 +70,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             Assert.Null(served.CommunityRating);
             Assert.Null(served.CriticRating);
             Assert.Null(served.AudioLanguages);
+            Assert.Null(served.OriginalLanguage);
             Assert.Null(served.StreamData);
             // SeriesId is metadata the cache keeps (rating fallback is suppressed by
             // nulling the rating itself, not the id).
@@ -361,6 +364,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         [InlineData(3)]
         [InlineData(4)]
         [InlineData(5)]
+        [InlineData(6)]
+        [InlineData(7)]
+        [InlineData(8)]
         public void LoadFromDisk_OldSchema_DiscardsEntries(int schemaVersion)
         {
             var dir = Path.Combine(Path.GetTempPath(), "jc-tagcache-" + Guid.NewGuid().ToString("N"));
@@ -383,7 +389,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 // Width and would preserve incorrect cropped/8K classifications;
                 // v3-v4 may also contain ratings overwritten by the retired
                 // CommunityRating-only inheritance rule; v5 lacks audio
-                // default/index/source identity required by selection parity.
+                // default/index/source identity required by selection parity; v6-v7
+                // lack authoritative original-language cache projection; v8
+                // sourced container OriginalLanguage from a first Episode and
+                // lacks the parent-Series invalidation contract.
                 Assert.Equal(0, svc.Count);
             }
             finally
@@ -400,7 +409,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             {
                 var key = Guid.NewGuid().ToString("N");
                 var seriesN = Guid.NewGuid().ToString("N");
-                WriteCache(dir, schemaVersion: 7, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
+                WriteCache(dir, schemaVersion: 9, key, new TagCacheEntry { Type = "Episode", SeriesId = seriesN });
 
                 using var svc = NewServiceAt(dir);
                 svc.LoadFromDisk();

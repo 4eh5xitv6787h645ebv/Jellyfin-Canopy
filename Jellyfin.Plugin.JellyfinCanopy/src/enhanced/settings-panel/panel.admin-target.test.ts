@@ -56,6 +56,11 @@ describe('admin target panel integration', () => {
             actorOnly: 'unchanged',
             autoPauseEnabled: false,
             lastOpenedTab: 'about',
+            languageTagFilter: {
+                schemaVersion: 1,
+                languages: ['fr-FR'],
+                includeOriginal: false,
+            },
         }, actor);
         JC.userConfig = JC.identity.own({
             settings: JC.identity.own({ ActorOnly: 'unchanged', Revision: 9 }, actor),
@@ -68,6 +73,11 @@ describe('admin target panel integration', () => {
             DisableAllShortcuts: true,
             Shortcuts: [],
             AnimeFillerWarningsEnabled: false,
+            LanguageTagFilter: {
+                SchemaVersion: 1,
+                Languages: ['de-DE'],
+                IncludeOriginal: true,
+            },
         };
         JC.t = (key: string, params?: Record<string, unknown>) => {
             if (key === 'panel_title') return 'Canopy User Settings';
@@ -108,6 +118,9 @@ describe('admin target panel integration', () => {
         }));
         const plugin = vi.fn(async (path: string, options?: Record<string, unknown>) => {
             if (path === '/locales') return [];
+            if (path === `/language-tag-inventory/${TARGET}`) {
+                return { Languages: ['en-US', 'ja-JP', 'pt-BR'], Complete: true, Truncated: false };
+            }
             if (options?.method === 'POST') {
                 const body = options.body as Record<string, unknown>;
                 posts.push({ path, body });
@@ -118,6 +131,11 @@ describe('admin target panel integration', () => {
                 return response('settings.json', 1, {
                     AutoPauseEnabled: true,
                     LastOpenedTab: 'playback',
+                    LanguageTagFilter: {
+                        SchemaVersion: 1,
+                        Languages: ['pt-BR', 'en-US'],
+                        IncludeOriginal: false,
+                    },
                 });
             }
             if (path.includes(`/admin/user-settings/${TARGET}/shortcuts.json`)) {
@@ -196,6 +214,41 @@ describe('admin target panel integration', () => {
         toggle.dispatchEvent(new Event('change', { bubbles: true }));
         await Promise.resolve();
         expect(posts).toHaveLength(1);
+    });
+
+    it('loads and preserves the target policy without borrowing admin or acting-user state', async () => {
+        const actorSnapshot = structuredClone(JC.currentSettings?.languageTagFilter);
+        const adminSnapshot = structuredClone(JC.pluginConfig?.LanguageTagFilter);
+        await showPanel!(launch());
+
+        expect((document.getElementById('languageTagFilterMode') as HTMLSelectElement).value)
+            .toBe('custom');
+        expect(Array.from(
+            (document.getElementById('languageTagFilterLanguages') as HTMLSelectElement).selectedOptions,
+            option => option.value,
+        )).toEqual(['pt-BR', 'en-US']);
+        expect(Array.from(
+            (document.getElementById('languageTagFilterLanguages') as HTMLSelectElement).options,
+            option => [option.value, option.dataset.known],
+        )).toEqual([
+            ['pt-BR', 'true'], ['en-US', 'true'], ['ja-JP', 'true'],
+        ]);
+        expect(document.getElementById('languageTagFilterLanguages')?.tagName).toBe('SELECT');
+        expect(document.getElementById('languageTagKnownValues')).toBeNull();
+        expect((document.getElementById('languageTagFilterOriginal') as HTMLInputElement).checked)
+            .toBe(false);
+
+        const toggle = document.getElementById('autoPauseToggle') as HTMLInputElement;
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(posts).toHaveLength(1));
+        expect(posts[0].body.LanguageTagFilter).toEqual({
+            SchemaVersion: 1,
+            Languages: ['pt-BR', 'en-US'],
+            IncludeOriginal: false,
+        });
+        expect(JC.currentSettings?.languageTagFilter).toEqual(actorSnapshot);
+        expect(JC.pluginConfig?.LanguageTagFilter).toEqual(adminSnapshot);
     });
 
     it('silently discards a malformed target read completed after the opening panel closes', async () => {

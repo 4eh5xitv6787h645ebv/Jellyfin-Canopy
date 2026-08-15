@@ -2765,6 +2765,28 @@
                     }
                 }
             },
+            LanguageTagFilter: {
+                load: function (el, value) {
+                    const record = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+                    const languages = record.Languages || record.languages;
+                    el.querySelector('#languageTagFilterLanguages').value = Array.isArray(languages) ? languages.join(', ') : '';
+                    el.querySelector('#languageTagFilterOriginal').checked = (record.IncludeOriginal ?? record.includeOriginal) === true;
+                },
+                save: function (el) {
+                    const raw = el.querySelector('#languageTagFilterLanguages').value.split(',').map(value => value.trim()).filter(Boolean);
+                    if (raw.length > 16) throw new Error('Language tag allowlist supports at most 16 entries.');
+                    const languages = [];
+                    for (const value of raw) {
+                        let canonical;
+                        try { canonical = Intl.getCanonicalLocales(value)[0]; } catch (_) { canonical = null; }
+                        if (!canonical || /^(?:und|root)$/i.test(canonical) || languages.includes(canonical)) {
+                            throw new Error('Language tag allowlist entries must be distinct valid BCP-47 tags.');
+                        }
+                        languages.push(canonical);
+                    }
+                    return { SchemaVersion: 1, Languages: languages, IncludeOriginal: el.querySelector('#languageTagFilterOriginal').checked };
+                }
+            },
             RatingTagScopePolicy: {
                 load: function (el, value) {
                     const itemTypes = ['Movie', 'Episode', 'Series', 'Season', 'BoxSet'];

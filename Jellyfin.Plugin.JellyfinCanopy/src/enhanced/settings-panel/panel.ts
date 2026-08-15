@@ -18,6 +18,7 @@ import { resetLanguageControls } from './language';
 import { resetReleaseNotes } from './release-notes';
 import type { IdentityContext } from '../../types/jc';
 import { toast } from '../../core/ui-kit';
+import { resolveMediaLanguage } from '../../core/media-language';
 import {
     AdminTargetPersistenceError,
     createPanelEditorContext,
@@ -27,6 +28,34 @@ import {
     parseSettingsPreferencesRoute,
     type SettingsPanelLaunchContext,
 } from './launch-context';
+
+const MAX_LANGUAGE_INVENTORY_ENTRIES = 128;
+interface LanguageTagInventory {
+    languages: string[];
+    complete: boolean;
+    truncated: boolean;
+}
+const EMPTY_LANGUAGE_TAG_INVENTORY: LanguageTagInventory = {
+    languages: [], complete: false, truncated: true,
+};
+export function readLanguageTagInventory(value: unknown): LanguageTagInventory | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (!Array.isArray(record.Languages)
+        || typeof record.Complete !== 'boolean'
+        || typeof record.Truncated !== 'boolean'
+        || record.Languages.length > MAX_LANGUAGE_INVENTORY_ENTRIES
+        || (record.Complete && record.Truncated)) return null;
+    const languages: string[] = [];
+    for (const value of record.Languages) {
+        const resolved = resolveMediaLanguage(value);
+        if (resolved.status !== 'valid' || value !== resolved.canonicalTag
+            || languages.includes(resolved.canonicalTag)) return null;
+        languages.push(resolved.canonicalTag);
+    }
+    if (JSON.stringify(languages) !== JSON.stringify([...languages].sort())) return null;
+    return { languages, complete: record.Complete, truncated: record.Truncated };
+}
 
 // Keep the HTML safety analyzer at this explicit UI boundary: the template
 // escapes every editor-derived text value and coerces all non-text controls.
@@ -61,6 +90,7 @@ export interface PanelContext {
     logoUrl: string;
     brandGradient: string;
     createToast?: (featureKey: string, isEnabled: boolean) => string;
+    languageTagInventory: LanguageTagInventory;
 }
 
 // Canopy brand palette (docs/images + the branding kit are the source of truth).
@@ -278,6 +308,19 @@ async function openPanel(owner: PanelOwner): Promise<void> {
     });
     if (!owner.isCurrent()) return;
 
+    let languageTagInventory = EMPTY_LANGUAGE_TAG_INVENTORY;
+    try {
+        const inventory = await JC.core.api!.plugin(
+            `/language-tag-inventory/${encodeURIComponent(editor.targetUserId)}`,
+            { skipCache: true, signal: owner.abortController.signal },
+        );
+        if (!owner.isCurrent()) return;
+        languageTagInventory = readLanguageTagInventory(inventory) || EMPTY_LANGUAGE_TAG_INVENTORY;
+    } catch (error) {
+        if (!owner.isCurrent() || (error as Error)?.name === 'AbortError') return;
+        console.warn('🪼 Jellyfin Canopy: Language inventory unavailable:', error);
+    }
+
     // Get theme-appropriate styles
     const themeVars: any = (JC as any).themer.getThemeVariables();
 
@@ -481,7 +524,8 @@ async function openPanel(owner: PanelOwner): Promise<void> {
         githubButtonBg,
         releaseNotesTextColor,
         logoUrl,
-        brandGradient: CANOPY_GRADIENT
+        brandGradient: CANOPY_GRADIENT,
+        languageTagInventory,
     };
 
     help.innerHTML = buildPanelHtml(ctx);

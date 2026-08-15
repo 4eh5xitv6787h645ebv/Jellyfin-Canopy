@@ -128,6 +128,7 @@ function context(editor: PanelEditorContext, help = document.body): PanelContext
         logoUrl: '',
         brandGradient: 'linear-gradient(#0df,#28f)',
         createToast: () => '',
+        languageTagInventory: { languages: [], complete: false, truncated: true },
     };
 }
 

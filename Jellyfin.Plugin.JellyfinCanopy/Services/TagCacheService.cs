@@ -221,7 +221,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // complete, validated BoxSet forward-membership snapshot plus explicit
         // over-cap/unavailable sentinels; its derived reverse map lets Movie
         // removal/move invalidation survive restart after live old edges disappear.
-        private const int CurrentCacheSchemaVersion = 7;
+        // v8 introduced OriginalLanguage, but container rows sourced it from the
+        // selected first Episode and therefore could not model Jellyfin's direct
+        // Episode/Season -> Series inheritance. v9 rebuilds those rows under the
+        // authoritative owning-item/parent-Series dependency contract.
+        private const int CurrentCacheSchemaVersion = 9;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -2814,6 +2818,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 stripped.Genres = Array.Empty<string>();
                 stripped.AudioLanguages = null;
+                stripped.OriginalLanguage = null;
                 stripped.StreamData = null;
             }
             if (stripRatings)
@@ -3414,6 +3419,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     SourceRevision = item.DateLastSaved.Ticks,
                 };
 
+                entry.OriginalLanguage = (kind == BaseItemKind.Episode || kind == BaseItemKind.Season)
+                    && !HasExplicitOriginalLanguage(item)
+                    ? ReadOriginalLanguage(item, ResolveParentSeriesOnce())
+                    : ReadOriginalLanguage(item);
+
                 if (isContainer)
                 {
                     var firstEp = GetFirstEpisode(item);
@@ -3541,6 +3551,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 _logger.LogWarning($"[TagCache] Failed to build entry for {item.Id}: {ex.Message}");
                 return null;
             }
+        }
+
+        internal static string? ReadOriginalLanguage(BaseItem item)
+        {
+            try
+            {
+                var value = item.GetInheritedOriginalLanguage();
+                if (string.IsNullOrWhiteSpace(value)) return null;
+                value = value.Trim();
+                return value.Length <= 255 ? value : null;
+            }
+            catch
+            {
+                // Original-language metadata is optional. A broken parent link must
+                // not turn an otherwise usable cache entry into a total miss.
+                return null;
+            }
+        }
+
+        internal static bool HasExplicitOriginalLanguage(BaseItem item)
+            => !string.IsNullOrWhiteSpace(item.OriginalLanguage);
+
+        internal static string? ReadOriginalLanguage(BaseItem item, BaseItem? parentSeries)
+        {
+            if (HasExplicitOriginalLanguage(item))
+            {
+                return ReadOriginalLanguage(item);
+            }
+
+            return parentSeries == null ? ReadOriginalLanguage(item) : ReadOriginalLanguage(parentSeries);
         }
 
         // Returns null when the media probe itself FAILED (GetMediaSources threw), distinct from a

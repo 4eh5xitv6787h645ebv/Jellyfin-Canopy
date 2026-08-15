@@ -199,6 +199,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("AudioInfoTagOrder", c => c.AudioInfoTagOrder, nameof(UserSettings.AudioInfoTagOrder)),
                 PublicUser("GenreTagsEnabled", c => c.GenreTagsEnabled, nameof(UserSettings.GenreTagsEnabled)),
                 PublicUser("LanguageTagsEnabled", c => c.LanguageTagsEnabled, nameof(UserSettings.LanguageTagsEnabled)),
+                PublicUser("LanguageTagFilter", c => c.LanguageTagFilter, nameof(UserSettings.LanguageTagFilter)),
                 PublicUser("RatingTagsEnabled", c => c.RatingTagsEnabled, nameof(UserSettings.RatingTagsEnabled)),
                 PublicUser("RatingTagScopePolicy", c => c.RatingTagScopePolicy, nameof(UserSettings.RatingTagScopeOverrides)),
                 PublicUser("PeopleTagsEnabled", c => c.PeopleTagsEnabled, nameof(UserSettings.PeopleTagsEnabled)),

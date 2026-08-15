@@ -202,7 +202,7 @@ export function validateMediaLanguageIdentity(value: unknown): MediaLanguageIden
         canonicalTag: resolved.canonicalTag,
         // A null marker is deliberately conservative: it preserves the fact
         // that the original raw region was numeric, retired or unsupported.
-        flagRegion: record.flagRegion as string | null,
+        flagRegion: record.flagRegion,
     };
 }
 
@@ -261,13 +261,20 @@ function presentationToken(language: ResolvedMediaLanguage): string {
  * variants remain distinct. The three-item poster cap is applied by consumers
  * after this function returns.
  */
-export function buildMediaLanguagePresentations(values: unknown): MediaLanguagePresentation[] {
-    const resolved = resolveMediaLanguageIdentities(values)
+export function buildMediaLanguagePresentations(
+    values: unknown,
+    preserveInputOrder = false,
+): MediaLanguagePresentation[] {
+    const identities = preserveInputOrder && Array.isArray(values)
+        ? values.flatMap((value) => resolveMediaLanguageIdentities([value]))
+            .filter((value, index, all) => all.findIndex((candidate) => candidate.canonicalTag === value.canonicalTag) === index)
+        : resolveMediaLanguageIdentities(values);
+    const resolved = identities
         .map((identity) => ({
             ...resolveMediaLanguage(identity.canonicalTag),
             flagRegion: identity.flagRegion,
-        }))
-        .sort((left, right) => left.semanticTag < right.semanticTag ? -1
+        }));
+    if (!preserveInputOrder) resolved.sort((left, right) => left.semanticTag < right.semanticTag ? -1
             : left.semanticTag > right.semanticTag ? 1
                 : left.canonicalTag < right.canonicalTag ? -1
                     : left.canonicalTag > right.canonicalTag ? 1 : 0);

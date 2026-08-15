@@ -11,6 +11,7 @@ import { getEnhancedQuality } from '../../tags/qualitytags';
 import type { PanelContext } from './panel';
 import type { PanelEditorContext } from './editor-context';
 import { wireSettingsListeners } from './settings';
+const LANGUAGE_FILTER_CHANGED_EVENT = 'jellyfin-canopy:language-filter-changed';
 
 const TOGGLE_IDS = [
     'autoPauseToggle', 'autoResumeToggle', 'autoPipToggle',
@@ -26,6 +27,7 @@ const TOGGLE_IDS = [
 function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
     mode: HTMLSelectElement;
     input: HTMLInputElement;
+    languageInput: HTMLSelectElement;
 } {
     for (const id of TOGGLE_IDS) {
         const input = document.createElement('input');
@@ -49,6 +51,37 @@ function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
     custom.appendChild(input);
     document.body.appendChild(custom);
 
+    const languageMode = document.createElement('select');
+    languageMode.id = 'languageTagFilterMode';
+    for (const value of ['inherit', 'custom']) languageMode.add(new Option(value, value));
+    languageMode.value = 'custom';
+    document.body.appendChild(languageMode);
+    const languageCustom = document.createElement('div');
+    languageCustom.id = 'languageTagFilterCustom';
+    const languageInput = document.createElement('select');
+    languageInput.multiple = true;
+    languageInput.id = 'languageTagFilterLanguages';
+    for (const value of ['pt-BR', 'en-US', 'de-DE']) {
+        const option = new Option(value, value);
+        option.dataset.known = 'true';
+        languageInput.add(option);
+    }
+    languageCustom.appendChild(languageInput);
+    const languageOriginal = document.createElement('input');
+    languageOriginal.type = 'checkbox';
+    languageOriginal.id = 'languageTagFilterOriginal';
+    languageCustom.appendChild(languageOriginal);
+    const languageReset = document.createElement('button');
+    languageReset.id = 'languageTagFilterReset';
+    languageCustom.appendChild(languageReset);
+    for (const [id, text] of [['languageTagFilterMoveUp', 'up'], ['languageTagFilterMoveDown', 'down']]) {
+        const button = document.createElement('button');
+        button.id = id;
+        button.textContent = text;
+        languageCustom.appendChild(button);
+    }
+    document.body.appendChild(languageCustom);
+
     const ratingScope = document.createElement('div');
     ratingScope.id = 'ratingTagScopeOverrides';
     for (const [kind, value] of [['itemType', 'Episode'], ['surface', 'NextUp']] as const) {
@@ -61,7 +94,11 @@ function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
         ratingScope.appendChild(toggle);
     }
     document.body.appendChild(ratingScope);
-    return { mode: modeSelect, input };
+    return { mode: modeSelect, input, languageInput };
+}
+
+function selectLanguages(select: HTMLSelectElement, values: string[]): void {
+    Array.from(select.options).forEach((option) => { option.selected = values.includes(option.value); });
 }
 
 function makeEditor(appliesToActor: boolean): PanelEditorContext {
@@ -75,6 +112,8 @@ function makeEditor(appliesToActor: boolean): PanelEditorContext {
             disabledItemTypes: [] as string[],
             disabledSurfaces: [] as string[],
         },
+        languageTagsEnabled: true,
+        languageTagFilter: null,
     };
     if (appliesToActor) JC.currentSettings = settings;
     return {
@@ -145,6 +184,7 @@ describe('preferred audio language settings', () => {
         document.body.innerHTML = '';
         delete (JC as typeof JC & { reinitializeQualityTags?: unknown }).reinitializeQualityTags;
         delete (JC as typeof JC & { reinitializeRatingTags?: unknown }).reinitializeRatingTags;
+        delete (JC as typeof JC & { reinitializeLanguageTags?: unknown }).reinitializeLanguageTags;
         vi.restoreAllMocks();
         JC.currentSettings = {};
         JC.pluginConfig = {};
@@ -255,6 +295,129 @@ describe('preferred audio language settings', () => {
         expect(reinitialize).toHaveBeenCalledTimes(1);
     });
 
+    it('carries a pending language filter through unrelated whole-settings saves', async () => {
+        const controls = buildDom('inherit');
+        const editor = makeEditor(true);
+        const first = deferred<typeof acknowledgement>();
+        const second = deferred<typeof acknowledgement>();
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementation(() => {
+            captured.push(structuredClone(editor.settings.languageTagFilter));
+            return captured.length === 1 ? first.promise : second.promise;
+        });
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeLanguageTags?: () => void }).reinitializeLanguageTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        selectLanguages(controls.languageInput, ['pt-BR', 'en-US']);
+        controls.languageInput.dispatchEvent(new Event('change'));
+        const unrelated = document.getElementById('autoPauseToggle') as HTMLInputElement;
+        unrelated.checked = false;
+        unrelated.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(2));
+        const expected = { schemaVersion: 1, languages: ['pt-BR', 'en-US'], includeOriginal: false };
+        expect(captured).toEqual([expected, expected]);
+        expect(editor.settings.languageTagFilter).toBeNull();
+        first.resolve(acknowledgement);
+        await vi.waitFor(() => expect(editor.settings.languageTagFilter).toEqual(expected));
+        second.resolve({ ...acknowledgement, revision: 2 });
+        await Promise.resolve();
+        expect(reinitialize).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes poster and details language renderers after acknowledgement even when poster tags are disabled', async () => {
+        const controls = buildDom('inherit');
+        const editor = makeEditor(true);
+        editor.settings.languageTagsEnabled = false;
+        JC.currentSettings = editor.settings;
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeLanguageTags?: () => void }).reinitializeLanguageTags = reinitialize;
+        const events: CustomEvent[] = [];
+        const listener = (event: Event): void => { events.push(event as CustomEvent); };
+        window.addEventListener(LANGUAGE_FILTER_CHANGED_EVENT, listener);
+        wireSettingsListeners(context(editor));
+
+        selectLanguages(controls.languageInput, ['pt-BR']);
+        controls.languageInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(reinitialize).toHaveBeenCalledOnce());
+        expect(events).toHaveLength(1);
+        expect(events[0].detail).toBe(editor.actor);
+        window.removeEventListener(LANGUAGE_FILTER_CHANGED_EVENT, listener);
+    });
+
+    it('persists a target language filter without mutating the acting user', async () => {
+        const controls = buildDom('inherit');
+        const actorPolicy = { schemaVersion: 1, languages: ['de'], includeOriginal: false };
+        JC.currentSettings = { languageTagsEnabled: true, languageTagFilter: actorPolicy };
+        const editor = makeEditor(false);
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementation(() => {
+            captured.push(structuredClone(editor.settings.languageTagFilter));
+            return Promise.resolve(acknowledgement);
+        });
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeLanguageTags?: () => void }).reinitializeLanguageTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        selectLanguages(controls.languageInput, ['pt-BR']);
+        controls.languageInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledOnce());
+        expect(captured).toEqual([{ schemaVersion: 1, languages: ['pt-BR'], includeOriginal: false }]);
+        expect(JC.currentSettings.languageTagFilter).toBe(actorPolicy);
+        expect(reinitialize).not.toHaveBeenCalled();
+    });
+
+    it('orders selected library choices and resets safely to inherit', async () => {
+        const controls = buildDom('inherit');
+        const editor = makeEditor(false);
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementation(() => {
+            captured.push(structuredClone(editor.settings.languageTagFilter));
+            return Promise.resolve(acknowledgement);
+        });
+        wireSettingsListeners(context(editor));
+
+        selectLanguages(controls.languageInput, ['pt-BR', 'en-US']);
+        controls.languageInput.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(1));
+        const en = Array.from(controls.languageInput.options).find((option) => option.value === 'en-US')!;
+        en.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        document.getElementById('languageTagFilterMoveUp')!.click();
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(2));
+        document.getElementById('languageTagFilterReset')!.click();
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(3));
+
+        expect(captured).toEqual([
+            { schemaVersion: 1, languages: ['pt-BR', 'en-US'], includeOriginal: false },
+            { schemaVersion: 1, languages: ['en-US', 'pt-BR'], includeOriginal: false },
+            null,
+        ]);
+        expect((document.getElementById('languageTagFilterMode') as HTMLSelectElement).value).toBe('inherit');
+    });
+
+    it('allows a persisted unavailable choice to be removed but never re-added', async () => {
+        const controls = buildDom('inherit');
+        const unavailable = new Option('fr-CA', 'fr-CA', false, true);
+        unavailable.dataset.known = 'false';
+        controls.languageInput.add(unavailable, 0);
+        const editor = makeEditor(false);
+        wireSettingsListeners(context(editor));
+
+        unavailable.selected = false;
+        controls.languageInput.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledOnce());
+
+        expect(Array.from(controls.languageInput.options).map((option) => option.value))
+            .not.toContain('fr-CA');
+        expect(editor.settings.languageTagFilter).toEqual({
+            schemaVersion: 1, languages: [], includeOriginal: false,
+        });
+    });
+
     it('publishes the preference when an unrelated carrier succeeds after the original carrier fails', async () => {
         const controls = buildDom('custom');
         const editor = makeEditor(true);
@@ -269,11 +432,12 @@ describe('preferred audio language settings', () => {
         const reinitialize = vi.fn(() => {
             reinitializedValues.push(editor.settings.preferredAudioLanguage);
         });
-        const reconcile = vi.fn(async () => {
+        const reconcile = vi.fn(() => {
             JC.currentSettings = {
                 preferredAudioLanguage: null,
                 qualityTagsEnabled: true,
             };
+            return Promise.resolve();
         });
         (JC as typeof JC & { reinitializeQualityTags?: () => void }).reinitializeQualityTags = reinitialize;
         wireSettingsListeners(context(editor, reconcile));
@@ -307,8 +471,9 @@ describe('preferred audio language settings', () => {
             preferredAudioLanguage: null,
             qualityTagsEnabled: true,
         };
-        const reconcile = vi.fn(async () => {
+        const reconcile = vi.fn(() => {
             JC.currentSettings = replacement;
+            return Promise.resolve();
         });
         wireSettingsListeners(context(editor, reconcile));
 

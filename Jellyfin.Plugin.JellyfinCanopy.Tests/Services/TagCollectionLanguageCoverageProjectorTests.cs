@@ -85,6 +85,27 @@ public sealed class TagCollectionLanguageCoverageProjectorTests
     }
 
     [Fact]
+    public void ProjectContainers_PropagatesAccessibleMemberOriginalLanguageOnly()
+    {
+        var collectionId = Guid.NewGuid();
+        var movieId = Guid.NewGuid();
+        var saved = DateTime.UtcNow;
+        var movie = new StubMovie { Id = movieId, DateLastSaved = saved };
+        var linked = new StubLinkedChildrenService { GetChildrenHook = (_, _) => new[] { movieId } };
+        var library = new CountingLibraryManager();
+        using var fixture = Fixture.Create(library, linked);
+        library.ConfigureUserAccessHook = static (_, _) => { };
+        library.GetItemsResultHook = _ => new QueryResult<BaseItem>(0, 1, new BaseItem[] { movie });
+        fixture.SeedMovieWithOriginal(movieId, saved.Ticks, "pt-BR", "pt-br", "eng");
+
+        var result = new TagCollectionLanguageCoverageProjector(
+            library, fixture.Cache, NullLogger.Instance)
+            .ProjectContainers(fixture.FirstUser, new[] { new BoxSet { Id = collectionId } }, default)[Key(collectionId)];
+
+        Assert.Equal(new[] { "pt-BR" }, result.OriginalLanguages);
+    }
+
+    [Fact]
     public void ProjectContainers_PagesFiveHundredIds_AndClassifiesStaleEvidenceUnknown()
     {
         var collectionId = Guid.NewGuid();
@@ -712,6 +733,15 @@ public sealed class TagCollectionLanguageCoverageProjectorTests
                 Type = "Movie",
                 SourceRevision = revision,
                 AudioLanguages = languages,
+            });
+
+        internal void SeedMovieWithOriginal(Guid id, long revision, string originalLanguage, params string[] languages)
+            => Cache.SeedEntryForTest(Key(id), new TagCacheEntry
+            {
+                Type = "Movie",
+                SourceRevision = revision,
+                AudioLanguages = languages,
+                OriginalLanguage = originalLanguage,
             });
 
         public void Dispose()

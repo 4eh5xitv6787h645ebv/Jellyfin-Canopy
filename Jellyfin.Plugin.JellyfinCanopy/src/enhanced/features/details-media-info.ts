@@ -12,6 +12,11 @@ import {
     resolveMediaLanguageIdentities,
 } from '../../core/media-language';
 import type { MediaLanguageIdentity } from '../../core/media-language';
+import {
+    currentLanguageTagFilter,
+    filterMediaLanguageIdentities,
+    languageTagFilterControlsOrder,
+} from '../../tags/language-tag-filter';
 import { injectCss } from '../../core/ui-kit';
 import { detectFileSource } from '../../core/file-source';
 import { getItemCached } from '../helpers';
@@ -62,7 +67,8 @@ interface WatchProgressEntry {
 // the util now also caps size and expires entries so nothing leaks per session.
 const watchProgressCache = createBoundedCache<string, WatchProgressEntry & { ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: WATCHPROGRESS_CACHE_TTL }); // Map<itemId, { progress, totalPlaybackTicks, totalRuntimeTicks, ts }>
 const fileSizeCache = createBoundedCache<string, { size: number | null; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: FILESIZE_CACHE_TTL }); // Map<itemId, { size, unavailable, ts }>
-const audioLanguageCache = createBoundedCache<string, { languages: MediaLanguageIdentity[]; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL }); // Map<itemId, { canonical identities, unavailable, ts }>
+const audioLanguageCache = createBoundedCache<string, { languages: MediaLanguageIdentity[]; originalLanguage: string | null; unavailable: boolean; ts: number; error?: boolean }>({ maxEntries: 500, ttlMs: LANGUAGE_CACHE_TTL });
+let audioLanguageRenderGeneration = 0;
 const retryTimers = new Set<number>();
 
 type LanguageCoverageState = 'full' | 'partial' | 'unknown';
@@ -71,6 +77,7 @@ interface CollectionLanguageCoverageProjection {
     eligibleMemberCount: number | null;
     complete: boolean;
     groups: Array<{ state: LanguageCoverageState; languages: MediaLanguageIdentity[] }>;
+    originalLanguages: MediaLanguageIdentity[];
 }
 
 function safeCoverageCount(value: unknown): number | null {
@@ -85,7 +92,8 @@ function readCollectionLanguageCoverage(value: unknown): CollectionLanguageCover
         || typeof record.Truncated !== 'boolean'
         || !Array.isArray(record.FullLanguages)
         || !Array.isArray(record.PartialLanguages)
-        || !Array.isArray(record.UnknownLanguages)) return null;
+        || !Array.isArray(record.UnknownLanguages)
+        || (record.OriginalLanguages !== undefined && !Array.isArray(record.OriginalLanguages))) return null;
     const eligibleMemberCount = record.EligibleMemberCount === null
         ? null
         : safeCoverageCount(record.EligibleMemberCount);
@@ -140,7 +148,11 @@ function readCollectionLanguageCoverage(value: unknown): CollectionLanguageCover
     }));
     if ((record.Complete && groups[2].languages.length > 0)
         || (!record.Complete && groups[0].languages.length > 0)) return null;
-    return { eligibleMemberCount, complete: record.Complete, groups };
+    const rawOriginalLanguages = (record.OriginalLanguages ?? []) as unknown[];
+    const originalLanguages = resolveMediaLanguageIdentities(rawOriginalLanguages);
+    if (originalLanguages.length !== rawOriginalLanguages.length
+        || originalLanguages.length > 32) return null;
+    return { eligibleMemberCount, complete: record.Complete, groups, originalLanguages };
 }
 
 function isActive(context: IdentityContext, placeholder?: HTMLElement): boolean {
@@ -165,11 +177,18 @@ export function resetDetailsMediaInfo(): void {
     retryTimers.clear();
     watchProgressCache.clear();
     fileSizeCache.clear();
-    audioLanguageCache.clear();
+    resetDetailsAudioLanguages();
     document.getElementById(AUDIO_LANGUAGES_SCROLL_STYLE_ID)?.remove();
     document.querySelectorAll(
-        '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-fileSource, .mediaInfoItem-audioLanguage',
+        '.mediaInfoItem-watchProgress, .mediaInfoItem-fileSize, .mediaInfoItem-fileSource',
     ).forEach((node) => node.remove());
+}
+
+/** Invalidate only policy-sensitive audio-language work for a live settings refresh. */
+export function resetDetailsAudioLanguages(): void {
+    audioLanguageRenderGeneration++;
+    audioLanguageCache.clear();
+    document.querySelectorAll('.mediaInfoItem-audioLanguage').forEach((node) => node.remove());
 }
 
 /**
@@ -587,6 +606,10 @@ async function fetchFirstEpisodeForLanguage(userId: string, parentId: string): P
 export function displayAudioLanguages(itemId: string, container: HTMLElement): void {
     const context = JC.identity.capture();
     if (!context) return;
+    const renderGeneration = audioLanguageRenderGeneration;
+    const isCurrentPresentation = (placeholder?: HTMLElement): boolean => (
+        renderGeneration === audioLanguageRenderGeneration && isActive(context, placeholder)
+    );
     // show itemMiscInfo if hidden like on season pages
     if (container.classList.contains('hide')) {
         container.classList.remove('hide');
@@ -636,15 +659,20 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
 
     // Helper to render unavailable/no data with dash
     const renderUnavailable = (): void => {
-        if (!isActive(context, placeholder)) return;
+        if (!isCurrentPresentation(placeholder)) return;
         applyLangStyles(placeholder);
         placeholder.innerHTML = `<span class="material-icons" style="font-size: inherit; margin-right: 0.3em;">translate</span> -`;
     };
 
     // Helper to render language items with proper DOM elements
-    const renderLanguages = (languages: MediaLanguageIdentity[]): void => {
-        if (!isActive(context, placeholder)) return;
-        const presentations = buildMediaLanguagePresentations(languages);
+    const renderLanguages = (languages: MediaLanguageIdentity[], originalLanguage: unknown = null): void => {
+        if (!isCurrentPresentation(placeholder)) return;
+        const filter = currentLanguageTagFilter();
+        const presentations = buildMediaLanguagePresentations(filterMediaLanguageIdentities(
+            languages,
+            filter,
+            originalLanguage,
+        ), languageTagFilterControlsOrder(filter));
         if (presentations.length === 0) {
             renderUnavailable();
             return;
@@ -749,10 +777,28 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     };
 
     /** Render the same three-state, three-presentation contract used on posters. */
-    const renderCollectionCoverage = (coverage: CollectionLanguageCoverageProjection): void => {
-        if (!isActive(context, placeholder)) return;
-        const presentations = coverage.groups.flatMap(({ state, languages }) =>
-            buildMediaLanguagePresentations(languages).map((presentation) => ({ state, presentation })));
+    const renderCollectionCoverage = (
+        coverage: CollectionLanguageCoverageProjection,
+        authoritativeOriginal: unknown = null,
+    ): void => {
+        if (!isCurrentPresentation(placeholder)) return;
+        const filter = currentLanguageTagFilter();
+        const controlled = languageTagFilterControlsOrder(filter);
+        const byLanguage = new Map(coverage.groups.flatMap(({ state, languages }) =>
+            languages.map((language) => [language.canonicalTag, state] as const)));
+        const orderedGroups = controlled
+            ? filterMediaLanguageIdentities(
+                coverage.groups.flatMap(({ languages }) => languages),
+                filter,
+                authoritativeOriginal,
+            ).map((language) => ({ state: byLanguage.get(language.canonicalTag)!, languages: [language] }))
+            : coverage.groups;
+        const presentations = orderedGroups.flatMap(({ state, languages }) =>
+            buildMediaLanguagePresentations(
+                controlled ? languages : filterMediaLanguageIdentities(languages, filter, authoritativeOriginal),
+                controlled,
+            )
+                .map((presentation) => ({ state, presentation })));
         if (presentations.length === 0) {
             applyLangStyles(placeholder);
             const icon = document.createElement('span');
@@ -840,10 +886,10 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
     };
 
     const performFetch = async (attempt = 1): Promise<void> => {
-        if (!isActive(context, placeholder)) return;
+        if (!isCurrentPresentation(placeholder)) return;
         try {
             const item: any = await getItemCached(itemId, { userId: context.userId });
-            if (!isActive(context, placeholder)) return;
+            if (!isCurrentPresentation(placeholder)) return;
 
             if (item.Type === 'BoxSet') {
                 // Collection coverage is caller-scoped and response-only. Ask
@@ -854,7 +900,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                     `/tag-data/${encodeURIComponent(context.userId)}`,
                     { method: 'POST', body: [itemId], skipCache: true, skipRetry: true },
                 );
-                if (!isActive(context, placeholder)) return;
+                if (!isCurrentPresentation(placeholder)) return;
                 const normalizedItemId = String(item.Id || itemId).replace(/-/g, '').toLowerCase();
                 const projected = Array.isArray(response?.Items)
                     ? response.Items.find((candidate: any) => (
@@ -862,7 +908,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                     ))
                     : null;
                 const coverage = readCollectionLanguageCoverage(projected?.CollectionLanguageCoverage);
-                if (coverage) renderCollectionCoverage(coverage);
+                if (coverage) renderCollectionCoverage(coverage, coverage.originalLanguages);
                 else renderUnavailable();
                 return;
             }
@@ -876,7 +922,7 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
                     renderUnavailable();
                     return;
                 }
-                renderLanguages(cached.languages);
+                renderLanguages(cached.languages, cached.originalLanguage);
                 return;
             }
 
@@ -885,13 +931,13 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
             // For Series/Season, fetch the first episode to get language info
             if (item.Type === 'Series' || item.Type === 'Season') {
                 const episode = await fetchFirstEpisodeForLanguage(context.userId, item.Id);
-                if (!isActive(context, placeholder)) return;
+                if (!isCurrentPresentation(placeholder)) return;
                 if (episode) {
                     sourceItem = episode;
                 } else {
                     // No episodes found
                     renderUnavailable();
-                    audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now() });
+                    audioLanguageCache.set(itemId, { languages: [], originalLanguage: null, unavailable: true, ts: Date.now() });
                     return;
                 }
             }
@@ -908,21 +954,24 @@ export function displayAudioLanguages(itemId: string, container: HTMLElement): v
 
             const identities = resolveMediaLanguageIdentities(languages);
             if (identities.length > 0) {
-                renderLanguages(identities);
+                const originalLanguage = typeof sourceItem?.OriginalLanguage === 'string'
+                    ? sourceItem.OriginalLanguage
+                    : typeof item?.OriginalLanguage === 'string' ? item.OriginalLanguage : null;
+                renderLanguages(identities, originalLanguage);
                 // Cache the successful result
-                audioLanguageCache.set(itemId, { languages: identities, unavailable: false, ts: Date.now() });
+                audioLanguageCache.set(itemId, { languages: identities, originalLanguage, unavailable: false, ts: Date.now() });
             } else {
                 renderUnavailable();
-                audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now() });
+                audioLanguageCache.set(itemId, { languages: [], originalLanguage: null, unavailable: true, ts: Date.now() });
             }
         } catch (error) {
-            if (!isActive(context, placeholder)) return;
+            if (!isCurrentPresentation(placeholder)) return;
             console.error('🪼 Jellyfin Canopy: Error fetching audio languages for %s:', itemId, error);
             // PERF(R9): fail open — show the dash now, remember the failure only
             // briefly (ERROR_CACHE_TTL) and retry in place while the chip is on
             // screen. The dash→flags swap lands in the chip's reserved width (R1).
             renderUnavailable();
-            audioLanguageCache.set(itemId, { languages: [], unavailable: true, ts: Date.now(), error: true });
+            audioLanguageCache.set(itemId, { languages: [], originalLanguage: null, unavailable: true, ts: Date.now(), error: true });
             if (attempt < FETCH_MAX_ATTEMPTS) {
                 scheduleRetry(context, placeholder, () => {
                     audioLanguageCache.delete(itemId);

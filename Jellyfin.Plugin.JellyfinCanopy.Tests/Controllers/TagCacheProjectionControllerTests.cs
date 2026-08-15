@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Model;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
+using MediaBrowser.Controller.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,6 +28,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             using var harness = new Harness(withLifecycle: true);
 
             Assert.IsType<NotFoundResult>(harness.Controller.GetTagCache(harness.User.Id));
+        }
+
+        [Fact]
+        public void LanguageInventory_RejectsAnotherUserBeforeLibraryEnumeration()
+        {
+            using var harness = new Harness();
+            var queries = 0;
+            harness.Library.GetItemsResultHook = _ =>
+            {
+                queries++;
+                return new MediaBrowser.Model.Querying.QueryResult<BaseItem>();
+            };
+
+            Assert.IsType<ForbidResult>(harness.Controller.GetLanguageTagInventory(Guid.NewGuid()));
+            Assert.Equal(0, queries);
         }
 
         [Fact]
@@ -327,7 +343,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     resolver,
                     userConfig,
                     _projection,
-                    (ITagCacheLifecycle?)_lifecycle ?? new StubTagCacheLifecycle());
+                    (ITagCacheLifecycle?)_lifecycle ?? new StubTagCacheLifecycle(),
+                    new LanguageTagInventoryService(Library, Cache));
                 Controller.ControllerContext = new ControllerContext
                 {
                     HttpContext = new DefaultHttpContext

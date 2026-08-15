@@ -10,6 +10,7 @@ const {
     HOME_SELECTED_INDEX_ERROR,
     HOME_TAB_PREFIX,
     SCROLL_HANDLER_ERROR,
+    SCROLL_HANDLER_WEBKIT_ERROR,
     hasValidConcurrentLogoutResponses,
     isExpectedCanopyPauseScreenImageProbe404,
     isExpectedJellyfinWebTanStackCancellation,
@@ -31,6 +32,13 @@ const OBSERVED_SCROLL_HANDLER_RACE = {
     text: SCROLL_HANDLER_ERROR,
     stack: 'TypeError: t.scrollHandler is not a function\n'
         + '    at http://localhost:8100/web/dashboard.2be9340f81cc7f0987ef.chunk.js:1:1173',
+};
+
+const OBSERVED_WEBKIT_SCROLL_HANDLER_RACE = {
+    source: 'pageerror',
+    text: SCROLL_HANDLER_WEBKIT_ERROR,
+    stack: "TypeError: t.scrollHandler is not a function. (In 't.scrollHandler()', 't.scrollHandler' is null)\n"
+        + '    at unknown (http://127.0.0.1:32788/web/49275.fcf2b77489e84c80e220.chunk.js:1:2144)',
 };
 
 const LOGOUT_ORIGIN = 'http://127.0.0.1:8100';
@@ -272,6 +280,8 @@ test('scroll-handler host race requires the exact pageerror and a hashed stock-w
         false,
         'the legacy string-only predicate cannot establish source ownership'
     );
+    assert.equal(isKnownJellyfinWebScrollHandlerError(OBSERVED_WEBKIT_SCROLL_HANDLER_RACE), true);
+    assert.equal(isKnownJellyfinWebHostNoise(OBSERVED_WEBKIT_SCROLL_HANDLER_RACE), true);
 });
 
 test('scroll-handler classifier rejects missing, similar, non-pageerror, and non-stock evidence', () => {
@@ -281,6 +291,17 @@ test('scroll-handler classifier rejects missing, similar, non-pageerror, and non
         { ...OBSERVED_SCROLL_HANDLER_RACE, source: undefined },
         { ...OBSERVED_SCROLL_HANDLER_RACE, text: 't.scrollHandler is not a function' },
         { ...OBSERVED_SCROLL_HANDLER_RACE, text: `${SCROLL_HANDLER_ERROR} extra` },
+        {
+            ...OBSERVED_WEBKIT_SCROLL_HANDLER_RACE,
+            text: SCROLL_HANDLER_WEBKIT_ERROR.replace(' is null)', ' was null)'),
+        },
+        {
+            ...OBSERVED_WEBKIT_SCROLL_HANDLER_RACE,
+            stack: OBSERVED_WEBKIT_SCROLL_HANDLER_RACE.stack.replace(
+                '/web/49275.fcf2b77489e84c80e220.chunk.js',
+                '/web/49275.chunk.js'
+            ),
+        },
         {
             ...OBSERVED_SCROLL_HANDLER_RACE,
             stack: 'TypeError: t.scrollHandler is not a function\n'

@@ -797,6 +797,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 || !IsOptionalOrder(settings.VideoCodecTagOrder)
                 || !IsOptionalOrder(settings.AudioInfoTagOrder)
                 || !RatingTagScopePolicyV1.TryNormalize(settings.RatingTagScopeOverrides, out _)
+                || !LanguageTagFilterPolicyV1.TryNormalize(settings.LanguageTagFilter, out _)
                 || !AreBoundedSettingsStrings(settings)
                 || !HasValidExtensionData(settings.ExtensionData))
             {

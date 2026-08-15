@@ -65,6 +65,8 @@ export interface UserSettings {
     ratingTagScopeOverrides?: unknown;
     /** null inherits admin, empty selects Automatic, otherwise canonical BCP-47. */
     preferredAudioLanguage?: string | null;
+    /** null inherits admin; a v1 policy is a bounded canonical allowlist. */
+    languageTagFilter?: unknown;
     [key: string]: unknown;
 }
 

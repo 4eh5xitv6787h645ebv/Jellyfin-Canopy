@@ -60,6 +60,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly Services.TagCacheProjectionRevisionService _projectionRevisionService;
         private readonly Services.ITagCacheLifecycle _tagCacheLifecycle;
+        private readonly Services.LanguageTagInventoryService _languageTagInventoryService;
 
         public TagCacheController(
             IHttpClientFactory httpClientFactory,
@@ -73,7 +74,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             Services.SpoilerUserResolver spoilerResolver,
             UserConfigurationManager userConfigurationManager,
             Services.TagCacheProjectionRevisionService projectionRevisionService,
-            Services.ITagCacheLifecycle tagCacheLifecycle)
+            Services.ITagCacheLifecycle tagCacheLifecycle,
+            Services.LanguageTagInventoryService languageTagInventoryService)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _tagCacheService = tagCacheService;
@@ -83,6 +85,52 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             _userConfigurationManager = userConfigurationManager;
             _projectionRevisionService = projectionRevisionService;
             _tagCacheLifecycle = tagCacheLifecycle ?? throw new ArgumentNullException(nameof(tagCacheLifecycle));
+            _languageTagInventoryService = languageTagInventoryService
+                ?? throw new ArgumentNullException(nameof(languageTagInventoryService));
+        }
+
+        [HttpGet("language-tag-inventory/{userId}")]
+        [Authorize]
+        [Produces("application/json")]
+        public IActionResult GetLanguageTagInventory(Guid userId, CancellationToken cancellationToken = default)
+        {
+            if (!_tagCacheLifecycle.IsReady) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+            var authorizationResult = AuthorizeUserAccess(userId, out var user);
+            if (authorizationResult != null) return authorizationResult;
+            var authorizationRevision = user.RowVersion;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Action<Dictionary<string, Model.TagCacheEntry>>? privacyProjection = null;
+            var config = _configProvider.ConfigurationOrNull;
+            if (config?.SpoilerBlurEnabled == true && config.SpoilerStripTags)
+            {
+                privacyProjection = items =>
+                {
+                    var languageCoverage = new Dictionary<string, Model.TagLanguageCoverage>(StringComparer.Ordinal);
+                    var collectionCoverage = new Dictionary<string, Model.TagCollectionLanguageCoverage>(StringComparer.Ordinal);
+                    ApplyTagCacheSpoilerStrip(
+                        items,
+                        languageCoverage,
+                        collectionCoverage,
+                        user.Id,
+                        user,
+                        new TagStripProjectionResolver(this),
+                        cancellationToken);
+                };
+            }
+
+            var inventory = _languageTagInventoryService.Get(user, privacyProjection, cancellationToken);
+            var currentUser = _userManager.GetUserById(user.Id);
+            if (currentUser == null) return NotFound();
+            if (currentUser.RowVersion != authorizationRevision)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, new
+                {
+                    error = "user access changed while language inventory was being prepared",
+                });
+            }
+
+            return Ok(inventory);
         }
 
         [HttpGet("tag-cache/{userId}")]
@@ -1565,6 +1613,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                             Id = epRef.Id,
                             Type = epRef.GetBaseItemKind().ToString(),
                             Genres = epRef.Genres,
+                            OriginalLanguage = Services.TagCacheService.ReadOriginalLanguage(epRef),
                             NeedsStreamFetch = true
                         };
                     }
@@ -1596,6 +1645,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     Path = string.IsNullOrEmpty(item.Path) ? null : System.IO.Path.GetFileName(item.Path),
                     MediaStreams = trimmedStreams,
                     MediaSources = trimmedSources,
+                    OriginalLanguage = Services.TagCacheService.ReadOriginalLanguage(item),
                     FirstEpisode = firstEpisodeData,
                     LanguageCoverage = languageCoverage.TryGetValue(item.Id.ToString("N"), out var coverage)
                         ? coverage

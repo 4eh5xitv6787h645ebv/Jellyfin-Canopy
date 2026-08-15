@@ -18,6 +18,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
 
         public string[] UnknownLanguages { get; set; } = System.Array.Empty<string>();
 
+        public string[] OriginalLanguages { get; set; } = System.Array.Empty<string>();
+
         public bool Truncated { get; set; }
 
         public int? OmittedLanguageCount { get; set; }

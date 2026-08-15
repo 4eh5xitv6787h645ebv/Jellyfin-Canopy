@@ -44,6 +44,7 @@
   "AudioInfoTagOrder": null,
   "GenreTagsEnabled": false,
   "LanguageTagsEnabled": false,
+  "LanguageTagFilter": null,
   "RatingTagsEnabled": false,
   "RatingTagScopeOverrides": {
     "Version": 1,

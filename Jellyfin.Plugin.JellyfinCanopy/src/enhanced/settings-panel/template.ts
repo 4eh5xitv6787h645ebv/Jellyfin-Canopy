@@ -26,6 +26,7 @@ import {
     RATING_TAG_SURFACES,
     normalizeRatingTagScopePolicy,
 } from '../../tags/rating-tag-scope';
+import { normalizeLanguageTagFilter } from '../../tags/language-tag-filter';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -58,6 +59,24 @@ interface ShortcutTemplateEntry {
     Key?: string;
     Label?: string;
     Category?: string;
+}
+
+function languageTagFilterControls(
+    settings: Record<string, any>,
+    background: string,
+    inventory: PanelContext['languageTagInventory'],
+): string {
+    const raw = settings.languageTagFilter;
+    const inherited = raw === null || raw === undefined;
+    const normalized = normalizeLanguageTagFilter(raw);
+    const languages = normalized && normalized.failClosed !== true ? normalized.languages : [];
+    const known = new Set(inventory.languages);
+    const ordered = [...languages, ...inventory.languages.filter((language) => !languages.includes(language))];
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.12);">
+        <label for="languageTagFilterMode" style="display:block; font-size:13px; font-weight:600; margin-bottom:6px;">${escapeHtml(tWithFallback('panel_settings_language_filter', 'Visible languages'))}</label>
+        <select id="languageTagFilterMode" style="width:100%; padding:8px; background:${background}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px;"><option value="inherit" ${inherited ? 'selected' : ''}>${escapeHtml(tWithFallback('setting_inherit', 'Inherit administrator default'))}</option><option value="custom" ${!inherited ? 'selected' : ''}>${escapeHtml(tWithFallback('panel_settings_language_filter_custom', 'Custom allowlist'))}</option></select>
+        <div id="languageTagFilterCustom" style="display:${inherited ? 'none' : 'block'}; margin-top:8px;"><select id="languageTagFilterLanguages" multiple size="${Math.min(8, Math.max(3, ordered.length))}" style="box-sizing:border-box; width:100%; padding:8px; background:${background}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px;" ${ordered.length === 0 ? 'disabled' : ''}>${ordered.map((tag) => `<option value="${escapeHtml(tag)}" data-known="${known.has(tag) ? 'true' : 'false'}" ${languages.includes(tag) ? 'selected' : ''}>${escapeHtml(tag)}</option>`).join('')}</select><div style="display:flex; gap:6px; margin-top:6px;"><button type="button" id="languageTagFilterMoveUp" class="button-flat" aria-label="${escapeHtml(JC.t!('panel_settings_ui_quality_tags_move_up'))}"><span class="material-icons" aria-hidden="true">arrow_upward</span></button><button type="button" id="languageTagFilterMoveDown" class="button-flat" aria-label="${escapeHtml(JC.t!('panel_settings_ui_quality_tags_move_down'))}"><span class="material-icons" aria-hidden="true">arrow_downward</span></button></div><label style="display:flex; gap:8px; align-items:center; margin-top:8px;"><input id="languageTagFilterOriginal" type="checkbox" ${normalized?.includeOriginal === true ? 'checked' : ''}/><span>${escapeHtml(tWithFallback('panel_settings_language_filter_original', 'Include authoritative original language first'))}</span></label><button type="button" id="languageTagFilterReset" class="button-flat" style="margin-top:6px;">${escapeHtml(tWithFallback('button_reset', 'Reset'))}</button></div>
+    </div>`;
 }
 
 function shortcutRowHtml(
@@ -511,6 +530,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div data-pos="bottom-right" style="border-radius:2px; transition:background 0.2s;"></div>
                                     </div>
                                 </label>
+                                ${languageTagFilterControls(settings, presetBoxBackground, ctx.languageTagInventory)}
                             </div>
                                 <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                     <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">

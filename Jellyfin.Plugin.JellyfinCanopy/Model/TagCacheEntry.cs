@@ -20,6 +20,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         public float? CommunityRating { get; set; }
         public float? CriticRating { get; set; }
         public string[]? AudioLanguages { get; set; }
+        /// <summary>
+        /// Authoritative original language inherited by the same item that supplied
+        /// <see cref="AudioLanguages"/>. Never inferred from stream order.
+        /// </summary>
+        public string? OriginalLanguage { get; set; }
         public TagStreamData? StreamData { get; set; }
         public long LastUpdated { get; set; }
         // Series ID in N format (lowercase). Set for Episodes and Seasons, null
@@ -35,7 +40,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
 
         // ID in N format of the item that supplied StreamData/AudioLanguages. For a
         // Series or Season this is its selected first Episode; for an ordinary item it
-        // is the item itself. Probe-failure fallback may retain last-good media only
+        // is the item itself. OriginalLanguage is authoritative owning-item metadata
+        // with Jellyfin's Episode/Season -> Series inheritance. Probe-failure fallback may retain last-good media only
         // when this identity is unchanged, never across first-Episode replacement.
         public string? StreamSourceId { get; set; }
 
@@ -74,6 +80,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
             CommunityRating = CommunityRating,
             CriticRating = CriticRating,
             AudioLanguages = AudioLanguages,
+            OriginalLanguage = OriginalLanguage,
             StreamData = StreamData,
             LastUpdated = LastUpdated,
             SeriesId = SeriesId,

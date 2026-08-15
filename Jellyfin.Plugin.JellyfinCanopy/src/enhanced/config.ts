@@ -826,7 +826,7 @@ JC.loadSettings = (): UserSettings => {
         watchProgressTimeFormat: 'hours',
         pauseScreenEnabled: true,
         pauseScreenDelaySeconds: 5,
-        qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
+        qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, languageTagFilter: null, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
         showResolutionTag: true, showSourceTag: true, showDynamicRangeTag: true, showSpecialFormatTag: true, showVideoCodecTag: true, showAudioInfoTag: true,
         preferredAudioLanguage: null,
         resolutionTagOrder: 1, sourceTagOrder: 2, dynamicRangeTagOrder: 3, specialFormatTagOrder: 4, videoCodecTagOrder: 5, audioInfoTagOrder: 6,
@@ -880,6 +880,15 @@ JC.loadSettings = (): UserSettings => {
         userSettings,
         'preferredAudioLanguage',
     ) ? userSettings.preferredAudioLanguage : null;
+    // This nested tri-state policy is validated by its feature owner. The
+    // generic scalar merge deliberately treats arbitrary objects as corrupt,
+    // so restore the acting user's exact policy here: null inherits the live
+    // administrator policy, a v1 object is an explicit override, and a corrupt
+    // object must reach the normalizer so it can fail closed.
+    mergedSettings.languageTagFilter = Object.prototype.hasOwnProperty.call(
+        userSettings,
+        'languageTagFilter',
+    ) ? userSettings.languageTagFilter : null;
     // Nested objects are deliberately outside the generic scalar merge. A
     // missing legacy override is an empty schema-v1 deny set; the live admin
     // policy is evaluated separately as the authoritative ceiling.

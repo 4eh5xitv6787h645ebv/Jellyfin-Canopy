@@ -364,6 +364,41 @@ describe('details media-info identity lifecycle', () => {
         });
     });
 
+    it('applies global configured priority before the mixed collection coverage cap', async () => {
+        JC.currentSettings = {
+            languageTagFilter: {
+                schemaVersion: 1,
+                languages: ['ja-JP', 'fr-FR', 'de-DE', 'en-US'],
+                includeOriginal: false,
+            },
+        };
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({ Id: 'priority-collection', Type: 'BoxSet' });
+        JC.core.api = { plugin: vi.fn().mockResolvedValue({
+            Items: [{
+                Id: 'priority-collection',
+                Type: 'BoxSet',
+                CollectionLanguageCoverage: {
+                    EligibleMemberCount: 4,
+                    ObservedMemberCount: 3,
+                    Complete: false,
+                    FullLanguages: [],
+                    PartialLanguages: ['en-US'],
+                    UnknownLanguages: ['de-DE', 'fr-FR', 'ja-JP'],
+                    OriginalLanguages: [],
+                    Truncated: false,
+                    OmittedLanguageCount: 0,
+                },
+            }],
+        }) } as unknown as NonNullable<typeof JC.core.api>;
+        const container = mountContainer();
+
+        displayAudioLanguages('priority-collection', container);
+        await flushPromises();
+
+        expect(Array.from(container.querySelectorAll<HTMLElement>('.audio-language-item'))
+            .map((entry) => entry.dataset.lang)).toEqual(['ja-JP', 'fr-FR', 'de-DE']);
+    });
+
     it.each([
         [
             'empty',

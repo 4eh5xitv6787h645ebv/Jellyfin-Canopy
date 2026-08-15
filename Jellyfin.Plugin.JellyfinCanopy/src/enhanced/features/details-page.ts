@@ -15,10 +15,12 @@ import {
     displayItemSize,
     displayFileSource,
     displayAudioLanguages,
+    resetDetailsAudioLanguages,
     resetDetailsMediaInfo,
 } from './details-media-info';
 import { displayReleaseDate, resetReleaseDates } from './release-dates';
 import type { IdentityContext } from '../../types/jc';
+const LANGUAGE_FILTER_CHANGED_EVENT = 'jellyfin-canopy:language-filter-changed';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -640,6 +642,16 @@ export function installDetailsPage(
     });
     const offNavigate = onNavigate(() => { scheduleHandleItemDetails(); });
     const offView = onViewPage(() => { scheduleHandleItemDetails(); });
+    const handleLanguageFilterChanged = (event: Event): void => {
+        const identity = JC.identity.capture();
+        const owner = (event as CustomEvent<IdentityContext>).detail;
+        if (!identity || !owner || !JC.identity.isCurrent(owner)
+            || identity.serverId !== owner.serverId || identity.userId !== owner.userId
+            || identity.epoch !== owner.epoch || !isCurrent() || signal?.aborted) return;
+        resetDetailsAudioLanguages();
+        scheduleHandleItemDetails(identity);
+    };
+    window.addEventListener(LANGUAGE_FILTER_CHANGED_EVENT, handleLanguageFilterChanged);
     window.addEventListener(SPOILER_GUARD_READY_EVENT, handleSpoilerGuardReady);
     let disposed = false;
     return () => {
@@ -649,6 +661,7 @@ export function installDetailsPage(
         body.unsubscribe();
         offNavigate();
         offView();
+        window.removeEventListener(LANGUAGE_FILTER_CHANGED_EVENT, handleLanguageFilterChanged);
         window.removeEventListener(SPOILER_GUARD_READY_EVENT, handleSpoilerGuardReady);
         resetDetailsPage();
     };

@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2974,
-        "totalLines": 3359
+        "coveredLines": 2976,
+        "totalLines": 3362
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2974,
-        "maximumCoveredLines": 2974
+        "minimumCoveredLines": 2976,
+        "maximumCoveredLines": 2976
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #709 established this exact 3,359-line core scope and 2,974-line reviewed high-water. Issue #715 adds qBittorrent telemetry outside src/core and extends the final review tree with account-transition, timestamp, polling, and transport/session regressions without changing that instrumented scope. Two clean full client runs on the exact final issue #715 source passed all 270 files and 2,588 tests and both measured 2,974/3,359 (88.538%) without instrumentation spread. The reviewed observed high-water and exact observed floor therefore remain 2,974/3,359 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #718 adds ordered, canonical language-tag filter support to the shared media-language core after the #709 effective-region resolver, including bounded fail-closed policy parsing, explicit regional identity, authoritative Original selection, and compatibility-default handling. Two coordinated clean post-rebase full client runs on this exact 3,362-line core scope passed every test and measured 2,976/3,362 (88.519%) with no instrumentation spread. The three new instrumented lines are reviewed feature scope rather than coverage loss, and the covered-line high-water advances by two. The reviewed observed high-water and exact observed floor are therefore both 2,976/3,362 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45740,
-        "totalLines": 55635
+        "coveredLines": 45903,
+        "totalLines": 55841
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 45730,
-        "maximumCoveredLines": 45740
+        "cleanRuns": 3,
+        "minimumCoveredLines": 45895,
+        "maximumCoveredLines": 45903
       },
       "tolerance": {
-        "missingCoveredLines": 10,
-        "rationale": "Issue #715 adds bounded, read-only qBittorrent telemetry, caller-scoped authorization, secret-safe administration, deterministic path ownership, and the associated transport, lifecycle, security, and architecture tests on top of the issue #711 and #716 mainline. The terminal review fixes retain the SID from a legacy HTTP 200 login before any bounded body read can fail so every owned session is logged out with the same cookie, and add exact malformed, oversized, and throwing-body regressions. Three clean canonical local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on this exact 55,635-line source and 4,373-test scope passed every test and measured 45,734/55,635 (82.203649%), 45,733/55,635 (82.201851%), and 45,730/55,635 (82.196459%). GitHub Actions run 31898946053, Unit job 95046467875, then passed the same 4,373/4,373 tests at exact head a6faa6faa35b140049bd276468d4114b67db2fa3 and measured 45,740/55,635 (82.214433%); its sole failure was the expected stale-baseline rejection above 45,734. The reviewed observed high-water is therefore 45,740/55,635 and the exact observed floor remains 45,730/55,635; the ten-line instrumentation spread is 0.017974 percentage points, within the 0.15-point policy maximum. A pre-test invocation with an unsupported Node toolchain and two runs that passed only 4,372/4,373 tests were excluded, as was the separate clean coverage-enabled TRX diagnostic because it was not one of the canonical envelope runs. The prior issue #715 observations remain evidence for the earlier 55,622-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 8,
+        "rationale": "Issue #718 adds bounded per-user canonical language and region filtering, authoritative Original-language inheritance, caller-scoped inventory, and cache invalidation to the merged issue #715 read-only qBittorrent telemetry mainline. Two clean canonical local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on exact integrated head 27e002c9e02be125216a3bfe06130053f30e52ba passed all 4,394 tests on the identical 55,841-line assembly scope and measured 45,898/55,841 (82.194087%) and 45,895/55,841 (82.188714%). The hosted GitHub Actions Unit job 95053705601 then passed all 4,394 tests on PR synthetic merge 7bba8666ccd0c25fe2bd4cb2ca9262fefc206bbf of exact published head cb32bdc862b08a3e13ad9c6876f645f655cba8d8 into its unchanged base e4674b89965a865821d1fc89a567f99409f4cbda; that merge tree is byte-identical to the reviewed head tree. It measured 45,903/55,841 (82.203041%) before failing solely because that clean gain exceeded the prior reviewed high-water. The reviewed observed high-water is therefore 45,903/55,841 and the exact observed floor remains 45,895/55,841; the eight-line instrumentation spread is 0.014326 percentage points, within the 0.15-point policy maximum. Two earlier canonical attempts that passed only 4,393/4,394 tests were excluded; their distinct timing-sensitive failures each passed an immediate focused rerun and no evidence from either non-clean attempt entered this envelope. The prior issue #715 and pre-integration issue #718 observations remain evidence for their earlier scopes and are not mixed into this combined scope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

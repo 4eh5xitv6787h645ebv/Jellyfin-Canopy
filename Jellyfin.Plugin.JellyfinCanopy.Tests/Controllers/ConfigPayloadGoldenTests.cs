@@ -202,6 +202,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 DisabledItemTypes = new List<string> { "Episode", "BoxSet" },
                 DisabledSurfaces = new List<string> { "NextUp", "HomeOther" }
             };
+            config.LanguageTagFilter = new LanguageTagFilterPolicy
+            {
+                Languages = new List<string> { "de-DE", "en-US" },
+                IncludeOriginal = true
+            };
 
             return config;
         }
