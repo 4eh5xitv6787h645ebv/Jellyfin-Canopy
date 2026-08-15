@@ -28,6 +28,19 @@ function stripComments(css: string): string {
     return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
+function ratingBackgrounds(css: string): Map<string, string> {
+    const backgrounds = new Map<string, string>();
+    const live = stripComments(css);
+    const rulePattern = /((?:\.mediaInfoOfficialRating\[rating='[^']+'\]\s*,?\s*)+)\{[^}]*background-color:\s*(#[0-9a-fA-F]{3,8})/g;
+
+    for (const rule of live.matchAll(rulePattern)) {
+        for (const selector of rule[1].matchAll(/rating='([^']+)'/g)) {
+            backgrounds.set(selector[1], rule[2].toUpperCase());
+        }
+    }
+    return backgrounds;
+}
+
 describe('ratings.css lint guards', () => {
     it('loaded the stylesheet', () => {
         expect(CSS.length).toBeGreaterThan(0);
@@ -75,5 +88,27 @@ describe('ratings.css lint guards', () => {
         expect(values.length).toBeGreaterThan(0);
         const named = values.filter((v) => !/^#[0-9a-fA-F]{3,8}$/.test(v));
         expect(named, `non-hex background-color value(s): ${named.join(', ')}`).toEqual([]);
+    });
+
+    it('classifies supported bare certification labels in their existing tiers', () => {
+        const backgrounds = ratingBackgrounds(CSS);
+        const equivalents: Array<[string, string]> = [
+            ['L', 'BR-L'],
+            ['12+', 'AT-12+'],
+            ['14', 'BR-14'],
+            ['U/A 13+', 'IN-U/A 13+'],
+            ['NC16', 'SG-NC16'],
+        ];
+
+        for (const [bare, prefixed] of equivalents) {
+            expect(backgrounds.get(bare), `${bare} is not classified`).toBe(backgrounds.get(prefixed));
+        }
+    });
+
+    it('does not broaden bare-label matching to similar unknown values', () => {
+        const backgrounds = ratingBackgrounds(CSS);
+        for (const unknown of ['L+', '12++', '14 YEARS', 'U/A 13', 'NC-16']) {
+            expect(backgrounds.has(unknown), `${unknown} was unexpectedly classified`).toBe(false);
+        }
     });
 });
