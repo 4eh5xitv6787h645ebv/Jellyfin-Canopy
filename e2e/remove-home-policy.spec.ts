@@ -8,6 +8,11 @@ import {
     assertNoRuntimeErrors,
 } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID } from './fixtures/api';
+import {
+    completeAcknowledgedMutation,
+    runIndependentRestorations,
+    throwAfterRestoration,
+} from '../scripts/e2e/remove-home-policy-cleanup';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -89,6 +94,7 @@ async function actionFor(
     cardSelector: string,
     itemId: string,
     expectedSurface: 'continuewatching' | null,
+    journalMutation: () => void = () => {},
 ): Promise<void> {
     await page.evaluate(({ selector }) => {
         document.querySelector('#jc-remove-policy-sheet')?.remove();
@@ -130,8 +136,13 @@ async function actionFor(
         ));
     await button.click();
     const response = await responsePromise;
-    expect(response.status(), 'caller-authorized scoped POST').toBe(200);
-    await expect(page.locator(cardSelector)).toHaveCSS('display', 'none');
+    await completeAcknowledgedMutation({
+        verifyAcknowledgement: () => {
+            expect(response.status(), 'caller-authorized scoped POST').toBe(200);
+        },
+        journalMutation,
+        verifyProductState: () => expect(page.locator(cardSelector)).toHaveCSS('display', 'none'),
+    });
 }
 
 test.describe('Remove-from-home policy and resume row ownership', () => {
@@ -143,6 +154,7 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
         consoleErrors,
     }) => {
         const admin = await authenticate(baseURL!, 'jc_arradmin', 'Test669Pw!x');
+        const user = await authenticate(baseURL!, 'jc_arruser', 'Test669Pw!x');
         const originalConfig = await api<Record<string, unknown>>(
             baseURL!, CONFIG_PATH, admin.token
         );
@@ -175,6 +187,9 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
         });
         expect(fixture.audio, 'real audio fixture is caller-visible').toBeTruthy();
         expect(fixture.book, 'real book fixture is caller-visible').toBeTruthy();
+        expect(canonical(user.userId), 'cleanup session owns the browser user').toBe(
+            canonical(fixture.userId)
+        );
 
         const hiddenResponse = await apiRaw(
             baseURL!,
@@ -331,15 +346,15 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
                 '#jc-remove-policy-proof .section2 .card',
                 fixture.audio!.id,
                 'continuewatching',
+                () => { audioHidden = true; },
             );
-            audioHidden = true;
             await actionFor(
                 page,
                 '#jc-remove-policy-proof .section3 .card',
                 fixture.book!.id,
                 'continuewatching',
+                () => { bookHidden = true; },
             );
-            bookHidden = true;
             await expect(
                 page.locator('#jc-remove-policy-proof .section4 .card'),
                 'same item stays visible on an unrelated authoritative row',
@@ -371,75 +386,92 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
             primaryError = error;
         }
 
-        const cleanupFailures = await page.evaluate(async ({
-            ids,
-            data,
-            hidden,
-            originalRemovePolicy,
-        }) => {
-                const failures: string[] = [];
-                const attempt = async (label: string, operation: () => Promise<unknown>) => {
+        const cleanupFailures = await runIndependentRestorations({
+            pageCleanup: async () => {
+                await page.evaluate(() => {
+                    document.querySelector('#jc-remove-policy-proof')?.remove();
+                    document.querySelector('#jc-remove-policy-sheet')?.remove();
+                });
+            },
+            restoreDurableUserState: async () => {
+                const userStateFailures: string[] = [];
+                const attempt = async (label: string, operation: () => Promise<Response>) => {
                     try {
-                        await operation();
+                        const response = await operation();
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
                     } catch (error) {
-                        failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+                        userStateFailures.push(
+                            `${label}: ${error instanceof Error ? error.message : String(error)}`
+                        );
                     }
                 };
-                document.querySelector('#jc-remove-policy-proof')?.remove();
-                document.querySelector('#jc-remove-policy-sheet')?.remove();
-                const canopy = (window as any).JellyfinCanopy;
-                const settings = canopy.currentSettings;
-                if (settings && canopy.identity?.isOwned?.(settings)) {
-                    settings.removeContinueWatchingEnabled = originalRemovePolicy;
-                    await attempt(
-                        'restore user Remove policy',
-                        () => canopy.saveUserSettings('settings.json', settings),
-                    );
-                }
-                const apiClient = (window as any).ApiClient;
-                const userId = apiClient.getCurrentUserId();
+                const ids = [fixture.audio!.id, fixture.book!.id];
+                const hidden = [audioHidden, bookHidden];
                 for (let index = 0; index < ids.length; index++) {
                     if (hidden[index]) {
-                        await attempt(`unhide item ${index}`, () => apiClient.ajax({
-                            type: 'DELETE',
-                            url: apiClient.getUrl(
-                                `/JellyfinCanopy/continue-watching/hide/${encodeURIComponent(ids[index])}`
-                            ),
-                            dataType: 'json',
-                        }));
+                        await attempt(`unhide item ${index}`, () => apiRaw(
+                            baseURL!,
+                            `/JellyfinCanopy/continue-watching/hide/${encodeURIComponent(ids[index])}`,
+                            user.token,
+                            { method: 'DELETE' },
+                        ));
                     }
-                    await attempt(`restore user data ${index}`, () => apiClient.ajax({
-                            type: 'POST',
-                            url: apiClient.getUrl(
-                                `/UserItems/${encodeURIComponent(ids[index])}/UserData?userId=${encodeURIComponent(userId)}`
-                            ),
-                            data: JSON.stringify(data[index]),
-                            contentType: 'application/json',
-                        }));
+                    await attempt(`restore user data ${index}`, () => apiRaw(
+                        baseURL!,
+                        `/UserItems/${encodeURIComponent(ids[index])}/UserData?userId=${encodeURIComponent(user.userId)}`,
+                        user.token,
+                        { method: 'POST', body: JSON.stringify(originalUserData[index]) },
+                    ));
                 }
-                return failures;
-            }, {
-                ids: [fixture.audio!.id, fixture.book!.id],
-                data: originalUserData,
-                hidden: [audioHidden, bookHidden],
-                originalRemovePolicy: fixture.originalRemovePolicy,
-            });
-        try {
-            const restore = await apiRaw(baseURL!, CONFIG_PATH, admin.token, {
-                method: 'POST',
-                body: JSON.stringify(originalConfig),
-            });
-            expect(restore.status).toBe(204);
-        } catch (error) {
-            cleanupFailures.push(
-                `restore plugin configuration: ${error instanceof Error ? error.message : String(error)}`
-            );
-        }
 
-        if (primaryError) {
-            throw primaryError;
-        }
-        expect(cleanupFailures, 'exact test-state restoration').toEqual([]);
+                try {
+                    const settingsPath = `/JellyfinCanopy/user-settings/${encodeURIComponent(user.userId)}/settings.json`;
+                    const current = await api<Record<string, any>>(
+                        baseURL!, settingsPath, user.token
+                    );
+                    if (!current) throw new Error('current settings response is empty');
+                    const revision = field<number>(current, 'Revision', 'revision');
+                    const revisionKey = Object.hasOwn(current, 'Revision') ? 'Revision' : 'revision';
+                    const removeKey = Object.hasOwn(current, 'RemoveContinueWatchingEnabled')
+                        ? 'RemoveContinueWatchingEnabled'
+                        : 'removeContinueWatchingEnabled';
+                    const restored = {
+                        ...current,
+                        [revisionKey]: revision,
+                        [removeKey]: fixture.originalRemovePolicy,
+                    };
+                    await attempt('restore user Remove policy', () => apiRaw(
+                        baseURL!,
+                        settingsPath,
+                        user.token,
+                        {
+                            method: 'POST',
+                            headers: { 'If-Match': `"${revision}"` },
+                            body: JSON.stringify(restored),
+                        },
+                    ));
+                } catch (error) {
+                    userStateFailures.push(
+                        `restore user Remove policy: ${error instanceof Error ? error.message : String(error)}`
+                    );
+                }
+
+                if (userStateFailures.length > 0) {
+                    throw new Error(userStateFailures.join('; '));
+                }
+            },
+            restoreAdministratorConfig: async () => {
+                const restore = await apiRaw(baseURL!, CONFIG_PATH, admin.token, {
+                    method: 'POST',
+                    body: JSON.stringify(originalConfig),
+                });
+                expect(restore.status).toBe(204);
+            },
+        });
+
+        throwAfterRestoration(primaryError, cleanupFailures);
 
         assertNoRuntimeErrors(consoleErrors);
     });
