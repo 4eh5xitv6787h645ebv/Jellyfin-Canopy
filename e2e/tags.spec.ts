@@ -205,8 +205,10 @@ test.describe('tags', () => {
 
             await showRoute(page, '/home');
             await page.waitForSelector('#indexPage .card', { timeout: 60_000 });
-            const cardRegions = await page.locator('#indexPage .card .language-overlay-container')
-                .first().locator('.language-tag-presentation')
+            const homeLanguageOverlay = page.locator('#indexPage .card .language-overlay-container').first();
+            await expect(homeLanguageOverlay.locator('.language-tag-presentation[data-region="BR"]'))
+                .toHaveCount(1, { timeout: 60_000 });
+            const cardRegions = await homeLanguageOverlay.locator('.language-tag-presentation')
                 .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.region));
             expect(cardRegions).toEqual(['BR', 'US']);
             expect(consoleErrors.real()).toEqual([]);
