@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Причина",
   "pi_container": "Контейнер",
   "pi_audio": "Аудио",
-  "pi_subtitle": "Субтитры"
+  "pi_subtitle": "Субтитры",
+  "qbittorrent_state_downloading": "Загрузка",
+  "qbittorrent_state_seeding": "Раздача",
+  "qbittorrent_state_stalled": "Остановлен",
+  "qbittorrent_state_queued": "В очереди",
+  "qbittorrent_state_paused": "Приостановлен",
+  "qbittorrent_state_checking": "Проверка",
+  "qbittorrent_state_error": "Ошибка передачи",
+  "qbittorrent_state_unknown": "Торрент активен",
+  "qbittorrent_unavailable": "Телеметрия торрента недоступна"
 }

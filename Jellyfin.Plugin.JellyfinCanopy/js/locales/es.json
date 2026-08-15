@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Motivo",
   "pi_container": "Contenedor",
   "pi_audio": "Audio",
-  "pi_subtitle": "Subtítulos"
+  "pi_subtitle": "Subtítulos",
+  "qbittorrent_state_downloading": "Descargando",
+  "qbittorrent_state_seeding": "Compartiendo",
+  "qbittorrent_state_stalled": "Detenido",
+  "qbittorrent_state_queued": "En cola",
+  "qbittorrent_state_paused": "Pausado",
+  "qbittorrent_state_checking": "Comprobando",
+  "qbittorrent_state_error": "Error de transferencia",
+  "qbittorrent_state_unknown": "Torrent activo",
+  "qbittorrent_unavailable": "Telemetría de torrent no disponible"
 }

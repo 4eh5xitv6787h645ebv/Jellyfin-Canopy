@@ -996,5 +996,14 @@
   "pi_transcode_reason": "السبب",
   "pi_container": "الحاوية",
   "pi_audio": "الصوت",
-  "pi_subtitle": "الترجمات"
+  "pi_subtitle": "الترجمات",
+  "qbittorrent_state_downloading": "جارٍ التنزيل",
+  "qbittorrent_state_seeding": "جارٍ الرفع",
+  "qbittorrent_state_stalled": "متوقف",
+  "qbittorrent_state_queued": "في قائمة الانتظار",
+  "qbittorrent_state_paused": "متوقف مؤقتًا",
+  "qbittorrent_state_checking": "جارٍ التحقق",
+  "qbittorrent_state_error": "خطأ في النقل",
+  "qbittorrent_state_unknown": "تورنت نشط",
+  "qbittorrent_unavailable": "بيانات التورنت غير متاحة"
 }

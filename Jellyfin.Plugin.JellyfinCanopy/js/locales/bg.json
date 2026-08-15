@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Причина",
   "pi_container": "Контейнер",
   "pi_audio": "Аудио",
-  "pi_subtitle": "Субтитри"
+  "pi_subtitle": "Субтитри",
+  "qbittorrent_state_downloading": "Изтегляне",
+  "qbittorrent_state_seeding": "Разпространяване",
+  "qbittorrent_state_stalled": "Задържан",
+  "qbittorrent_state_queued": "На опашка",
+  "qbittorrent_state_paused": "На пауза",
+  "qbittorrent_state_checking": "Проверяване",
+  "qbittorrent_state_error": "Грешка при прехвърляне",
+  "qbittorrent_state_unknown": "Активен торент",
+  "qbittorrent_unavailable": "Телеметрията за торента не е налична"
 }

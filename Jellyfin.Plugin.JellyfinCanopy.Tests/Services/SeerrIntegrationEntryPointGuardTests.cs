@@ -157,6 +157,22 @@ public sealed class SeerrIntegrationEntryPointGuardTests
             "PluginHttpClients.CreateMaintainerrClient",
             "HttpCompletionOption.ResponseHeadersRead",
             "deadline.Token"),
+        // Optional qBittorrent telemetry has exactly two read-only dispatches:
+        // login and the torrent-info snapshot GET. Both use the guarded,
+        // no-redirect named client, bounded reads and one operation deadline.
+        ["Services/Qbittorrent/QbittorrentTelemetryService.cs:FetchSnapshotAsync"] = new(
+            1,
+            "ArrUrlGuard.IsAllowedUrlAsync(capture.BaseUrl, operation.Token)",
+            "CreateClient(HttpClientName)",
+            "\"api/v2/torrents/info\"",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "ReadBoundedAsync(response, MaximumResponseBytes, operation.Token)"),
+        ["Services/Qbittorrent/QbittorrentTelemetryService.cs:LoginAsync"] = new(
+            1,
+            "BuildRequest(HttpMethod.Post, capture, \"api/v2/auth/login\", sid: null)",
+            "FormUrlEncodedContent",
+            "HttpCompletionOption.ResponseHeadersRead",
+            "ReadBoundedAsync(response, 64, cancellationToken)"),
         ["Services/Seerr/SeerrParentalFilter.cs:FetchCertFromTmdbAsync"] = new(1, "CreateTmdbClient", "https://api.themoviedb.org", "httpClient.GetAsync(requestUri, ct)"),
         // Service auto-discovery transport: the single raw GET used by both
         // probe kinds. Credential-free, over the guarded no-redirect Discovery

@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Motivo",
   "pi_container": "Contentor",
   "pi_audio": "Áudio",
-  "pi_subtitle": "Legendas"
+  "pi_subtitle": "Legendas",
+  "qbittorrent_state_downloading": "A transferir",
+  "qbittorrent_state_seeding": "A partilhar",
+  "qbittorrent_state_stalled": "Parado",
+  "qbittorrent_state_queued": "Em fila",
+  "qbittorrent_state_paused": "Em pausa",
+  "qbittorrent_state_checking": "A verificar",
+  "qbittorrent_state_error": "Erro de transferência",
+  "qbittorrent_state_unknown": "Torrent ativo",
+  "qbittorrent_unavailable": "Telemetria do torrent indisponível"
 }

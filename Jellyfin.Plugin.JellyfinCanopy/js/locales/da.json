@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Årsag",
   "pi_container": "Beholder",
   "pi_audio": "Lyd",
-  "pi_subtitle": "Undertekster"
+  "pi_subtitle": "Undertekster",
+  "qbittorrent_state_downloading": "Downloader",
+  "qbittorrent_state_seeding": "Seeder",
+  "qbittorrent_state_stalled": "Stoppet",
+  "qbittorrent_state_queued": "I kø",
+  "qbittorrent_state_paused": "Sat på pause",
+  "qbittorrent_state_checking": "Kontrollerer",
+  "qbittorrent_state_error": "Overførselsfejl",
+  "qbittorrent_state_unknown": "Torrent aktiv",
+  "qbittorrent_unavailable": "Torrenttelemetri er ikke tilgængelig"
 }

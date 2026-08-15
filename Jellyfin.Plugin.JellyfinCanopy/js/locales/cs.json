@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Důvod",
   "pi_container": "Kontejner",
   "pi_audio": "Zvuk",
-  "pi_subtitle": "Titulky"
+  "pi_subtitle": "Titulky",
+  "qbittorrent_state_downloading": "Stahování",
+  "qbittorrent_state_seeding": "Sdílení",
+  "qbittorrent_state_stalled": "Zastaveno",
+  "qbittorrent_state_queued": "Ve frontě",
+  "qbittorrent_state_paused": "Pozastaveno",
+  "qbittorrent_state_checking": "Kontrola",
+  "qbittorrent_state_error": "Chyba přenosu",
+  "qbittorrent_state_unknown": "Torrent je aktivní",
+  "qbittorrent_unavailable": "Telemetrie torrentu není dostupná"
 }

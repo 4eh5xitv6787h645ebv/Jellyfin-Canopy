@@ -996,5 +996,14 @@
   "pi_transcode_reason": "Reason",
   "pi_container": "Cargo Crate",
   "pi_audio": "Shanty Track",
-  "pi_subtitle": "Text Scrolls"
+  "pi_subtitle": "Text Scrolls",
+  "qbittorrent_state_downloading": "Haulin' cargo",
+  "qbittorrent_state_seeding": "Sharin' booty",
+  "qbittorrent_state_stalled": "Becalmed",
+  "qbittorrent_state_queued": "Waitin' in line",
+  "qbittorrent_state_paused": "Anchored",
+  "qbittorrent_state_checking": "Inspectin' cargo",
+  "qbittorrent_state_error": "Transfer mishap",
+  "qbittorrent_state_unknown": "Torrent sailin'",
+  "qbittorrent_unavailable": "Torrent telemetry be unavailable"
 }

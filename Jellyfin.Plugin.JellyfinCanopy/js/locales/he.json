@@ -996,5 +996,14 @@
   "pi_transcode_reason": "סיבה",
   "pi_container": "מיכל",
   "pi_audio": "שמע",
-  "pi_subtitle": "כתוביות"
+  "pi_subtitle": "כתוביות",
+  "qbittorrent_state_downloading": "בהורדה",
+  "qbittorrent_state_seeding": "בשיתוף",
+  "qbittorrent_state_stalled": "תקוע",
+  "qbittorrent_state_queued": "בתור",
+  "qbittorrent_state_paused": "מושהה",
+  "qbittorrent_state_checking": "בבדיקה",
+  "qbittorrent_state_error": "שגיאת העברה",
+  "qbittorrent_state_unknown": "טורנט פעיל",
+  "qbittorrent_unavailable": "נתוני הטורנט אינם זמינים"
 }

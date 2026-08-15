@@ -42,6 +42,12 @@ export interface PluginConfig {
     MaintainerrItemStatusEnabled?: boolean;
     /** Allow the generic two-boolean item status for non-administrators. */
     MaintainerrItemStatusForUsers?: boolean;
+    /** Optional read-only qBittorrent telemetry on authorized item details. */
+    QbittorrentTelemetryEnabled?: boolean;
+    /** Allow the same redacted projection for non-administrators. */
+    QbittorrentTelemetryForRegularUsers?: boolean;
+    /** Navigation-owned polling period, clamped to 30–300 seconds. */
+    QbittorrentPollIntervalSeconds?: number;
     /** Administrator default for deterministic audio quality-tag selection. */
     PreferredAudioLanguage?: string;
     [key: string]: unknown;

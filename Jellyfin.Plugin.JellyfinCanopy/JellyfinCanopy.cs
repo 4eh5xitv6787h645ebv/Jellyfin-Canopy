@@ -229,6 +229,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         {
             if (configuration is PluginConfiguration config)
             {
+                PreserveQbittorrentConnectionForDashboardUpdate(config, Configuration);
                 config.MaintenanceModeAction = string.IsNullOrEmpty(config.MaintenanceModeAction)
                     ? MaintenanceActions.DisableAccounts
                     : config.MaintenanceModeAction;
@@ -246,6 +247,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
 
             base.UpdateConfiguration(configuration);
+        }
+
+        internal static void PreserveQbittorrentConnectionForDashboardUpdate(
+            PluginConfiguration incoming,
+            PluginConfiguration? current)
+        {
+            if (current == null)
+            {
+                return;
+            }
+
+            // Connection coordinates, credentials and path topology are all
+            // [JsonIgnore], so an ordinary dashboard save constructs them as empty.
+            // Preserve the server-held values until the elevated write-only route
+            // intentionally updates or clears them on the live configuration object.
+            if (string.IsNullOrEmpty(incoming.QbittorrentUrl))
+            {
+                incoming.QbittorrentUrl = current.QbittorrentUrl;
+            }
+
+            if (string.IsNullOrEmpty(incoming.QbittorrentUsername))
+            {
+                incoming.QbittorrentUsername = current.QbittorrentUsername;
+            }
+
+            if (string.IsNullOrEmpty(incoming.QbittorrentPassword))
+            {
+                incoming.QbittorrentPassword = current.QbittorrentPassword;
+            }
+
+            if (string.IsNullOrEmpty(incoming.QbittorrentPathMappings))
+            {
+                incoming.QbittorrentPathMappings = current.QbittorrentPathMappings;
+            }
         }
 
         internal static void NormalizePreferredAudioLanguageForUpdate(PluginConfiguration config)

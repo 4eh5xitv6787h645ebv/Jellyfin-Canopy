@@ -216,6 +216,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             SonarrInstances = "[]";
             RadarrInstances = "[]";
 
+            // Optional qBittorrent read-only item telemetry. Credentials and path
+            // mappings remain server-side and are never projected to web clients.
+            QbittorrentTelemetryEnabled = false;
+            QbittorrentTelemetryForRegularUsers = false;
+            QbittorrentUrl = "";
+            QbittorrentUsername = "";
+            QbittorrentPassword = "";
+            QbittorrentPathMappings = "";
+            QbittorrentPollIntervalSeconds = 30;
+
             // Arr Search Settings (admin-only action-sheet Search / Interactive Search)
             ArrSearchEnabled = true;
             ArrSearchManageEnabled = true;
@@ -690,6 +700,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         // Multi-Instance Sonarr/Radarr Support (JSON arrays of ArrInstance)
         public string SonarrInstances { get; set; } = "[]";
         public string RadarrInstances { get; set; } = "[]";
+
+        // qBittorrent read-only telemetry
+        public bool QbittorrentTelemetryEnabled { get; set; }
+        public bool QbittorrentTelemetryForRegularUsers { get; set; }
+        /// <summary>
+        /// Server-held connection data. These values are persisted by the plugin
+        /// configuration XML, but are never included in dashboard JSON responses.
+        /// The elevated write-only connection route is the only browser write path.
+        /// </summary>
+        [JsonIgnore]
+        public string QbittorrentUrl { get; set; }
+
+        [JsonIgnore]
+        public string QbittorrentUsername { get; set; }
+
+        [JsonIgnore]
+        public string QbittorrentPassword { get; set; }
+
+        [JsonIgnore]
+        public string QbittorrentPathMappings { get; set; }
+
+        private int _qbittorrentPollIntervalSeconds = 30;
+
+        public int QbittorrentPollIntervalSeconds
+        {
+            get => _qbittorrentPollIntervalSeconds;
+            set => _qbittorrentPollIntervalSeconds = Math.Clamp(value, 30, 300);
+        }
 
         // Arr Search Settings
 

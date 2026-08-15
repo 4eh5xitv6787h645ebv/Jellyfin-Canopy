@@ -380,6 +380,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicContextual("DownloadsHistoryWindowDays", ctx =>
                     ctx.IsAuthenticated ? ctx.Config.DownloadsHistoryWindowDays : 0),
                 Public("RequestApprovalsEnabled", c => c.RequestApprovalsEnabled),
+                PublicContextual("QbittorrentTelemetryEnabled", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.QbittorrentTelemetryEnabled),
+                PublicContextual("QbittorrentTelemetryForRegularUsers", ctx =>
+                    ctx.IsAuthenticated && ctx.Config.QbittorrentTelemetryForRegularUsers),
+                PublicContextual("QbittorrentPollIntervalSeconds", ctx =>
+                    ctx.IsAuthenticated ? ctx.Config.QbittorrentPollIntervalSeconds : 0),
 
                 // Calendar Page Settings
                 Public("CalendarPageEnabled", c => c.CalendarPageEnabled),

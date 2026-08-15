@@ -99,6 +99,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             RegisterMaintainerrHttpClient(serviceCollection);
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.QbittorrentClient)
+                .RemoveAllLoggers()
+                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateQbittorrentHandler);
             // Discovery probes server-chosen private-network candidates and is
             // credential-free; suppress default URI logging like Maintainerr's
             // (candidate URLs are private-network topology).
@@ -187,6 +190,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<Services.Arr.ArrFetchService>();
             // Bounded, privacy-safe lifecycle/history owner shared by Requests and admin status.
             serviceCollection.AddSingleton<Services.Arr.ArrDownloadActivityService>();
+            serviceCollection.AddSingleton<Services.Qbittorrent.IQbittorrentTelemetryService,
+                Services.Qbittorrent.QbittorrentTelemetryService>();
             // Exact, bounded, current-user requester-tag attribution for Calendar filtering.
             serviceCollection.AddSingleton<Services.Arr.CalendarRequesterTagResolver>();
             // Search / Interactive Search feature: itemId → arr identity resolution, instance
