@@ -891,6 +891,7 @@ const DOUBLE_TAP_CONFIG = {
     MAX_DISTANCE: 64,
     SEEK_SECONDS: 10,
     CLICK_SUPPRESSION_MS: 750,
+    CLICK_SUPPRESSION_DISTANCE: 8,
 };
 
 interface PlaybackGestureFence {
@@ -915,6 +916,13 @@ interface PendingTap extends PlaybackGestureFence {
     endedAt: number;
 }
 
+interface PendingClickSuppression {
+    target: EventTarget | null;
+    x: number;
+    y: number;
+    expiresAt: number;
+}
+
 let pressTimer: number | null = null;
 let isLongPress = false;
 let videoElement: HTMLVideoElement | null = null;
@@ -928,7 +936,7 @@ let pressStartY: number | null = null;
 let pressFence: PlaybackGestureFence | null = null;
 let activeTouchGesture: ActiveTouchGesture | null = null;
 let pendingTap: PendingTap | null = null;
-let suppressClickUntil = 0;
+let pendingClickSuppression: PendingClickSuppression | null = null;
 
 function isNativeIntegratedClient(): boolean {
     const nativeWindow = window as Window & {
@@ -976,7 +984,7 @@ function sameGestureFence(left: PlaybackGestureFence, right: PlaybackGestureFenc
 function clearTapGestureState(): void {
     activeTouchGesture = null;
     pendingTap = null;
-    suppressClickUntil = 0;
+    pendingClickSuppression = null;
 }
 
 function tapSide(video: HTMLVideoElement, clientX: number, clientY: number): 'left' | 'right' | null {
@@ -997,7 +1005,8 @@ function finishTouchTap(event: Event, gesture: ActiveTouchGesture): void {
 
     const eventData = longPressEventData(event);
     const touch = eventData.changedTouches?.[0];
-    if (!touch || (eventData.changedTouches?.length ?? 0) !== 1) {
+    if (!touch || (eventData.changedTouches?.length ?? 0) !== 1
+        || (eventData.touches?.length ?? 0) !== 0) {
         pendingTap = null;
         return;
     }
@@ -1022,7 +1031,16 @@ function finishTouchTap(event: Event, gesture: ActiveTouchGesture): void {
             const delta = side === 'left' ? -DOUBLE_TAP_CONFIG.SEEK_SECONDS : DOUBLE_TAP_CONFIG.SEEK_SECONDS;
             gesture.video.currentTime = Math.min(duration, Math.max(0, currentTime + delta));
             pendingTap = null;
-            suppressClickUntil = now + DOUBLE_TAP_CONFIG.CLICK_SUPPRESSION_MS;
+            // Preventing touchend normally suppresses the compatibility click.
+            // Retain a target/coordinate-scoped guard for engines that still
+            // emit one, then retire it on the very next touchstart so it can
+            // never consume the user's following single tap.
+            pendingClickSuppression = {
+                target: event.target,
+                x: touch.clientX,
+                y: touch.clientY,
+                expiresAt: now + DOUBLE_TAP_CONFIG.CLICK_SUPPRESSION_MS,
+            };
             event.preventDefault();
             event.stopPropagation();
             event.stopImmediatePropagation();
@@ -1101,6 +1119,19 @@ function clearLongPressState(hideVisibleOverlay: boolean): boolean {
 const handleLongPressDown = (e: Event): void => {
     const eventData = longPressEventData(e);
     const isTouch = eventData.touches !== undefined;
+    if (isTouch) {
+        // A new physical tap owns its eventual compatibility click. Any guard
+        // retained for the preceding double tap is stale at this boundary.
+        pendingClickSuppression = null;
+        // Browsers report a sequential second finger as another touchstart.
+        // Multi-touch must cancel the first finger's active hold before the
+        // pressTimer early return below can preserve it.
+        if ((eventData.touches?.length ?? 0) !== 1) {
+            clearLongPressState(false);
+            clearTapGestureState();
+            return;
+        }
+    }
     const longPressEnabled = Boolean(JC.currentSettings?.longPress2xEnabled);
     const doubleTapEnabled = isTouch
         && Boolean(JC.currentSettings?.doubleTapSeekEnabled)
@@ -1108,11 +1139,6 @@ const handleLongPressDown = (e: Event): void => {
     if ((!longPressEnabled && !doubleTapEnabled)
         || (eventData.button !== undefined && eventData.button !== 0)
         || pressTimer) {
-        return;
-    }
-    if (isTouch && (eventData.touches?.length ?? 0) !== 1) {
-        clearLongPressState(false);
-        clearTapGestureState();
         return;
     }
     const context = JC.identity.capture();
@@ -1228,8 +1254,17 @@ const handleLongPressClick = (e: Event): void => {
         e.stopImmediatePropagation();
         return;
     }
-    if (suppressClickUntil >= Date.now()) {
-        suppressClickUntil = 0;
+    const suppression = pendingClickSuppression;
+    pendingClickSuppression = null;
+    const click = e as MouseEvent;
+    if (suppression
+        && suppression.expiresAt >= Date.now()
+        && suppression.target !== null
+        && e.target === suppression.target
+        && Number.isFinite(click.clientX)
+        && Number.isFinite(click.clientY)
+        && Math.hypot(click.clientX - suppression.x, click.clientY - suppression.y)
+            <= DOUBLE_TAP_CONFIG.CLICK_SUPPRESSION_DISTANCE) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();

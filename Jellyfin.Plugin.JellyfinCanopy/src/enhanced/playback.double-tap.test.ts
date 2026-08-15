@@ -3,6 +3,7 @@ import { JC } from '../globals';
 import { installPlayback } from './playback';
 
 interface TouchLikeEvent {
+    target?: EventTarget | null;
     touches?: ArrayLike<{ clientX: number; clientY: number }>;
     changedTouches?: ArrayLike<{ clientX: number; clientY: number }>;
     preventDefault: ReturnType<typeof vi.fn>;
@@ -10,8 +11,21 @@ interface TouchLikeEvent {
     stopImmediatePropagation: ReturnType<typeof vi.fn>;
 }
 
+type TouchPoint = { clientX: number; clientY: number };
+type TouchListFactory = (point: TouchPoint) => ArrayLike<TouchPoint>;
+
+const TOUCH_LIST_FACTORIES: ReadonlyArray<readonly [string, TouchListFactory]> = [
+    ['Chromium array-backed TouchList', (point) => [point]],
+    ['Safari item-backed TouchList', (point) => ({
+        0: point,
+        length: 1,
+        item(index: number): TouchPoint | null { return index === 0 ? point : null; },
+    })],
+];
+
 function touchStart(x: number, y = 40, count = 1): TouchLikeEvent {
     return {
+        target: document.querySelector('video'),
         touches: Array.from({ length: count }, (_, index) => ({ clientX: x + index, clientY: y })),
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
@@ -25,6 +39,7 @@ function touchMove(x: number, y = 40, count = 1): TouchLikeEvent {
 
 function touchEnd(x: number, y = 40): TouchLikeEvent {
     return {
+        target: document.querySelector('video'),
         touches: [],
         changedTouches: [{ clientX: x, clientY: y }],
         preventDefault: vi.fn(),
@@ -109,44 +124,50 @@ describe('mobile-web double-tap seek', () => {
         expect(second.stopImmediatePropagation).toHaveBeenCalledOnce();
 
         const click = {
+            target: video, clientX: 152, clientY: 40,
             preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
         };
         JC.handleLongPressClick!(click as unknown as Event);
         expect(click.preventDefault).toHaveBeenCalledOnce();
         JC.handleLongPressClick!(click as unknown as Event);
         expect(click.preventDefault).toHaveBeenCalledOnce();
-    });
 
-    it.each([
-        ['Chromium array-backed TouchList', (point: { clientX: number; clientY: number }) => [point]],
-        ['Safari item-backed TouchList', (point: { clientX: number; clientY: number }) => ({
-            0: point,
-            length: 1,
-            item(index: number): { clientX: number; clientY: number } | null { return index === 0 ? point : null; },
-        })],
-    ])('accepts %s event geometry without touching the first tap', (_name, makeList) => {
-        const { video } = mountVideo();
-        const runTap = (): TouchLikeEvent => {
-            const point = { clientX: 150, clientY: 40 };
-            JC.handleLongPressDown!({
-                touches: makeList(point),
-                preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
-            } as unknown as Event);
-            const end = {
-                touches: [], changedTouches: makeList(point),
-                preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
-            };
-            JC.handleLongPressUp!(end as unknown as Event);
-            return end;
+        const third = tap(152);
+        expect(third.preventDefault).not.toHaveBeenCalled();
+        const nextClick = {
+            target: video, clientX: 152, clientY: 40,
+            preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
         };
-
-        const first = runTap();
-        expect(first.preventDefault).not.toHaveBeenCalled();
-        vi.advanceTimersByTime(100);
-        const second = runTap();
-        expect(video.currentTime).toBe(60);
-        expect(second.preventDefault).toHaveBeenCalledOnce();
+        JC.handleLongPressClick!(nextClick as unknown as Event);
+        expect(nextClick.preventDefault).not.toHaveBeenCalled();
     });
+
+    it.each(TOUCH_LIST_FACTORIES)(
+        'accepts %s event geometry without touching the first tap',
+        (_name, makeList) => {
+            const { video } = mountVideo();
+            const runTap = (): TouchLikeEvent => {
+                const point = { clientX: 150, clientY: 40 };
+                JC.handleLongPressDown!({
+                    touches: makeList(point),
+                    preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
+                } as unknown as Event);
+                const end = {
+                    touches: [], changedTouches: makeList(point),
+                    preventDefault: vi.fn(), stopPropagation: vi.fn(), stopImmediatePropagation: vi.fn(),
+                };
+                JC.handleLongPressUp!(end as unknown as Event);
+                return end;
+            };
+
+            const first = runTap();
+            expect(first.preventDefault).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(100);
+            const second = runTap();
+            expect(video.currentTime).toBe(60);
+            expect(second.preventDefault).toHaveBeenCalledOnce();
+        }
+    );
 
     it('seeks backward and clamps both media boundaries', () => {
         const { video } = mountVideo({ time: 5, duration: 12 });
@@ -197,6 +218,38 @@ describe('mobile-web double-tap seek', () => {
         JC.handleLongPressUp!(touchEnd(150) as unknown as Event);
         tap(150);
         expect(video.currentTime).toBe(50);
+    });
+
+    it('cancels a first-finger hold when a sequential second finger arrives', () => {
+        const { video } = mountVideo();
+        JC.currentSettings = { doubleTapSeekEnabled: true, longPress2xEnabled: true };
+
+        JC.handleLongPressDown!(touchStart(150) as unknown as Event);
+        expect(vi.getTimerCount()).toBe(1);
+        JC.handleLongPressDown!(touchStart(150, 40, 2) as unknown as Event);
+        expect(vi.getTimerCount()).toBe(0);
+
+        vi.advanceTimersByTime(600);
+        const firstFingerEnd = touchEnd(150);
+        firstFingerEnd.touches = [{ clientX: 151, clientY: 40 }];
+        JC.handleLongPressUp!(firstFingerEnd as unknown as Event);
+        JC.handleLongPressUp!(touchEnd(151) as unknown as Event);
+
+        expect(video.playbackRate).toBe(1);
+        expect(video.currentTime).toBe(50);
+        expect(firstFingerEnd.preventDefault).not.toHaveBeenCalled();
+    });
+
+    it('rejects a finger lift while another touch remains active', () => {
+        const { video } = mountVideo();
+        JC.handleLongPressDown!(touchStart(150) as unknown as Event);
+        const partialEnd = touchEnd(150);
+        partialEnd.touches = [{ clientX: 151, clientY: 40 }];
+        JC.handleLongPressUp!(partialEnd as unknown as Event);
+
+        tap(150);
+        expect(video.currentTime).toBe(50);
+        expect(partialEnd.preventDefault).not.toHaveBeenCalled();
     });
 
     it('cancels on pause, identity, item, source, navigation, video replacement and disposal', () => {
