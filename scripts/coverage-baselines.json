@@ -28,16 +28,16 @@
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
         "coveredLines": 45143,
-        "totalLines": 54939
+        "totalLines": 54938
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 45141,
+        "minimumCoveredLines": 45140,
         "maximumCoveredLines": 45143
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "Issue #709 adds the shared effective-region resolver and the synchronous 139-code membership contract used by administrator settings, per-user settings, Elsewhere, TMDB release dates, discovery and Seerr, plus focused cross-consumer regressions. Two clean local .NET 10.0.9 full-suite runs on this exact 54,939-line source and 4,312-test scope passed every test and measured 45,141/54,939 (82.166%) and 45,143/54,939 (82.169%). The reviewed observed high-water is therefore 45,143/54,939 and the exact observed floor is 45,141/54,939; the two-line instrumentation spread is 0.003640 percentage points, within the 0.15-point policy maximum. Earlier suite-load runs with unrelated timing-bound tests failing are excluded from the clean-run envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 3,
+        "rationale": "Issue #709 routes the server Seerr parental certification and certification-cache region through the shared 139-code membership authority, with orchestration regressions proving an unsupported persisted ZZ value uses the divergent US certification/cache partition while supported uncommon XK remains distinct. Two clean local .NET 10.0.9 full-suite runs on this exact 54,938-line source and 4,314-test scope passed every test and measured 45,140/54,938 (82.165%) and 45,143/54,938 (82.171%). The reviewed observed high-water is therefore 45,143/54,938 and the exact observed floor is 45,140/54,938; the three-line instrumentation spread is 0.005461 percentage points, within the 0.15-point policy maximum. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
