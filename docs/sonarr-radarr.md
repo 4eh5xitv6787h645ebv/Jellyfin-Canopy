@@ -443,15 +443,21 @@ current-user library lookup. Only then may it consult the server-held torrent
 snapshot. Regular-user visibility has a separate opt-in and administrators
 cannot grant access to an item Jellyfin itself hides from that user.
 
-The integration calls only qBittorrent's login endpoint and the read-only
-torrent-list endpoint. It does not expose pause, resume, delete, reannounce,
+The integration uses qBittorrent's login endpoint, the read-only torrent-list
+endpoint, and a best-effort logout bounded to two seconds. Logout destroys only
+the short-lived Web API session created for that snapshot; it is not a torrent
+mutation. Both legacy `SID` cookies and qBittorrent 5.2's port-specific
+`QBT_SID_<port>` cookies are accepted, but no other response cookie is replayed.
+It does not expose pause, resume, delete, reannounce,
 priority, category, tag, file-selection, or any other mutation. Redirects,
 ambient cookies, system credentials, and outbound proxies are disabled for the
 connection; the same connect-time address guard used for other local services
 blocks metadata and link-local targets.
 
 One normalized snapshot of at most 2,000 torrents and 2 MiB is shared by the
-server for 30 seconds; raw response bytes are discarded after parsing. Failed
+server for 30 seconds; raw response bytes are discarded after parsing and the
+normalized paths are actively dropped when that TTL expires, even if nobody
+requests telemetry again. Failed
 reads have a two-second server backoff. On the client, polling is visible-page
 and navigation/account owned, runs every 30–300 seconds, exponentially backs
 off to eight times the configured interval after failures, and aborts on item,

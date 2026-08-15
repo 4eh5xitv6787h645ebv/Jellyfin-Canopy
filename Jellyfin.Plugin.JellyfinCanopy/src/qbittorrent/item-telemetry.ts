@@ -149,6 +149,8 @@ function render(
     const slot = ensureSlot(context);
     slot.replaceChildren();
     slot.className = 'jc-qbittorrent-telemetry-slot';
+    slot.setAttribute('role', 'status');
+    slot.setAttribute('aria-live', 'polite');
     slot.setAttribute('aria-busy', phase === 'loading' ? 'true' : 'false');
     if (phase === 'loading' || phase === 'empty') {
         slot.classList.add(phase === 'loading' ? 'jc-loading' : 'jc-empty');

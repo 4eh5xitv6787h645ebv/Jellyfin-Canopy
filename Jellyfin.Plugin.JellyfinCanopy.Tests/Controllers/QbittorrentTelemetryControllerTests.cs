@@ -193,6 +193,10 @@ public sealed class QbittorrentTelemetryControllerTests
 
     private sealed class RecordingTelemetry : IQbittorrentTelemetryService
     {
+        public void InvalidateCachedState()
+        {
+        }
+
         public int CallCount { get; private set; }
         public string? LastPath { get; private set; }
         public QbittorrentTelemetryResult Result { get; set; }

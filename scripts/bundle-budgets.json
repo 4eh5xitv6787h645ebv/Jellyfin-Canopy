@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "limits": {
-    "maxOutputCount": 185,
+    "maxOutputCount": 187,
     "maxEsmEntryCount": 39,
     "maxEsmOutputCount": 90,
     "maxIndividualEsmRawBytes": 262144,
@@ -18,8 +18,8 @@
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7540344,
+    "maxTotalRawBytes": 7570943,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7630041
+    "maxPublishedRawBytes": 7662280
   }
 }

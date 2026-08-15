@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Qbittorrent;
 /// One process-wide snapshot is shared by every caller; authorization remains
 /// in the controller and always runs before this service sees an item path.
 /// </summary>
-public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
+public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService, IDisposable
 {
     public const string HttpClientName = "JellyfinCanopyQbittorrentTelemetry";
     internal const int MaximumTorrents = 2_000;
@@ -24,6 +24,8 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
     internal static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan FailureTtl = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan OperationDeadline = TimeSpan.FromSeconds(12);
+    internal static readonly TimeSpan LogoutDeadline = TimeSpan.FromSeconds(2);
+    private const string LegacySessionCookieName = "S" + "ID";
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IPluginConfigProvider _configProvider;
@@ -33,6 +35,8 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
     private CachedSnapshot? _cache;
     private CachedFailure? _failure;
     private SnapshotFlight? _flight;
+    private ITimer? _cacheExpiryTimer;
+    private long _authorityGeneration;
 
     public QbittorrentTelemetryService(
         IHttpClientFactory httpClientFactory,
@@ -55,7 +59,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         string itemPath,
         CancellationToken cancellationToken)
     {
-        var capture = ConfigurationCapture.TryCreate(_configProvider, requireEnabled: true);
+        var capture = CaptureConfiguration(requireEnabled: true);
         if (capture.Error != null)
         {
             return new QbittorrentTelemetryResult(capture.Error.Value);
@@ -79,7 +83,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
     public async Task<QbittorrentTelemetryResultKind> TestConnectionAsync(
         CancellationToken cancellationToken)
     {
-        var capture = ConfigurationCapture.TryCreate(_configProvider, requireEnabled: false);
+        var capture = CaptureConfiguration(requireEnabled: false);
         if (capture.Error != null)
         {
             return capture.Error.Value;
@@ -87,6 +91,30 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
 
         var result = await FetchSnapshotAsync(capture.Value!, cancellationToken).ConfigureAwait(false);
         return result.Kind;
+    }
+
+    public void InvalidateCachedState()
+    {
+        lock (_cacheLock)
+        {
+            _authorityGeneration++;
+            ClearCacheLocked();
+            _failure = null;
+        }
+    }
+
+    private ConfigurationCapture CaptureConfiguration(bool requireEnabled)
+    {
+        long authorityGeneration;
+        lock (_cacheLock)
+        {
+            authorityGeneration = _authorityGeneration;
+        }
+
+        return ConfigurationCapture.TryCreate(
+            _configProvider,
+            requireEnabled,
+            authorityGeneration);
     }
 
     private async Task<SnapshotResult> GetSnapshotAsync(
@@ -97,16 +125,15 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         lock (_cacheLock)
         {
             var now = _timeProvider.GetUtcNow();
+            ClearExpiredOrForeignStateLocked(capture.Revision, now);
             if (_cache is { } cached
-                && cached.Revision == capture.Revision
-                && cached.ExpiresAt > now)
+                && cached.Revision == capture.Revision)
             {
                 return SnapshotResult.Success(cached.Torrents);
             }
 
             if (_failure is { } failed
-                && failed.Revision == capture.Revision
-                && failed.ExpiresAt > now)
+                && failed.Revision == capture.Revision)
             {
                 return SnapshotResult.Failure(failed.Kind);
             }
@@ -119,41 +146,59 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
             }
             else
             {
-                var task = FetchAndPublishAsync(capture);
-                flight = new SnapshotFlight(capture.Revision, task);
+                flight = new SnapshotFlight(capture.Revision);
                 _flight = flight;
+                _ = FetchAndPublishAsync(capture, flight);
             }
         }
 
         return await flight.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<SnapshotResult> FetchAndPublishAsync(ConfigurationCapture capture)
+    private async Task FetchAndPublishAsync(
+        ConfigurationCapture capture,
+        SnapshotFlight flight)
     {
-        var result = await FetchSnapshotAsync(capture, CancellationToken.None).ConfigureAwait(false);
-        lock (_cacheLock)
+        try
         {
-            var now = _timeProvider.GetUtcNow();
-            if (result.Kind == QbittorrentTelemetryResultKind.Success)
+            var result = await FetchSnapshotAsync(capture, CancellationToken.None).ConfigureAwait(false);
+            lock (_cacheLock)
             {
-                _cache = new CachedSnapshot(
-                    capture.Revision,
-                    now + SnapshotTtl,
-                    result.Torrents!);
-                _failure = null;
-            }
-            else
-            {
-                _failure = new CachedFailure(capture.Revision, now + FailureTtl, result.Kind);
-            }
+                if (_configProvider.ConfigurationRevision == capture.Revision.ProviderRevision
+                    && _authorityGeneration == capture.Revision.AuthorityGeneration)
+                {
+                    var now = _timeProvider.GetUtcNow();
+                    if (result.Kind == QbittorrentTelemetryResultKind.Success)
+                    {
+                        var expiresAt = now + SnapshotTtl;
+                        _cache = new CachedSnapshot(capture.Revision, expiresAt, result.Torrents!);
+                        _failure = null;
+                        ScheduleCacheExpiryLocked(capture.Revision, expiresAt);
+                    }
+                    else
+                    {
+                        ClearCacheLocked();
+                        _failure = new CachedFailure(capture.Revision, now + FailureTtl, result.Kind);
+                    }
+                }
 
-            if (_flight?.Revision == capture.Revision)
-            {
-                _flight = null;
+                flight.SetResult(result);
             }
         }
-
-        return result;
+        catch (Exception exception)
+        {
+            flight.SetException(exception);
+        }
+        finally
+        {
+            lock (_cacheLock)
+            {
+                if (ReferenceEquals(_flight, flight))
+                {
+                    _flight = null;
+                }
+            }
+        }
     }
 
     private async Task<SnapshotResult> FetchSnapshotAsync(
@@ -172,37 +217,44 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
                     return SnapshotResult.Failure(QbittorrentTelemetryResultKind.InvalidConfiguration);
                 }
 
-                var client = _httpClientFactory.CreateClient(HttpClientName);
-                var sid = await LoginAsync(client, capture, operation.Token).ConfigureAwait(false);
-                if (sid == null)
+                using var client = _httpClientFactory.CreateClient(HttpClientName);
+                var session = await LoginAsync(client, capture, operation.Token).ConfigureAwait(false);
+                if (session == null)
                 {
                     return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
                 }
 
-                using var request = BuildRequest(
-                    HttpMethod.Get,
-                    capture,
-                    "api/v2/torrents/info",
-                    sid);
-                using var response = await client.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    operation.Token).ConfigureAwait(false);
-                if (response.StatusCode != HttpStatusCode.OK)
+                try
                 {
-                    return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
-                }
+                    using var request = BuildRequest(
+                        HttpMethod.Get,
+                        capture,
+                        "api/v2/torrents/info",
+                        session);
+                    using var response = await client.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        operation.Token).ConfigureAwait(false);
+                    if (response.StatusCode != HttpStatusCode.OK)
+                    {
+                        return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
+                    }
 
-                var bytes = await ReadBoundedAsync(response, MaximumResponseBytes, operation.Token)
-                    .ConfigureAwait(false);
-                if (bytes == null)
+                    var bytes = await ReadBoundedAsync(response, MaximumResponseBytes, operation.Token)
+                        .ConfigureAwait(false);
+                    if (bytes == null)
+                    {
+                        return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
+                    }
+
+                    return TryParseTorrents(bytes, out var torrents)
+                        ? SnapshotResult.Success(torrents)
+                        : SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
+                }
+                finally
                 {
-                    return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
+                    await LogoutBestEffortAsync(client, capture, session).ConfigureAwait(false);
                 }
-
-                return TryParseTorrents(bytes, out var torrents)
-                    ? SnapshotResult.Success(torrents)
-                    : SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
             }
             finally
             {
@@ -217,18 +269,22 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         {
             return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
         }
+        catch (IOException)
+        {
+            return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
+        }
         catch (JsonException)
         {
             return SnapshotResult.Failure(QbittorrentTelemetryResultKind.Unavailable);
         }
     }
 
-    private static async Task<string?> LoginAsync(
+    private static async Task<SessionCookie?> LoginAsync(
         HttpClient client,
         ConfigurationCapture capture,
         CancellationToken cancellationToken)
     {
-        using var request = BuildRequest(HttpMethod.Post, capture, "api/v2/auth/login", sid: null);
+        using var request = BuildRequest(HttpMethod.Post, capture, "api/v2/auth/login", session: null);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["username"] = capture.Username,
@@ -238,47 +294,114 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
             request,
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode != HttpStatusCode.OK)
+        if (response.StatusCode == HttpStatusCode.OK)
+        {
+            var body = await ReadBoundedAsync(response, 64, cancellationToken).ConfigureAwait(false);
+            if (body == null
+                || !Encoding.ASCII.GetString(body).Trim().Equals("Ok.", StringComparison.Ordinal))
+            {
+                return null;
+            }
+        }
+        else if (response.StatusCode != HttpStatusCode.NoContent)
         {
             return null;
         }
 
-        var body = await ReadBoundedAsync(response, 64, cancellationToken).ConfigureAwait(false);
-        if (body == null || !Encoding.ASCII.GetString(body).Trim().Equals("Ok.", StringComparison.Ordinal))
-        {
-            return null;
-        }
-
+        SessionCookie? accepted = null;
         foreach (var header in response.Headers.TryGetValues("Set-Cookie", out var values)
             ? values
             : Array.Empty<string>())
         {
             var first = header.Split(';', 2)[0].Trim();
-            if (!first.StartsWith("SID=", StringComparison.Ordinal)) continue;
-            var sid = first[4..];
-            if (sid.Length is > 0 and <= 256
-                && sid.All(character => character > 0x20 && character < 0x7f
-                    && character is not ';' and not ','))
+            var separator = first.IndexOf('=');
+            if (separator <= 0) continue;
+            var name = first[..separator];
+            var value = first[(separator + 1)..];
+            if (!IsOwnedSessionCookieName(name) || !IsValidCookieValue(value)) continue;
+            var candidate = new SessionCookie(name, value);
+            if (accepted != null && accepted != candidate)
             {
-                return sid;
+                return null;
             }
+
+            accepted = candidate;
         }
 
-        return null;
+        return accepted;
+    }
+
+    private static bool IsOwnedSessionCookieName(string name)
+    {
+        if (name.Equals(LegacySessionCookieName, StringComparison.Ordinal)) return true;
+        const string prefix = "QBT_SID_";
+        if (!name.StartsWith(prefix, StringComparison.Ordinal)
+            || name.Length <= prefix.Length
+            || name.Length > 18)
+        {
+            return false;
+        }
+
+        return int.TryParse(
+            name.AsSpan(prefix.Length),
+            NumberStyles.None,
+            CultureInfo.InvariantCulture,
+            out var port)
+            && port is >= 1 and <= 65_535;
+    }
+
+    private static bool IsValidCookieValue(string value)
+        => value.Length is > 0 and <= 256
+            && value.All(character => character == '!'
+                || character is >= '#' and <= '+'
+                || character is >= '-' and <= ':'
+                || character is >= '<' and <= '['
+                || character is >= ']' and <= '~');
+
+    private static async Task LogoutBestEffortAsync(
+        HttpClient client,
+        ConfigurationCapture capture,
+        SessionCookie session)
+    {
+        using var cleanup = new CancellationTokenSource(LogoutDeadline);
+        try
+        {
+            using var request = BuildRequest(
+                HttpMethod.Post,
+                capture,
+                "api/v2/auth/logout",
+                session);
+            using var response = await client.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cleanup.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The cleanup budget is deliberately independent from the primary operation deadline.
+        }
+        catch (HttpRequestException)
+        {
+            // Logout is best effort; the upstream owns final expiry of an unreachable session.
+        }
+        catch (IOException)
+        {
+            // Response-stream transport faults must not replace a successful read-only result.
+        }
     }
 
     private static HttpRequestMessage BuildRequest(
         HttpMethod method,
         ConfigurationCapture capture,
         string relativePath,
-        string? sid)
+        SessionCookie? session)
     {
         var request = new HttpRequestMessage(method, new Uri(capture.BaseUri, relativePath));
         request.Headers.Referrer = capture.BaseUri;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        if (sid != null)
+        if (session != null)
         {
-            request.Headers.TryAddWithoutValidation("Cookie", $"SID={sid}");
+            request.Headers.TryAddWithoutValidation("Cookie", $"{session.Name}={session.Value}");
         }
 
         return request;
@@ -316,6 +439,66 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
+    }
+
+    private void ClearExpiredOrForeignStateLocked(
+        ConfigurationIdentity revision,
+        DateTimeOffset now)
+    {
+        if (_cache is { } cached
+            && (cached.Revision != revision || cached.ExpiresAt <= now))
+        {
+            ClearCacheLocked();
+        }
+
+        if (_failure is { } failed
+            && (failed.Revision != revision || failed.ExpiresAt <= now))
+        {
+            _failure = null;
+        }
+    }
+
+    private void ScheduleCacheExpiryLocked(
+        ConfigurationIdentity revision,
+        DateTimeOffset expiresAt)
+    {
+        _cacheExpiryTimer?.Dispose();
+        _cacheExpiryTimer = _timeProvider.CreateTimer(
+            static state =>
+            {
+                var expiry = (CacheExpiryState)state!;
+                expiry.Owner.ExpireCache(expiry.Revision, expiry.ExpiresAt);
+            },
+            new CacheExpiryState(this, revision, expiresAt),
+            SnapshotTtl,
+            Timeout.InfiniteTimeSpan);
+    }
+
+    private void ExpireCache(ConfigurationIdentity revision, DateTimeOffset expiresAt)
+    {
+        lock (_cacheLock)
+        {
+            if (_cache is { } cached
+                && cached.Revision == revision
+                && cached.ExpiresAt == expiresAt
+                && cached.ExpiresAt <= _timeProvider.GetUtcNow())
+            {
+                ClearCacheLocked();
+            }
+        }
+    }
+
+    private void ClearCacheLocked()
+    {
+        _cache = null;
+        _cacheExpiryTimer?.Dispose();
+        _cacheExpiryTimer = null;
+    }
+
+    public void Dispose()
+    {
+        InvalidateCachedState();
+        _upstreamGate.Dispose();
     }
 
     internal static bool TryParseTorrents(byte[] bytes, out IReadOnlyList<TorrentSnapshot> torrents)
@@ -357,7 +540,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
                 state ?? string.Empty,
                 Number(row, "progress"),
                 Number(row, "ratio"),
-                tracker,
+                RedactTracker(tracker),
                 Integer(row, "added_on"),
                 Integer(row, "completion_on"),
                 Integer(row, "last_activity")));
@@ -425,7 +608,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
                 State = NormalizeState(selected.State).ToString().ToLowerInvariant(),
                 ProgressPercent = BoundedPercent(selected.Progress),
                 Ratio = BoundedRatio(selected.Ratio),
-                TrackerIdentity = RedactTracker(selected.Tracker),
+                TrackerIdentity = selected.TrackerIdentity,
                 AddedAt = UnixTime(selected.AddedOn),
                 CompletedAt = UnixTime(selected.CompletionOn),
                 LastActivityAt = UnixTime(selected.LastActivity),
@@ -443,8 +626,9 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         if (matching.Length == 0) return null;
         var bestLength = matching[0].QbittorrentRoot.Length;
         var best = matching.Where(mapping => mapping.QbittorrentRoot.Length == bestLength).ToArray();
-        var results = best.Select(mapping => mapping.JellyfinRoot
-                + normalized[mapping.QbittorrentRoot.Length..])
+        var results = best.Select(mapping => JoinMappedPath(
+                mapping.JellyfinRoot,
+                normalized[mapping.QbittorrentRoot.Length..]))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         return results.Length == 1 ? results[0] : null;
@@ -494,7 +678,14 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         return child.Equals(parent, comparison)
             || (child.Length > parent.Length
                 && child.StartsWith(parent, comparison)
-                && child[parent.Length] == '/');
+                && (parent == "/" || child[parent.Length] == '/'));
+    }
+
+    private static string JoinMappedPath(string root, string suffix)
+    {
+        if (suffix.Length == 0) return root;
+        var child = suffix.TrimStart('/');
+        return root == "/" ? "/" + child : root.TrimEnd('/') + "/" + child;
     }
 
     private static string? JoinPath(string? root, string? name)
@@ -527,11 +718,14 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
                 && uri.Scheme != "udp")) return null;
         var host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
         if (host.Length == 0) return null;
-        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || IPAddress.TryParse(host, out var address)
-                && (IPAddress.IsLoopback(address) || IsPrivate(address)))
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
         {
             return "private tracker";
+        }
+
+        if (IPAddress.TryParse(host, out var address))
+        {
+            return IsNonPublic(address) ? "private tracker" : "tracker";
         }
 
         var labels = host.Split('.', StringSplitOptions.RemoveEmptyEntries);
@@ -539,16 +733,35 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         return "…" + string.Join('.', labels[^2], labels[^1]);
     }
 
-    private static bool IsPrivate(IPAddress address)
+    private static bool IsNonPublic(IPAddress address)
     {
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
         var bytes = address.GetAddressBytes();
-        return bytes.Length == 4
-            ? bytes[0] == 10
+        if (bytes.Length == 4)
+        {
+            return bytes[0] == 0
+                || bytes[0] == 10
+                || bytes[0] == 100 && bytes[1] is >= 64 and <= 127
                 || bytes[0] == 127
-                || bytes[0] == 192 && bytes[1] == 168
+                || bytes[0] == 169 && bytes[1] == 254
                 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31
-            : address.IsIPv6LinkLocal || address.IsIPv6SiteLocal;
+                || bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 0
+                || bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 2
+                || bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99
+                || bytes[0] == 192 && bytes[1] == 168
+                || bytes[0] == 198 && bytes[1] is 18 or 19
+                || bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100
+                || bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113
+                || bytes[0] >= 224;
+        }
+
+        return address.Equals(IPAddress.IPv6Any)
+            || address.Equals(IPAddress.IPv6Loopback)
+            || address.IsIPv6LinkLocal
+            || address.IsIPv6SiteLocal
+            || address.IsIPv6Multicast
+            || (bytes[0] & 0xfe) == 0xfc
+            || bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8;
     }
 
     private static double? BoundedPercent(double? progress)
@@ -580,7 +793,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         string State,
         double? Progress,
         double? Ratio,
-        string? Tracker,
+        string? TrackerIdentity,
         long? AddedOn,
         long? CompletionOn,
         long? LastActivity);
@@ -588,16 +801,41 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
     internal sealed record PathMapping(string QbittorrentRoot, string JellyfinRoot);
 
     private sealed record CachedSnapshot(
-        long Revision,
+        ConfigurationIdentity Revision,
         DateTimeOffset ExpiresAt,
         IReadOnlyList<TorrentSnapshot> Torrents);
 
     private sealed record CachedFailure(
-        long Revision,
+        ConfigurationIdentity Revision,
         DateTimeOffset ExpiresAt,
         QbittorrentTelemetryResultKind Kind);
 
-    private sealed record SnapshotFlight(long Revision, Task<SnapshotResult> Task);
+    private sealed class SnapshotFlight
+    {
+        private readonly TaskCompletionSource<SnapshotResult> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public SnapshotFlight(ConfigurationIdentity revision) => Revision = revision;
+
+        public ConfigurationIdentity Revision { get; }
+
+        public Task<SnapshotResult> Task => _completion.Task;
+
+        public void SetResult(SnapshotResult result) => _completion.TrySetResult(result);
+
+        public void SetException(Exception exception) => _completion.TrySetException(exception);
+    }
+
+    private sealed record CacheExpiryState(
+        QbittorrentTelemetryService Owner,
+        ConfigurationIdentity Revision,
+        DateTimeOffset ExpiresAt);
+
+    private sealed record SessionCookie(string Name, string Value);
+
+    private readonly record struct ConfigurationIdentity(
+        long ProviderRevision,
+        long AuthorityGeneration);
 
     private readonly record struct SnapshotResult(
         QbittorrentTelemetryResultKind Kind,
@@ -611,7 +849,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
     }
 
     private sealed record ConfigurationCapture(
-        long Revision,
+        ConfigurationIdentity Revision,
         string BaseUrl,
         Uri BaseUri,
         string Username,
@@ -624,9 +862,11 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
 
         public static ConfigurationCapture TryCreate(
             IPluginConfigProvider provider,
-            bool requireEnabled)
+            bool requireEnabled,
+            long authorityGeneration)
         {
-            var configuration = provider.ConfigurationOrNull;
+            var snapshot = provider.GetSnapshot();
+            var configuration = snapshot.Configuration;
             if (configuration == null)
             {
                 return Failed(QbittorrentTelemetryResultKind.InvalidConfiguration);
@@ -653,7 +893,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
             }
 
             return new ConfigurationCapture(
-                provider.ConfigurationRevision,
+                new ConfigurationIdentity(snapshot.Revision, authorityGeneration),
                 normalized,
                 baseUri,
                 configuration.QbittorrentUsername,
@@ -662,7 +902,7 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService
         }
 
         private static ConfigurationCapture Failed(QbittorrentTelemetryResultKind error)
-            => new(0, string.Empty, new Uri("http://127.0.0.1/"), string.Empty, string.Empty,
+            => new(default, string.Empty, new Uri("http://127.0.0.1/"), string.Empty, string.Empty,
                 Array.Empty<PathMapping>())
             {
                 Error = error,

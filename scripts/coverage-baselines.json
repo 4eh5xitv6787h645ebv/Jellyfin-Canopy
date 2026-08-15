@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45153,
-        "totalLines": 54943
+        "coveredLines": 45722,
+        "totalLines": 55622
       },
       "observations": {
         "cleanRuns": 3,
-        "minimumCoveredLines": 45147,
-        "maximumCoveredLines": 45153
+        "minimumCoveredLines": 45719,
+        "maximumCoveredLines": 45722
       },
       "tolerance": {
-        "missingCoveredLines": 6,
-        "rationale": "Issue #716 adds per-user mobile double-tap seek configuration and its server configuration projection on top of the shared region work from issue #709. Two clean local .NET 10.0.9 full-suite runs and one clean hosted .NET 10.0.11 run on this exact 54,943-line source and 4,314-test scope passed every test and measured 45,147/54,943 (82.171%), 45,147/54,943 (82.171%), and 45,153/54,943 (82.182%). The reviewed observed high-water is therefore 45,153/54,943 and the exact observed floor is 45,147/54,943; the six-line instrumentation spread is 0.010920 percentage points, within the 0.15-point policy maximum. Hosted evidence: GitHub Actions run 31887067375 (Unit job 95017821876), whose only failure was the expected stale-baseline rejection after all 4,314 tests passed. The prior issue #709 observations remain evidence for the earlier 54,938-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 3,
+        "rationale": "Issue #715 adds bounded, read-only qBittorrent telemetry, caller-scoped authorization, secret-safe administration, deterministic path ownership, and the associated transport, lifecycle, security, and architecture tests on top of the issue #711 and #716 mainline. Three clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on this exact 55,622-line source and 4,370-test scope passed every test and measured 45,721/55,622 (82.199489%), 45,722/55,622 (82.201287%), and 45,719/55,622 (82.195894%). The reviewed observed high-water is therefore 45,722/55,622 and the exact observed floor is 45,719/55,622; the three-line instrumentation spread is 0.005394 percentage points, within the 0.15-point policy maximum. Runs that failed before test execution or did not pass all 4,370 tests were excluded, as was the separate coverage-enabled TRX diagnostic because it was not one of the canonical envelope runs. The prior issue #716 observations remain evidence for the earlier 54,943-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

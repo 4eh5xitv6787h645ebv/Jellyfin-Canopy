@@ -48,7 +48,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         /// </summary>
         public const string MaintainerrClient = "JellyfinCanopyMaintainerr";
 
-        /// <summary>Read-only qBittorrent Web API client with manual per-operation SID handling.</summary>
+        /// <summary>Read-only qBittorrent Web API client with operation-local session handling.</summary>
         public const string QbittorrentClient = "JellyfinCanopyQbittorrentTelemetry";
 
         public static HttpClient CreateArrClient(IHttpClientFactory factory)
@@ -114,7 +114,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Helpers
         internal static SocketsHttpHandler CreateQbittorrentHandler()
         {
             var handler = ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: false);
-            // Authentication cookies are parsed into one operation-local SID and
+            // Authentication cookies are parsed into one operation-local session and
             // attached manually. The pooled handler never owns credentials.
             handler.UseCookies = false;
             handler.Credentials = null;

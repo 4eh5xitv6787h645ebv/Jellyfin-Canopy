@@ -99,9 +99,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.ArrClient)
                 .ConfigurePrimaryHttpMessageHandler(() => Helpers.ArrUrlGuard.CreateGuardedHandler(allowAutoRedirect: true));
             RegisterMaintainerrHttpClient(serviceCollection);
-            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.QbittorrentClient)
-                .RemoveAllLoggers()
-                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateQbittorrentHandler);
+            RegisterQbittorrentHttpClient(serviceCollection);
             // Discovery probes server-chosen private-network candidates and is
             // credential-free; suppress default URI logging like Maintainerr's
             // (candidate URLs are private-network topology).
@@ -349,6 +347,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 // endpoint-enum logs are permitted for this named client.
                 .RemoveAllLoggers()
                 .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateMaintainerrHandler);
+        }
+
+        internal static void RegisterQbittorrentHttpClient(IServiceCollection serviceCollection)
+        {
+            serviceCollection.AddHttpClient(Helpers.PluginHttpClients.QbittorrentClient)
+                // Login form fields, session cookies, private topology and torrent
+                // paths must never reach the default IHttpClientFactory loggers.
+                .RemoveAllLoggers()
+                .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateQbittorrentHandler);
         }
     }
 }
