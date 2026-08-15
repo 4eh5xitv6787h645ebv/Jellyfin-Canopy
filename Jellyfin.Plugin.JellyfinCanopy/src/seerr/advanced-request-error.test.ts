@@ -42,7 +42,8 @@ describe('seerr advanced-request error state', () => {
         jc().seerrModal.populateAdvancedOptions(
             host,
             { servers: [], tags: [], error: 'Failed to load server options' },
-            'movie'
+            'movie',
+            'standard',
         );
 
         expect(host.querySelector('.seerr-advanced-error')).not.toBeNull();

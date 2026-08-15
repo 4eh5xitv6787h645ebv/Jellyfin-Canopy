@@ -375,7 +375,7 @@ ui.showSeasonSelectionModal = async function (tmdbId: any, mediaType: any, showT
         try {
             const data = await fetchAdvancedRequestData('tv');
             if (!isLiveModal()) return;
-            populateAdvancedOptions(modalInstance.modalElement, data, 'tv');
+            populateAdvancedOptions(modalInstance.modalElement, data, 'tv', is4k === true ? '4k' : 'standard');
         } catch (error: any) {
             if (!isLiveModal()) return;
             console.error(`${logPrefix} Failed to load TV advanced options:`, error);

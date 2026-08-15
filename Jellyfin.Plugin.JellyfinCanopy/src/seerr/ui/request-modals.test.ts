@@ -4,6 +4,7 @@ describe('collection request modal rich cards', () => {
     let createOptions!: Record<string, any>;
     let modalElement!: HTMLElement;
     let requestMedia: ReturnType<typeof vi.fn>;
+    let setAdvancedVariant: ReturnType<typeof vi.fn>;
     const searchResultItem = { id: 10, mediaType: 'collection' };
 
     const collectionDetails = {
@@ -94,15 +95,17 @@ describe('collection request modal rich cards', () => {
         internal.icons = {};
 
         requestMedia = vi.fn().mockResolvedValue({});
+        setAdvancedVariant = vi.fn();
         jc.seerrAPI = {
             fetchCollectionDetails: vi.fn().mockResolvedValue(collectionDetails),
             requestMedia,
-            fetchAdvancedRequestData: vi.fn(),
+            fetchAdvancedRequestData: vi.fn().mockResolvedValue({ servers: [], tags: [] }),
+            fetchUserQuota: vi.fn().mockResolvedValue(null),
             canRequest4k: vi.fn(() => true),
         };
         jc.seerrModal = {
             createAdvancedOptionsHTML: vi.fn(() => ''),
-            populateAdvancedOptions: vi.fn(),
+            populateAdvancedOptions: vi.fn(() => ({ setVariant: setAdvancedVariant })),
             create: vi.fn((options: Record<string, any>) => {
                 createOptions = options;
                 modalElement = document.createElement('div');
@@ -259,5 +262,35 @@ describe('collection request modal rich cards', () => {
             searchResultItem,
         );
         expect(close).toHaveBeenCalledOnce();
+    });
+
+    it('captures the movie request variant when choosing an advanced default', async () => {
+        const jc = window.JellyfinCanopy as unknown as Record<string, any>;
+
+        await jc.seerrUI.showMovieRequestModal(404, '4K Fixture', {}, true);
+
+        expect(jc.seerrModal.populateAdvancedOptions).toHaveBeenCalledWith(
+            modalElement,
+            { servers: [], tags: [] },
+            'movie',
+            '4k',
+        );
+    });
+
+    it('updates collection advanced defaults from the live 4K toggle', async () => {
+        const jc = window.JellyfinCanopy as unknown as Record<string, any>;
+        jc.pluginConfig.SeerrShowAdvanced = true;
+
+        const modal = await openModal();
+
+        expect(jc.seerrModal.populateAdvancedOptions).toHaveBeenCalledWith(
+            modal,
+            { servers: [], tags: [] },
+            'movie',
+            'standard',
+        );
+        modal.querySelector<HTMLInputElement>('#seerr-collection-4k')!.click();
+        expect(setAdvancedVariant).toHaveBeenCalledOnce();
+        expect(setAdvancedVariant).toHaveBeenCalledWith('4k');
     });
 });

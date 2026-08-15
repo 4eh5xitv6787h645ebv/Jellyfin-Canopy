@@ -5,6 +5,7 @@ describe('season modal refresh lifecycle', () => {
     let fetchTvSeasonDetails: ReturnType<typeof vi.fn>;
     let fetchRequestSettings: ReturnType<typeof vi.fn>;
     let requestTvSeasons: ReturnType<typeof vi.fn>;
+    let populateAdvancedOptions: ReturnType<typeof vi.fn>;
     let modalRecords: Array<{ options: any; modalElement: HTMLElement }>;
 
     function tvDetails(activeRequest = false, includeAirDate = true) {
@@ -46,6 +47,7 @@ describe('season modal refresh lifecycle', () => {
             stale: false,
         });
         requestTvSeasons = vi.fn();
+        populateAdvancedOptions = vi.fn(() => ({ setVariant: vi.fn() }));
 
         const jc = window.JellyfinCanopy as unknown as Record<string, any>;
         jc.seerrUI = {};
@@ -75,7 +77,7 @@ describe('season modal refresh lifecycle', () => {
         };
         jc.seerrModal = {
             createAdvancedOptionsHTML: vi.fn(() => ''),
-            populateAdvancedOptions: vi.fn(),
+            populateAdvancedOptions,
             create: vi.fn((options: any) => {
                 const modalElement = document.createElement('div');
                 modalElement.innerHTML = `<div class="seerr-modal-body">${options.bodyHtml}</div>`;
@@ -165,6 +167,23 @@ describe('season modal refresh lifecycle', () => {
 
         expect(requestTvSeasons).toHaveBeenCalledWith(123, [0], {}, null, false);
         expect(close).toHaveBeenCalledOnce();
+    });
+
+    it('captures the TV request variant when choosing an advanced default', async () => {
+        const jc = window.JellyfinCanopy as unknown as Record<string, any>;
+        jc.pluginConfig.SeerrShowAdvanced = true;
+        fetchTvShowDetails.mockResolvedValue(tvDetails(false));
+        jc.seerrAPI.fetchAdvancedRequestData.mockResolvedValue({ servers: [], tags: [] });
+
+        const modal = await jc.seerrUI.showSeasonSelectionModal(123, 'tv', 'Example Show', null, true);
+
+        expect(modal).toBeUndefined();
+        expect(populateAdvancedOptions).toHaveBeenCalledWith(
+            modalRecords.at(-1)!.modalElement,
+            { servers: [], tags: [] },
+            'tv',
+            '4k',
+        );
     });
 
     it('serializes polls and ignores an in-flight result after the modal closes', async () => {
