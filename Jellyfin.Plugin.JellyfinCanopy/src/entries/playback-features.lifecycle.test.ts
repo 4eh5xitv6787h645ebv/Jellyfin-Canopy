@@ -52,11 +52,14 @@ describe('playback feature activation ownership', () => {
     });
 
     it('retains frozen facade identity while delegates activate, dispose twice, and reactivate', async () => {
+        expect(JC.isPlaybackControlsReady?.()).toBe(false);
+        JC.isVideoPage = () => true;
         const firstPlayback = createTestFeatureScope();
         active.push(firstPlayback);
         await activatePlayback(firstPlayback.scope);
         const adjust = JC.adjustPlaybackSpeed;
         expect(typeof adjust).toBe('function');
+        expect(JC.isPlaybackControlsReady?.()).toBe(true);
 
         const firstBookmarks = createTestFeatureScope();
         active.push(firstBookmarks);
@@ -66,17 +69,25 @@ describe('playback feature activation ownership', () => {
 
         await firstPlayback.dispose();
         await firstPlayback.dispose();
+        expect(JC.isPlaybackControlsReady?.()).toBe(false);
         await firstBookmarks.dispose();
         await firstBookmarks.dispose();
 
         const secondPlayback = createTestFeatureScope();
         active.push(secondPlayback);
+        window.history.replaceState(null, '', '/web/index.html#/video?id=next');
         await activatePlayback(secondPlayback.scope);
+        expect(JC.isPlaybackControlsReady?.()).toBe(true);
         const secondBookmarks = createTestFeatureScope();
         active.push(secondBookmarks);
         await activateBookmarks(secondBookmarks.scope);
 
         expect(JC.adjustPlaybackSpeed).toBe(adjust);
         expect(JC.bookmarks).toBe(bookmarks);
+
+        window.history.replaceState(null, '', '/web/index.html#/video?id=stale');
+        expect(JC.isPlaybackControlsReady?.()).toBe(false);
+        JC.identity.transition('playback-server', 'other-user', 'playback-entry-test');
+        expect(JC.isPlaybackControlsReady?.()).toBe(false);
     });
 });

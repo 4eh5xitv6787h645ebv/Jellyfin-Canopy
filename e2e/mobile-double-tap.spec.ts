@@ -71,6 +71,11 @@ async function openSeededVideo(page: Page): Promise<{ itemId: string; point: Vid
         undefined,
         { timeout: 30_000 }
     );
+    await page.waitForFunction(
+        () => (window as any).JellyfinCanopy?.isPlaybackControlsReady?.() === true,
+        undefined,
+        { timeout: 30_000 }
+    );
 
     const point = await page.evaluate(async () => {
         const video = document.querySelector('video')!;
@@ -80,8 +85,33 @@ async function openSeededVideo(page: Page): Promise<{ itemId: string; point: Vid
         JC.currentSettings.autoSkipIntro = false;
         JC.currentSettings.autoSkipOutro = false;
         video.playbackRate = 1;
-        video.currentTime = Math.min(video.duration - 15, Math.max(15, video.duration / 2));
-        await video.play();
+        const targetTime = Math.min(video.duration - 15, Math.max(15, video.duration / 2));
+        if (Math.abs(video.currentTime - targetTime) > 0.05) {
+            await new Promise<void>((resolve, reject) => {
+                const timeout = window.setTimeout(
+                    () => reject(new Error('timed out settling the mobile gesture setup seek')),
+                    10_000
+                );
+                video.addEventListener('seeked', () => {
+                    window.clearTimeout(timeout);
+                    resolve();
+                }, { once: true });
+                video.currentTime = targetTime;
+            });
+        }
+        for (let attempt = 0; video.paused && attempt < 3; attempt += 1) {
+            try {
+                await video.play();
+            } catch (error) {
+                if (!(error instanceof DOMException) || error.name !== 'AbortError') throw error;
+                // Jellyfin may replace an in-flight play operation while its
+                // WebKit media pipeline settles. Retry only while this exact
+                // route-scoped delegate and media element remain current.
+                if (document.querySelector('video') !== video
+                    || JC.isPlaybackControlsReady?.() !== true) throw error;
+            }
+        }
+        if (video.paused) throw new Error('mobile gesture video did not enter playing state');
 
         const trace = { clicks: [] as Array<{ x: number; y: number }>, seeks: 0 };
         (window as any).__jcMobileTapTrace = trace;
@@ -127,27 +157,48 @@ async function dispatchTouchList(
     await page.evaluate(({ eventType, at, active, changed }) => {
         const target = document.elementFromPoint(at.x, at.y);
         if (!target) throw new Error('mobile gesture target disappeared');
-        const makeTouch = (identifier: number): Touch => new Touch({
-            identifier,
-            target,
-            clientX: at.x + identifier,
-            clientY: at.y,
-            pageX: at.x + identifier,
-            pageY: at.y,
-            screenX: at.x + identifier,
-            screenY: at.y,
-            radiusX: 1,
-            radiusY: 1,
-            rotationAngle: 0,
-            force: 1,
-        });
+        const makeTouch = (identifier: number): Touch => {
+            const touchDocument = document as any;
+            if (typeof touchDocument.createTouch === 'function') {
+                // Safari/WebKit exposes Touch but makes its constructor illegal;
+                // its native legacy factory returns the real engine-owned value.
+                return touchDocument.createTouch(
+                    window, target, identifier,
+                    at.x + identifier, at.y,
+                    at.x + identifier, at.y,
+                    at.x + identifier, at.y,
+                    1, 1, 0, 1
+                );
+            }
+            return new Touch({
+                identifier,
+                target,
+                clientX: at.x + identifier,
+                clientY: at.y,
+                pageX: at.x + identifier,
+                pageY: at.y,
+                screenX: at.x + identifier,
+                screenY: at.y,
+                radiusX: 1,
+                radiusY: 1,
+                rotationAngle: 0,
+                force: 1,
+            });
+        };
+        const makeTouchList = (identifiers: number[]): TouchList | Touch[] => {
+            const touches = identifiers.map(makeTouch);
+            const touchDocument = document as any;
+            return typeof touchDocument.createTouchList === 'function'
+                ? touchDocument.createTouchList(...touches)
+                : touches;
+        };
         target.dispatchEvent(new TouchEvent(eventType, {
             bubbles: true,
             cancelable: true,
             composed: true,
-            touches: active.map(makeTouch),
-            targetTouches: active.map(makeTouch),
-            changedTouches: changed.map(makeTouch),
+            touches: makeTouchList(active) as any,
+            targetTouches: makeTouchList(active) as any,
+            changedTouches: makeTouchList(changed) as any,
         }));
     }, { eventType: type, at: point, active: activeIds, changed: changedIds });
 }

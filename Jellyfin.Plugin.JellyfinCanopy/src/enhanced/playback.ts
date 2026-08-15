@@ -923,6 +923,12 @@ interface PendingClickSuppression {
     expiresAt: number;
 }
 
+interface PlaybackReadyOwner {
+    context: IdentityContext;
+    generation: number;
+    location: string;
+}
+
 let pressTimer: number | null = null;
 let isLongPress = false;
 let videoElement: HTMLVideoElement | null = null;
@@ -937,6 +943,7 @@ let pressFence: PlaybackGestureFence | null = null;
 let activeTouchGesture: ActiveTouchGesture | null = null;
 let pendingTap: PendingTap | null = null;
 let pendingClickSuppression: PendingClickSuppression | null = null;
+let playbackReadyOwner: PlaybackReadyOwner | null = null;
 
 function isNativeIntegratedClient(): boolean {
     const nativeWindow = window as Window & {
@@ -1271,6 +1278,15 @@ const handleLongPressClick = (e: Event): void => {
     }
 };
 
+/** True only while the exact navigation-scoped playback delegate is live. */
+const isPlaybackControlsReady = (): boolean => {
+    const owner = playbackReadyOwner;
+    return Boolean(owner
+        && isPlaybackCurrent(owner.context, owner.generation)
+        && window.location.href === owner.location
+        && JC.isVideoPage?.());
+};
+
 function resetPlaybackState(): void {
     cancelPendingTrackCycle();
     playbackGeneration += 1;
@@ -1316,6 +1332,7 @@ function resetPlaybackState(): void {
 }
 
 const playbackApi = {
+    isPlaybackControlsReady,
     openSettings,
     adjustPlaybackSpeed,
     resetPlaybackSpeed,
@@ -1337,6 +1354,7 @@ const playbackApi = {
 };
 
 const stablePlayback = createStableMethodFacade<typeof playbackApi>({
+    isPlaybackControlsReady: () => false,
     openSettings() {},
     adjustPlaybackSpeed() {},
     resetPlaybackSpeed() {},
@@ -1362,11 +1380,19 @@ export function installPlayback(): () => void {
     const uninstall = stablePlayback.install(playbackApi);
     Object.assign(JC, stablePlayback.facade);
     const unregisterReset = JC.identity.registerReset('enhanced-playback', resetPlaybackState);
+    const context = JC.identity.capture();
+    const readyOwner: PlaybackReadyOwner | null = context ? {
+        context,
+        generation: playbackGeneration,
+        location: window.location.href,
+    } : null;
+    playbackReadyOwner = readyOwner;
     let disposed = false;
     return () => {
         if (disposed) return;
         disposed = true;
         resetPlaybackState();
+        if (playbackReadyOwner === readyOwner) playbackReadyOwner = null;
         unregisterReset();
         uninstall();
     };
