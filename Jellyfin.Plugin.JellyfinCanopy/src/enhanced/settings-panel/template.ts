@@ -60,6 +60,32 @@ interface ShortcutTemplateEntry {
     Category?: string;
 }
 
+function languageTagFilterControls(settings: Record<string, any>, background: string): string {
+    const raw = settings.languageTagFilter;
+    const inherited = raw === null || raw === undefined;
+    const record = !inherited && raw && typeof raw === 'object' ? raw : {};
+    const languages = Array.isArray(record.languages) ? record.languages : [];
+    // Suggestions are bounded and come only from metadata already projected
+    // into the acting user's DOM, never from a cross-user library enumeration.
+    const known = new Set<string>();
+    if (typeof document !== 'undefined') {
+        document.querySelectorAll<HTMLElement>('[data-lang-tags]').forEach((element) => {
+            if (known.size >= 128) return;
+            try {
+                const tags = JSON.parse(element.dataset.langTags || '[]');
+                if (Array.isArray(tags)) tags.forEach((tag) => {
+                    if (known.size < 128 && typeof tag === 'string') known.add(tag);
+                });
+            } catch { /* malformed DOM metadata contributes no option */ }
+        });
+    }
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.12);">
+        <label for="languageTagFilterMode" style="display:block; font-size:13px; font-weight:600; margin-bottom:6px;">${escapeHtml(tWithFallback('panel_settings_language_filter', 'Visible languages'))}</label>
+        <select id="languageTagFilterMode" style="width:100%; padding:8px; background:${background}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px;"><option value="inherit" ${inherited ? 'selected' : ''}>${escapeHtml(tWithFallback('setting_inherit', 'Inherit administrator default'))}</option><option value="custom" ${!inherited ? 'selected' : ''}>${escapeHtml(tWithFallback('panel_settings_language_filter_custom', 'Custom allowlist'))}</option></select>
+        <div id="languageTagFilterCustom" style="display:${inherited ? 'none' : 'block'}; margin-top:8px;"><input id="languageTagFilterLanguages" type="text" maxlength="4095" list="languageTagKnownValues" value="${escapeHtml(languages.join(', '))}" placeholder="en-US, de-DE" style="box-sizing:border-box; width:100%; padding:8px; background:${background}; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:6px;" /><datalist id="languageTagKnownValues">${Array.from(known).sort().map((tag) => `<option value="${escapeHtml(tag)}"></option>`).join('')}</datalist><label style="display:flex; gap:8px; align-items:center; margin-top:8px;"><input id="languageTagFilterOriginal" type="checkbox" ${record.includeOriginal === true ? 'checked' : ''}/><span>${escapeHtml(tWithFallback('panel_settings_language_filter_original', 'Include authoritative original language first'))}</span></label><button type="button" id="languageTagFilterReset" class="button-flat" style="margin-top:6px;">${escapeHtml(tWithFallback('button_reset', 'Reset'))}</button></div>
+    </div>`;
+}
+
 function shortcutRowHtml(
     action: ShortcutTemplateEntry,
     activeShortcuts: Record<string, string>,
@@ -511,6 +537,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div data-pos="bottom-right" style="border-radius:2px; transition:background 0.2s;"></div>
                                     </div>
                                 </label>
+                                ${languageTagFilterControls(settings, presetBoxBackground)}
                             </div>
                                 <div style="margin-bottom: 16px; padding: 12px; background: ${presetBoxBackground}; border-radius: 6px; border-left: 3px solid ${toggleAccentColor};">
                                     <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">

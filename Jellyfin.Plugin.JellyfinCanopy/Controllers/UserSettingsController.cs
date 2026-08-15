@@ -678,6 +678,21 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         Message = "PreferredAudioLanguage must be null, empty, or a supported BCP-47 language tag no longer than 255 characters."
                     };
                 }
+                if (candidate is UserSettings languageSettings
+                    && !LanguageTagFilterPolicyV1.TryNormalize(languageSettings.LanguageTagFilter, out var languageFilter))
+                {
+                    return new UserFileCommitResult<T>
+                    {
+                        Status = UserFileCommitStatus.Invalid,
+                        State = current,
+                        Message = "LanguageTagFilter must be a bounded canonical v1 policy."
+                    };
+                }
+                if (candidate is UserSettings normalizedLanguageSettings)
+                {
+                    LanguageTagFilterPolicyV1.TryNormalize(normalizedLanguageSettings.LanguageTagFilter, out var normalizedFilter);
+                    normalizedLanguageSettings.LanguageTagFilter = normalizedFilter;
+                }
 
                 if (string.Equals(ContentHash(current), ContentHash(candidate), StringComparison.Ordinal))
                 {
@@ -1121,6 +1136,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 AudioInfoTagOrder = defaultConfig.AudioInfoTagOrder,
                 GenreTagsEnabled = defaultConfig.GenreTagsEnabled,
                 LanguageTagsEnabled = defaultConfig.LanguageTagsEnabled,
+                // New users inherit future administrator changes dynamically.
+                LanguageTagFilter = null,
                 RatingTagsEnabled = defaultConfig.RatingTagsEnabled,
                 // The administrator policy remains a live ceiling; a new
                 // user's own additive deny set therefore starts empty.

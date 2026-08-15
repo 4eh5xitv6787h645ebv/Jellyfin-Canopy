@@ -261,13 +261,20 @@ function presentationToken(language: ResolvedMediaLanguage): string {
  * variants remain distinct. The three-item poster cap is applied by consumers
  * after this function returns.
  */
-export function buildMediaLanguagePresentations(values: unknown): MediaLanguagePresentation[] {
-    const resolved = resolveMediaLanguageIdentities(values)
+export function buildMediaLanguagePresentations(
+    values: unknown,
+    preserveInputOrder = false,
+): MediaLanguagePresentation[] {
+    const identities = preserveInputOrder && Array.isArray(values)
+        ? values.flatMap((value) => resolveMediaLanguageIdentities([value]))
+            .filter((value, index, all) => all.findIndex((candidate) => candidate.canonicalTag === value.canonicalTag) === index)
+        : resolveMediaLanguageIdentities(values);
+    const resolved = identities
         .map((identity) => ({
             ...resolveMediaLanguage(identity.canonicalTag),
             flagRegion: identity.flagRegion,
-        }))
-        .sort((left, right) => left.semanticTag < right.semanticTag ? -1
+        }));
+    if (!preserveInputOrder) resolved.sort((left, right) => left.semanticTag < right.semanticTag ? -1
             : left.semanticTag > right.semanticTag ? 1
                 : left.canonicalTag < right.canonicalTag ? -1
                     : left.canonicalTag > right.canonicalTag ? 1 : 0);

@@ -24,6 +24,51 @@ const FAMILIES = [
 ] as const;
 
 test.describe('tags', () => {
+    test('language allowlist orders regional poster flags before the three-item limit', async ({ page, consoleErrors }) => {
+        const cacheRoute = '**/JellyfinCanopy/tag-cache/**';
+        await page.route(cacheRoute, async (route) => {
+            const response = await route.fetch();
+            const body = await response.json() as Record<string, any>;
+            const items = body.items ?? body.Items;
+            if (items && typeof items === 'object') {
+                for (const entry of Object.values(items) as any[]) {
+                    if (entry && typeof entry === 'object' && entry.Type !== 'BoxSet') {
+                        entry.AudioLanguages = ['de-DE', 'en-US', 'fr-FR', 'pt-BR'];
+                    }
+                }
+            }
+            await route.fulfill({ response, json: body });
+        });
+        await loginAs(page, 'admin', consoleErrors);
+        const original = await page.evaluate(() => structuredClone((window as any).JellyfinCanopy.currentSettings));
+        try {
+            await page.evaluate(async () => {
+                const canopy = (window as any).JellyfinCanopy;
+                canopy.currentSettings.languageTagsEnabled = true;
+                canopy.currentSettings.languageTagFilter = {
+                    schemaVersion: 1,
+                    languages: ['pt-BR', 'en-US'],
+                    includeOriginal: false,
+                };
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+            });
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForSelector('.language-overlay-container [data-region="BR"]', { timeout: 60_000 });
+            const regions = await page.locator('.language-overlay-container').first()
+                .locator('.language-tag-presentation').evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.region));
+            expect(regions).toEqual(['BR', 'US']);
+            expect(consoleErrors.real()).toEqual([]);
+        } finally {
+            await page.evaluate(async (snapshot) => {
+                const canopy = (window as any).JellyfinCanopy;
+                Object.keys(canopy.currentSettings).forEach((key) => delete canopy.currentSettings[key]);
+                Object.assign(canopy.currentSettings, snapshot);
+                await canopy.saveUserSettings('settings.json', canopy.currentSettings);
+            }, original);
+            await page.unroute(cacheRoute);
+        }
+    });
+
     test('8K dimensions render from a title-sanitized server-cache projection', async ({ page, consoleErrors }) => {
         let injectedEntries = 0;
         const cacheRoute = '**/JellyfinCanopy/tag-cache/**';

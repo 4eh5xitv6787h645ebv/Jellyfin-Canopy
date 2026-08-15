@@ -180,6 +180,7 @@
     "e2e/tags.spec.ts › tags › Collection language coverage has poster and details parity",
     "e2e/tags.spec.ts › tags › hide-on-hover fades the detail-page primary poster tags",
     "e2e/tags.spec.ts › tags › home library cards get data-jc-*-tagged markers per enabled family",
+    "e2e/tags.spec.ts › tags › language allowlist orders regional poster flags before the three-item limit",
     "e2e/tags.spec.ts › tags › preferred audio language selects one real track and rerenders without a mixed badge",
     "e2e/tags.spec.ts › tags › rating scope hides Episode posters without affecting Movie posters",
     "e2e/tags.spec.ts › tags › Series and season language coverage render full and partial states",

@@ -88,6 +88,11 @@
   "HideReviewsFromHiddenUsers": true,
   "IGNORE_PROVIDERS": "",
   "IconStyle": "emoji",
+  "LanguageTagFilter": {
+    "IncludeOriginal": false,
+    "Languages": [],
+    "SchemaVersion": 1
+  },
   "LanguageTagsEnabled": false,
   "LanguageTagsPosition": "bottom-left",
   "LayoutEnforcement": "None",

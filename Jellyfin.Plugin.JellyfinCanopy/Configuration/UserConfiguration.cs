@@ -61,6 +61,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public int? AudioInfoTagOrder { get; set; }
         public bool GenreTagsEnabled { get; set; }
         public bool LanguageTagsEnabled { get; set; }
+        // null inherits the administrator policy. An explicit empty v1 policy
+        // preserves every language (the compatibility/default presentation).
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public LanguageTagFilterPolicy? LanguageTagFilter { get; set; }
         public bool RatingTagsEnabled { get; set; }
         public RatingTagScopePolicy RatingTagScopeOverrides { get; set; } = RatingTagScopePolicyV1.CreateEmpty();
         public bool PeopleTagsEnabled { get; set; }

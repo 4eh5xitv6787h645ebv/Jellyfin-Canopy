@@ -114,6 +114,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             AudioInfoTagOrder = 6;
             GenreTagsEnabled = false;
             LanguageTagsEnabled = false;
+            LanguageTagFilter = new LanguageTagFilterPolicy();
             RatingTagsEnabled = false;
             PeopleTagsEnabled = false;
             TagsCacheTtlDays = 30;
@@ -531,6 +532,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public int VideoCodecTagOrder { get; set; } = 5;
         public int AudioInfoTagOrder { get; set; } = 6;
         public bool LanguageTagsEnabled { get; set; }
+        public LanguageTagFilterPolicy LanguageTagFilter { get; set; } = new();
         public bool RatingTagsEnabled { get; set; }
         /// <summary>
         /// Gets or sets the administrator's schema-versioned rating-tag deny

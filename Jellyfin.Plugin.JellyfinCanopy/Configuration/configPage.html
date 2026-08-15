@@ -351,6 +351,12 @@
                             <div class="jc-setting-description" data-desc-for="languageTagsEnabled">
                                 <div class="fieldDescription">Display available audio languages as country flags on poster cards.</div>
                             </div>
+                            <div class="inputContainer" id="languageTagFilter" data-config-key="LanguageTagFilter">
+                                <label class="inputLabel" for="languageTagFilterLanguages">Language tag allowlist</label>
+                                <input is="emby-input" id="languageTagFilterLanguages" type="text" maxlength="4095" placeholder="No filter (for example: en-US, de-DE)" />
+                                <div class="fieldDescription">Up to 16 canonical BCP-47 tags, comma separated. An empty list preserves the current language ordering.</div>
+                                <div class="checkboxContainer"><label><input id="languageTagFilterOriginal" is="emby-checkbox" type="checkbox"/><span>Include authoritative original language first</span></label></div>
+                            </div>
 
                             <div class="jc-tag-row">
                                 <div class="checkboxContainer"><label><input id="ratingTagsEnabled" data-config-key="RatingTagsEnabled" is="emby-checkbox" type="checkbox"/><span>Enable Rating Tags</span></label></div>

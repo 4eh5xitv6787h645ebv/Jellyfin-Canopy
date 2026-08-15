@@ -826,7 +826,7 @@ JC.loadSettings = (): UserSettings => {
         watchProgressTimeFormat: 'hours',
         pauseScreenEnabled: true,
         pauseScreenDelaySeconds: 5,
-        qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
+        qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, languageTagFilter: null, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
         showResolutionTag: true, showSourceTag: true, showDynamicRangeTag: true, showSpecialFormatTag: true, showVideoCodecTag: true, showAudioInfoTag: true,
         preferredAudioLanguage: null,
         resolutionTagOrder: 1, sourceTagOrder: 2, dynamicRangeTagOrder: 3, specialFormatTagOrder: 4, videoCodecTagOrder: 5, audioInfoTagOrder: 6,

@@ -241,6 +241,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 }
 
                 NormalizePreferredAudioLanguageForUpdate(config);
+                NormalizeLanguageTagFilterForUpdate(config);
                 NormalizeRatingTagScopePolicyForUpdate(config);
                 NormalizeDefaultStreamingRegionForUpdate(config);
                 SanitizeExternalUrlFields(config);
@@ -296,6 +297,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
 
             config.PreferredAudioLanguage = normalized!;
+        }
+
+        internal static void NormalizeLanguageTagFilterForUpdate(PluginConfiguration config)
+        {
+            if (!LanguageTagFilterPolicyV1.TryNormalize(config.LanguageTagFilter, out var normalized) || normalized == null)
+            {
+                throw new ArgumentException("LanguageTagFilter must be a bounded canonical v1 policy.", nameof(config));
+            }
+            config.LanguageTagFilter = normalized;
         }
 
         internal static void NormalizeRatingTagScopePolicyForUpdate(PluginConfiguration config)

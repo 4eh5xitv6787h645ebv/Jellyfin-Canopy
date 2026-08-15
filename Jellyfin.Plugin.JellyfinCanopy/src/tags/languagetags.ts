@@ -13,6 +13,11 @@ import {
     validateMediaLanguageIdentity,
 } from '../core/media-language';
 import type { MediaLanguageIdentity } from '../core/media-language';
+import {
+    currentLanguageTagFilter,
+    filterMediaLanguageIdentities,
+    languageTagFilterControlsOrder,
+} from './language-tag-filter';
 import { register, reinitialize, resolvePosition } from '../core/tag-renderer-base';
 import type { TagRendererContext, TagSpec } from '../types/jc';
 
@@ -33,7 +38,7 @@ const presentationClass = 'language-tag-presentation';
 // v5 retires untyped v4 snapshots. The hot-cache path runs before item type is
 // known, so a legacy BoxSet leaf payload could otherwise suppress its new
 // response-only member projection.
-const LANGUAGE_CACHE_SCHEMA_VERSION = 5;
+const LANGUAGE_CACHE_SCHEMA_VERSION = 6;
 
 type LanguageCoverageState = 'full' | 'partial' | 'unknown';
 
@@ -53,14 +58,23 @@ interface LanguageCoverageProjection {
 export interface LanguageCachePayload {
     schemaVersion: typeof LANGUAGE_CACHE_SCHEMA_VERSION;
     languages: MediaLanguageIdentity[];
+    originalLanguage: string | null;
     timestamp: number;
 }
 
-export function createLanguageCachePayload(values: unknown, now = Date.now()): LanguageCachePayload | null {
+export function createLanguageCachePayload(
+    values: unknown,
+    now = Date.now(),
+    originalLanguage: unknown = null,
+): LanguageCachePayload | null {
     const languages = resolveMediaLanguageIdentities(values);
+    const original = typeof originalLanguage === 'string'
+        ? resolveMediaLanguageIdentities([originalLanguage])[0]?.canonicalTag || null
+        : null;
     return languages.length > 0 && Number.isSafeInteger(now) && now >= 0 ? {
         schemaVersion: LANGUAGE_CACHE_SCHEMA_VERSION,
         languages,
+        originalLanguage: original,
         timestamp: now,
     } : null;
 }
@@ -73,7 +87,8 @@ export function readLanguageCachePayload(value: unknown): LanguageCachePayload |
     const candidate = 'value' in outer ? outer.value : value;
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
     const record = candidate as Record<string, unknown>;
-    if (record.schemaVersion !== LANGUAGE_CACHE_SCHEMA_VERSION || !Array.isArray(record.languages)) return null;
+    if (record.schemaVersion !== LANGUAGE_CACHE_SCHEMA_VERSION || !Array.isArray(record.languages)
+        || (record.originalLanguage !== null && typeof record.originalLanguage !== 'string')) return null;
     if (!Number.isSafeInteger(record.timestamp) || (record.timestamp as number) < 0) return null;
     const validated = record.languages.map(validateMediaLanguageIdentity);
     if (validated.some((language) => language === null)) return null;
@@ -82,9 +97,14 @@ export function readLanguageCachePayload(value: unknown): LanguageCachePayload |
     // duplicated, forged or malformed member invalidates the whole snapshot.
     if (languages.length === 0 || languages.length !== record.languages.length) return null;
     if (JSON.stringify(languages) !== JSON.stringify(validated)) return null;
+    const originalLanguage = record.originalLanguage === null
+        ? null
+        : resolveMediaLanguageIdentities([record.originalLanguage])[0]?.canonicalTag || null;
+    if (originalLanguage !== record.originalLanguage) return null;
     return {
         schemaVersion: LANGUAGE_CACHE_SCHEMA_VERSION,
         languages,
+        originalLanguage,
         timestamp: record.timestamp as number,
     };
 }
@@ -133,7 +153,12 @@ function extractLanguagesFromItem(sourceItem: any): MediaLanguageIdentity[] {
  * @param container - The render target element.
  * @param languages - Languages in any supported shape.
  */
-function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, languages: any): void {
+function insertLanguageTags(
+    ctx: TagRendererContext,
+    container: HTMLElement,
+    languages: any,
+    authoritativeOriginal: unknown = null,
+): void {
     if (!container) return;
     if (ctx.isTagged(container)) return;
     // Always re-render to handle cache migrations or setting changes
@@ -152,7 +177,14 @@ function insertLanguageTags(ctx: TagRendererContext, container: HTMLElement, lan
     }
 
     const maxToShow = 3;
-    buildMediaLanguagePresentations(languages).slice(0, maxToShow).forEach((presentation) => {
+    const policy = currentLanguageTagFilter();
+    const filtered = filterMediaLanguageIdentities(
+        languages,
+        policy,
+        authoritativeOriginal,
+    );
+    buildMediaLanguagePresentations(filtered, languageTagFilterControlsOrder(policy))
+        .slice(0, maxToShow).forEach((presentation) => {
         const tag = document.createElement('span');
         tag.className = presentationClass;
         tag.setAttribute('role', 'img');
@@ -270,6 +302,7 @@ function insertLanguageCoverage(
     ctx: TagRendererContext,
     container: HTMLElement,
     coverage: LanguageCoverageProjection,
+    authoritativeOriginal: unknown = null,
 ): void {
     if (!container || ctx.isTagged(container)) return;
     ctx.removeExistingOverlay(container);
@@ -289,8 +322,13 @@ function insertLanguageCoverage(
         ['partial', coverage.partial],
         ['unknown', coverage.unknown],
     ];
+    const filter = currentLanguageTagFilter();
     const presentations = groups.flatMap(([state, languages]) =>
-        buildMediaLanguagePresentations(languages).map((presentation) => ({ state, presentation })));
+        buildMediaLanguagePresentations(
+            filterMediaLanguageIdentities(languages, filter, authoritativeOriginal),
+            languageTagFilterControlsOrder(filter),
+        )
+            .map((presentation) => ({ state, presentation })));
 
     for (const { state, presentation } of presentations.slice(0, 3)) {
         const tag = document.createElement('span');
@@ -471,7 +509,7 @@ const spec: TagSpec = {
                 // Coverage is policy-scoped, so never retain it in browser storage.
                 ctx.hot?.delete(itemId);
                 ctx.setPersistent(itemId, undefined);
-                if (coverage) insertLanguageCoverage(ctx, el, coverage);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage, item.OriginalLanguage);
                 return;
             }
             if (isCollection) {
@@ -486,7 +524,7 @@ const spec: TagSpec = {
             if (hot) {
                 const payload = readLanguageCachePayload(hot);
                 if (payload && isFreshLanguageCachePayload(payload, Date.now(), ctx.cacheTtl)) {
-                    insertLanguageTags(ctx, el, payload.languages);
+                    insertLanguageTags(ctx, el, payload.languages, payload.originalLanguage ?? item.OriginalLanguage);
                     return;
                 }
                 // Pre-version cache entries irreversibly lost region data.
@@ -509,12 +547,16 @@ const spec: TagSpec = {
                     // Old servers expose only representative first-Episode data.
                     // Render that compatibility fallback, but never cache it as
                     // aggregate coverage evidence.
-                    insertLanguageTags(ctx, el, languages);
+                    insertLanguageTags(ctx, el, languages, sourceItem.OriginalLanguage ?? item.OriginalLanguage);
                 } else {
-                    const payload = createLanguageCachePayload(languages)!;
+                    const payload = createLanguageCachePayload(
+                        languages,
+                        Date.now(),
+                        sourceItem.OriginalLanguage ?? item.OriginalLanguage,
+                    )!;
                     ctx.setPersistent(itemId, payload);
                     ctx.hot?.set(itemId, { value: payload, timestamp: payload.timestamp });
-                    insertLanguageTags(ctx, el, payload.languages);
+                    insertLanguageTags(ctx, el, payload.languages, sourceItem.OriginalLanguage ?? item.OriginalLanguage);
                 }
             }
         },
@@ -527,7 +569,7 @@ const spec: TagSpec = {
             if (hot !== undefined) {
                 const payload = readLanguageCachePayload(hot);
                 if (payload && isFreshLanguageCachePayload(payload, now, ctx.cacheTtl)) {
-                    insertLanguageTags(ctx, el, payload.languages);
+                    insertLanguageTags(ctx, el, payload.languages, payload.originalLanguage);
                     return true;
                 }
                 ctx.hot?.delete(itemId);
@@ -536,7 +578,7 @@ const spec: TagSpec = {
             if (persistent !== undefined) {
                 const payload = readLanguageCachePayload(persistent);
                 if (payload && isFreshLanguageCachePayload(payload, now, ctx.cacheTtl)) {
-                    insertLanguageTags(ctx, el, payload.languages);
+                    insertLanguageTags(ctx, el, payload.languages, payload.originalLanguage);
                     return true;
                 }
                 ctx.setPersistent(itemId, undefined);
@@ -558,13 +600,13 @@ const spec: TagSpec = {
                     coverageValue,
                     isCollection ? 'member' : 'episode',
                 );
-                if (coverage) insertLanguageCoverage(ctx, el, coverage);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage, entry.OriginalLanguage);
                 return;
             }
             if (isCollection) return;
             const codes = entry.AudioLanguages;
             if (!codes || codes.length === 0) return;
-            insertLanguageTags(ctx, el, codes);
+            insertLanguageTags(ctx, el, codes, entry.OriginalLanguage);
         },
     },
 };

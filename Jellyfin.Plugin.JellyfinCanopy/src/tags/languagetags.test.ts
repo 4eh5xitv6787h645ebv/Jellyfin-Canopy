@@ -552,16 +552,18 @@ describe('language browser-cache schema', () => {
             { name: 'stale', code: 'por-BR' },
             { name: 'stale', code: 'PT-pt' },
         ], 123)).toEqual({
-            schemaVersion: 5,
+            schemaVersion: 6,
             languages: [
                 { canonicalTag: 'pt-BR', flagRegion: 'BR' },
                 { canonicalTag: 'pt-PT', flagRegion: 'PT' },
             ],
+            originalLanguage: null,
             timestamp: 123,
         });
         expect(createLanguageCachePayload(['en-840'], 123)).toEqual({
-            schemaVersion: 5,
+            schemaVersion: 6,
             languages: [{ canonicalTag: 'en-US', flagRegion: null }],
+            originalLanguage: null,
             timestamp: 123,
         });
     });
@@ -590,20 +592,22 @@ describe('language browser-cache schema', () => {
     it('accepts a current payload through the hot-cache wrapper', () => {
         expect(readLanguageCachePayload({
             value: {
-                schemaVersion: 5,
+                schemaVersion: 6,
                 languages: [
                     { canonicalTag: 'en-US', flagRegion: null },
                     { canonicalTag: 'pt-BR', flagRegion: 'BR' },
                 ],
+                originalLanguage: null,
                 timestamp: 9,
             },
             timestamp: 9,
         })).toEqual({
-            schemaVersion: 5,
+            schemaVersion: 6,
             languages: [
                 { canonicalTag: 'en-US', flagRegion: null },
                 { canonicalTag: 'pt-BR', flagRegion: 'BR' },
             ],
+            originalLanguage: null,
             timestamp: 9,
         });
     });

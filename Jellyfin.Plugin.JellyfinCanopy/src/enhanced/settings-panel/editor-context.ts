@@ -172,7 +172,7 @@ const TARGET_SETTING_DEFAULTS: Record<string, unknown> = {
     showWatchProgress: false, showFileSizes: false, showFileSource: false, showAudioLanguages: true, removeContinueWatchingEnabled: false, hideFavoritesTab: false,
     watchProgressMode: 'percentage', watchProgressTimeFormat: 'hours',
     pauseScreenEnabled: true, pauseScreenDelaySeconds: 5,
-    qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
+    qualityTagsEnabled: false, genreTagsEnabled: false, languageTagsEnabled: false, languageTagFilter: null, ratingTagsEnabled: false, peopleTagsEnabled: false, tagsHideOnHover: false,
     showResolutionTag: true, showSourceTag: true, showDynamicRangeTag: true, showSpecialFormatTag: true, showVideoCodecTag: true, showAudioInfoTag: true,
     preferredAudioLanguage: null,
     resolutionTagOrder: 1, sourceTagOrder: 2, dynamicRangeTagOrder: 3, specialFormatTagOrder: 4, videoCodecTagOrder: 5, audioInfoTagOrder: 6,

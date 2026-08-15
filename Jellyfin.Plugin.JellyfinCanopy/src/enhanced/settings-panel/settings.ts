@@ -8,6 +8,7 @@
 import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { canonicalizeAudioLanguagePreference } from '../../tags/audio-track-selection';
+import { LANGUAGE_TAG_FILTER_SCHEMA_VERSION, MAX_LANGUAGE_TAG_FILTER_ENTRIES } from '../../tags/language-tag-filter';
 import {
     applySubtitlePreviewStyle,
     clampSubtitleHorizontal,
@@ -134,6 +135,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     };
     let pendingAudioGeneration: AudioGeneration | null = null;
     let ratingScopeIntent = 0;
+    let languageFilterIntent = 0;
     let acknowledgedRatingScopeGeneration = 0;
     let acknowledgedRatingScope: unknown = settings.ratingTagScopeOverrides;
     type RatingScopeGeneration = {
@@ -476,6 +478,64 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     });
     audioLanguageInput?.addEventListener('change', commitAudioLanguagePreference);
     updateAudioLanguageInput();
+
+    const languageFilterMode = document.getElementById('languageTagFilterMode') as HTMLSelectElement | null;
+    const languageFilterInput = document.getElementById('languageTagFilterLanguages') as HTMLInputElement | null;
+    const languageFilterOriginal = document.getElementById('languageTagFilterOriginal') as HTMLInputElement | null;
+    const languageFilterCustom = document.getElementById('languageTagFilterCustom') as HTMLElement | null;
+    const commitLanguageFilter = (): void => {
+        if (!languageFilterMode || !languageFilterInput || !languageFilterOriginal) return;
+        const acknowledged = settings.languageTagFilter;
+        const intent = ++languageFilterIntent;
+        let next: unknown;
+        if (languageFilterMode.value === 'inherit') {
+            next = null;
+        } else {
+            const raw = languageFilterInput.value.split(',').map((value) => value.trim()).filter(Boolean);
+            const languages: string[] = [];
+            try {
+                if (raw.length > MAX_LANGUAGE_TAG_FILTER_ENTRIES) throw new Error('too many');
+                for (const value of raw) {
+                    const canonical = Intl.getCanonicalLocales(value)[0];
+                    if (!canonical || /^(?:und|root)$/i.test(canonical) || languages.includes(canonical)) throw new Error('invalid');
+                    languages.push(canonical);
+                }
+            } catch {
+                languageFilterInput.setCustomValidity(JC.t!('panel_settings_language_filter_invalid'));
+                languageFilterInput.reportValidity();
+                return;
+            }
+            languageFilterInput.setCustomValidity('');
+            languageFilterInput.value = languages.join(', ');
+            next = { schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION, languages, includeOriginal: languageFilterOriginal.checked };
+        }
+        settings.languageTagFilter = next;
+        const request = persistSettings();
+        // Self settings are the live object. Keep the renderer on acknowledged
+        // state until the server commit succeeds; target editors are panel-local.
+        if (appliesToActor) settings.languageTagFilter = acknowledged;
+        void request.then((saved) => {
+            if (saved && intent === languageFilterIntent && appliesToActor
+                && editor.isCurrent() && JC.identity.isCurrent(editor.actor)) {
+                settings.languageTagFilter = next;
+                JC.currentSettings!.languageTagFilter = next;
+                (JC as any).reinitializeLanguageTags?.();
+            }
+        });
+        resetAutoCloseTimer();
+    };
+    languageFilterMode?.addEventListener('change', () => {
+        if (languageFilterCustom) languageFilterCustom.style.display = languageFilterMode.value === 'custom' ? 'block' : 'none';
+        commitLanguageFilter();
+    });
+    languageFilterInput?.addEventListener('change', commitLanguageFilter);
+    languageFilterOriginal?.addEventListener('change', commitLanguageFilter);
+    document.getElementById('languageTagFilterReset')?.addEventListener('click', () => {
+        if (!languageFilterInput || !languageFilterOriginal) return;
+        languageFilterInput.value = '';
+        languageFilterOriginal.checked = false;
+        commitLanguageFilter();
+    });
 
     // Expand or collapse the 6 category rows when the user clicks the chevron.
     // The chevron rotation is driven by CSS via the aria-expanded attribute.

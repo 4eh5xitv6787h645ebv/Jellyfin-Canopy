@@ -88,6 +88,14 @@
   "HideReviewsFromHiddenUsers": false,
   "IGNORE_PROVIDERS": "cfg-IGNORE_PROVIDERS",
   "IconStyle": "cfg-IconStyle",
+  "LanguageTagFilter": {
+    "IncludeOriginal": true,
+    "Languages": [
+      "de-DE",
+      "en-US"
+    ],
+    "SchemaVersion": 1
+  },
   "LanguageTagsEnabled": true,
   "LanguageTagsPosition": "cfg-LanguageTagsPosition",
   "LayoutEnforcement": "None",
