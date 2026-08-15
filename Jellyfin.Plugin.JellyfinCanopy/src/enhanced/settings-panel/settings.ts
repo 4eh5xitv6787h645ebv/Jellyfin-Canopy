@@ -128,7 +128,6 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     };
     let pendingAudioGeneration: AudioGeneration | null = null;
     let ratingScopeIntent = 0;
-    let pauseDelayIntent = 0;
     let acknowledgedRatingScopeGeneration = 0;
     let acknowledgedRatingScope: unknown = settings.ratingTagScopeOverrides;
     type RatingScopeGeneration = {
@@ -569,20 +568,12 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             const val = Math.max(1, Math.min(60, parseInt(pauseScreenDelayInput.value, 10) || 5));
             pauseScreenDelayInput.value = String(val);
             settings.pauseScreenDelaySeconds = val;
-            const intent = ++pauseDelayIntent;
-            const applyToActor = (seconds: number) => {
-                if (appliesToActor && editor.isCurrent() && JC.identity.isCurrent(editor.actor)) {
-                    JC._pauseScreenInstance?.setDelaySeconds(seconds);
-                }
-            };
-            applyToActor(val);
-            void persistSettings().then((saved) => {
-                if (saved || intent !== pauseDelayIntent || !editor.isCurrent()) return;
-                const acknowledged = appliesToActor && JC.identity.isCurrent(editor.actor)
-                    ? JC.currentSettings?.pauseScreenDelaySeconds
-                    : settings.pauseScreenDelaySeconds;
-                applyToActor(Number(acknowledged ?? 5));
-            });
+            if (appliesToActor && editor.isCurrent() && JC.identity.isCurrent(editor.actor)) {
+                JC._pauseScreenInstance?.setDelaySeconds(val);
+            }
+            // The central settings queue reconciles the live pause runtime
+            // after the final whole-object carrier is acknowledged or rolled back.
+            void persistSettings();
         });
     }
     addSettingToggleListener('languageTagsToggle', 'languageTagsEnabled', 'feature_language_tags', true);

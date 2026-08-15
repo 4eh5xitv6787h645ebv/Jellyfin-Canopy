@@ -91,6 +91,60 @@ describe('pause-screen singleton + teardown', () => {
         expect(instance.pauseScreenDelayMs).toBe(60_000);
     });
 
+    it('shortens the current pause deadline from the original idle instant', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        try {
+            initPauseScreen();
+            const instance = jc()._pauseScreenInstance as {
+                currentVideo: { paused: boolean; ended: boolean };
+                lastUserInteractionAt: number;
+                setDelaySeconds: (seconds: number) => void;
+                showOverlay: () => void;
+            };
+            instance.currentVideo = { paused: true, ended: false };
+            instance.lastUserInteractionAt = 0;
+            const show = vi.spyOn(instance, 'showOverlay').mockImplementation(() => undefined);
+
+            instance.setDelaySeconds(10);
+            vi.advanceTimersByTime(4_000);
+            instance.setDelaySeconds(5);
+            vi.advanceTimersByTime(999);
+            expect(show).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(1);
+            expect(show).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('lengthens the current pause deadline without resetting its idle instant', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        try {
+            initPauseScreen();
+            const instance = jc()._pauseScreenInstance as {
+                currentVideo: { paused: boolean; ended: boolean };
+                lastUserInteractionAt: number;
+                setDelaySeconds: (seconds: number) => void;
+                showOverlay: () => void;
+            };
+            instance.currentVideo = { paused: true, ended: false };
+            instance.lastUserInteractionAt = 0;
+            const show = vi.spyOn(instance, 'showOverlay').mockImplementation(() => undefined);
+
+            instance.setDelaySeconds(5);
+            vi.advanceTimersByTime(2_000);
+            instance.setDelaySeconds(10);
+            vi.advanceTimersByTime(7_999);
+            expect(show).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(1);
+            expect(show).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('releases a held stale overlay when prior teardown throws during re-init', () => {
         initPauseScreen();
         const stale = jc()._pauseScreenInstance as {

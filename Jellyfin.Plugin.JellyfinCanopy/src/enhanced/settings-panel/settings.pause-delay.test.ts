@@ -20,6 +20,24 @@ import '../config'; // registers the real JC.saveUserSettings
 const realSaveUserSettings = JC.saveUserSettings!;
 const realShowEnhancedPanel = JC.showEnhancedPanel;
 const realApplyHideFavoritesTab = JC.applyHideFavoritesTab;
+let sessionSequence = 0;
+
+function startSession() {
+    JC.identity.transition('', '', 'pause-delay-test-logout');
+    sessionSequence += 1;
+    return JC.identity.transition('pause-delay-server', `pause-delay-user-${sessionSequence}`, 'pause-delay-test-login')!;
+}
+
+function ownedSettings(value: Record<string, unknown>) {
+    const settings = JC.identity.own(value, JC.identity.capture());
+    JC.currentSettings = settings;
+    JC.rememberUserSettingsSnapshot!('settings.json', settings);
+    return settings;
+}
+
+function httpError(status: number) {
+    return Object.assign(new Error(`HTTP ${status}`), { status });
+}
 
 // Every element wireSettingsListeners() touches synchronously at wiring time is
 // an addSettingToggleListener target (`getElementById(id)!.addEventListener`),
@@ -62,6 +80,11 @@ function makeCtx(editor?: PanelEditorContext): PanelContext {
 describe('pause-screen delay persistence (ENH-1)', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
+        startSession();
+        vi.spyOn(ApiClient, 'getCurrentUserId').mockReturnValue(`pause-delay-user-${sessionSequence}`);
+        vi.spyOn(ApiClient as JellyfinApiClient & { serverId: () => string }, 'serverId')
+            .mockReturnValue('pause-delay-server');
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
         JC.currentSettings = {};
         JC._pauseScreenInstance = undefined;
     });
@@ -91,7 +114,7 @@ describe('pause-screen delay persistence (ENH-1)', () => {
         );
     });
 
-    it('applies the delay to the active viewer instance and contains host key shortcuts', async () => {
+    it('applies the delay to the active viewer instance and contains the full editor key matrix', async () => {
         const delayInput = buildSettingsDom();
         const applyDelay = vi.fn();
         JC._pauseScreenInstance = {
@@ -103,7 +126,15 @@ describe('pause-screen delay persistence (ENH-1)', () => {
         document.addEventListener('keydown', documentKeydown);
 
         wireSettingsListeners(makeCtx());
-        delayInput.dispatchEvent(new KeyboardEvent('keydown', { key: '7', bubbles: true }));
+        for (const init of [
+            { key: '7', code: 'Digit7' },
+            { key: '&', code: 'Digit7', shiftKey: true },
+            { key: '7', code: 'Digit7', ctrlKey: true },
+            { key: 'Enter', code: 'Enter' },
+            { key: 'ArrowUp', code: 'ArrowUp' },
+        ]) {
+            delayInput.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true }));
+        }
         delayInput.value = '12';
         delayInput.dispatchEvent(new Event('change'));
 
@@ -114,51 +145,107 @@ describe('pause-screen delay persistence (ENH-1)', () => {
         document.removeEventListener('keydown', documentKeydown);
     });
 
-    it('restores the acknowledged runtime delay after the latest save fails', async () => {
+    it('restores the acknowledged runtime delay through the real failed-save queue', async () => {
         const delayInput = buildSettingsDom();
         const applyDelay = vi.fn();
         JC._pauseScreenInstance = {
             destroy: vi.fn(),
             setDelaySeconds: applyDelay,
         };
-        JC.currentSettings = { pauseScreenDelaySeconds: 5 };
-        JC.saveUserSettings = vi.fn(() => Promise.resolve().then(() => {
-            JC.currentSettings!.pauseScreenDelaySeconds = 5;
-            throw new Error('rejected');
+        const settings = ownedSettings({ Revision: 0, pauseScreenDelaySeconds: 5 });
+        JC.saveUserSettings = realSaveUserSettings;
+        vi.spyOn(ApiClient, 'ajax').mockRejectedValue(httpError(400));
+
+        wireSettingsListeners(makeCtx());
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(settings.pauseScreenDelaySeconds).toBe(5));
+        await vi.waitFor(() => expect(applyDelay).toHaveBeenCalledTimes(2));
+        expect(applyDelay.mock.calls).toEqual([[12], [5]]);
+        expect(settings.pauseScreenDelaySeconds).toBe(5);
+    });
+
+    it('reconciles after the delay save and a later whole-object carrier both fail', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = {
+            destroy: vi.fn(),
+            setDelaySeconds: applyDelay,
+        };
+        const settings = ownedSettings({ Revision: 0, pauseScreenDelaySeconds: 5, autoPauseEnabled: false });
+        JC.saveUserSettings = realSaveUserSettings;
+        let rejectFirst!: (reason: unknown) => void;
+        const first = new Promise<never>((_resolve, reject) => { rejectFirst = reject; });
+        const ajax = vi.spyOn(ApiClient, 'ajax')
+            .mockReturnValueOnce(first)
+            .mockRejectedValueOnce(httpError(400));
+
+        wireSettingsListeners(makeCtx());
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(1));
+        const unrelatedToggle = document.getElementById('autoPauseToggle') as HTMLInputElement;
+        unrelatedToggle.checked = true;
+        unrelatedToggle.dispatchEvent(new Event('change'));
+        rejectFirst(httpError(400));
+
+        await vi.waitFor(() => expect(ajax).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(applyDelay.mock.calls.at(-1)).toEqual([5]));
+        expect(settings.pauseScreenDelaySeconds).toBe(5);
+        expect(settings.autoPauseEnabled).toBe(false);
+    });
+
+    it('rolls back the runtime after the originating panel lease ends', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = { destroy: vi.fn(), setDelaySeconds: applyDelay };
+        const settings = ownedSettings({ Revision: 0, pauseScreenDelaySeconds: 5 });
+        JC.saveUserSettings = realSaveUserSettings;
+        let rejectSave!: (reason: unknown) => void;
+        vi.spyOn(ApiClient, 'ajax').mockReturnValue(new Promise<never>((_resolve, reject) => {
+            rejectSave = reject;
+        }));
+        const actor = JC.identity.capture()!;
+        let panelCurrent = true;
+        const editor = await createPanelEditorContext({
+            actor,
+            signal: new AbortController().signal,
+            isLaunchCurrent: () => panelCurrent,
+        });
+
+        wireSettingsListeners(makeCtx(editor));
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(applyDelay).toHaveBeenCalledWith(12));
+        panelCurrent = false;
+        rejectSave(httpError(400));
+
+        await vi.waitFor(() => expect(applyDelay.mock.calls.at(-1)).toEqual([5]));
+        expect(settings.pauseScreenDelaySeconds).toBe(5);
+    });
+
+    it('never rolls an old actor delay into the next account runtime', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = { destroy: vi.fn(), setDelaySeconds: applyDelay };
+        ownedSettings({ Revision: 0, pauseScreenDelaySeconds: 5 });
+        JC.saveUserSettings = realSaveUserSettings;
+        let rejectSave!: (reason: unknown) => void;
+        vi.spyOn(ApiClient, 'ajax').mockReturnValue(new Promise<never>((_resolve, reject) => {
+            rejectSave = reject;
         }));
 
         wireSettingsListeners(makeCtx());
         delayInput.value = '12';
         delayInput.dispatchEvent(new Event('change'));
-
-        await vi.waitFor(() => expect(applyDelay).toHaveBeenCalledTimes(2));
-        expect(applyDelay.mock.calls).toEqual([[12], [5]]);
-    });
-
-    it('does not let a superseded failed save roll back the latest runtime intent', async () => {
-        const delayInput = buildSettingsDom();
-        const applyDelay = vi.fn();
-        JC._pauseScreenInstance = {
-            destroy: vi.fn(),
-            setDelaySeconds: applyDelay,
-        };
-        let rejectFirst!: (reason?: unknown) => void;
-        let resolveSecond!: (value: UserSettingsSaveResult) => void;
-        JC.saveUserSettings = vi.fn()
-            .mockReturnValueOnce(new Promise<UserSettingsSaveResult>((_resolve, reject) => { rejectFirst = reject; }))
-            .mockReturnValueOnce(new Promise<UserSettingsSaveResult>((resolve) => { resolveSecond = resolve; }));
-
-        wireSettingsListeners(makeCtx());
-        delayInput.value = '12';
-        delayInput.dispatchEvent(new Event('change'));
-        delayInput.value = '18';
-        delayInput.dispatchEvent(new Event('change'));
-        resolveSecond({} as UserSettingsSaveResult);
-        rejectFirst(new Error('superseded'));
-
-        await vi.waitFor(() => expect(JC.saveUserSettings).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(applyDelay).toHaveBeenCalledTimes(1));
+        startSession();
+        rejectSave(httpError(400));
         await Promise.resolve();
-        expect(applyDelay.mock.calls).toEqual([[12], [18]]);
+        await Promise.resolve();
+
+        expect(applyDelay.mock.calls).toEqual([[12]]);
     });
 
     it('never applies target-user delay edits to the active viewer instance', async () => {
