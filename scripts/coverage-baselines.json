@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45148,
-        "totalLines": 54938
+        "coveredLines": 45147,
+        "totalLines": 54943
       },
       "observations": {
-        "cleanRuns": 4,
-        "minimumCoveredLines": 45140,
-        "maximumCoveredLines": 45148
+        "cleanRuns": 2,
+        "minimumCoveredLines": 45147,
+        "maximumCoveredLines": 45147
       },
       "tolerance": {
-        "missingCoveredLines": 8,
-        "rationale": "Issue #709 routes the server Seerr parental certification and certification-cache region through the shared 139-code membership authority, with orchestration regressions proving an unsupported persisted ZZ value uses the divergent US certification/cache partition while supported uncommon XK remains distinct. Two clean local .NET 10.0.9 full-suite runs and two clean hosted runs on this exact 54,938-line source and 4,314-test scope passed every test and measured 45,140/54,938 (82.165%), 45,143/54,938 (82.171%), 45,147/54,938 (82.178%), and 45,148/54,938 (82.180%). The reviewed observed high-water is therefore 45,148/54,938 and the exact observed floor is 45,140/54,938; the eight-line instrumentation spread is 0.014562 percentage points, within the 0.15-point policy maximum. Hosted evidence: GitHub Actions runs 31880813419 (Unit job 95003008339) and 31884925057 (Unit job 95012731245). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "Issue #716 adds per-user mobile double-tap seek configuration and its server configuration projection on top of the shared region work from issue #709. Two clean local .NET 10.0.9 full-suite runs on this exact 54,943-line source and 4,314-test scope passed every test and both measured 45,147/54,943 (82.171%). The reviewed observed high-water and exact observed floor are therefore both 45,147/54,943 with zero instrumentation spread and zero tolerance. The prior issue #709 observations remain evidence for the earlier 54,938-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
