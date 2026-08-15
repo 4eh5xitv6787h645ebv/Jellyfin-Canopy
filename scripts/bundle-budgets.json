@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "limits": {
-    "maxOutputCount": 183,
+    "maxOutputCount": 185,
     "maxEsmEntryCount": 38,
-    "maxEsmOutputCount": 88,
+    "maxEsmOutputCount": 89,
     "maxIndividualEsmRawBytes": 262144,
     "maxBootRequests": 17,
     "maxBootRawBytes": 524288,
@@ -18,8 +18,8 @@
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
-    "maxTotalRawBytes": 7445214,
+    "maxTotalRawBytes": 7458290,
     "maxClientManifestRawBytes": 262144,
-    "maxPublishedRawBytes": 7534008
+    "maxPublishedRawBytes": 7547985
   }
 }
