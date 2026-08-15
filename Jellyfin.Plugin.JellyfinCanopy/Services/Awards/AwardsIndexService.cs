@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
@@ -11,7 +12,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
     /// validates a detached snapshot, durably replaces the versioned file, and only
     /// then publishes it to readers. Failure therefore retains the prior snapshot.
     /// </summary>
-    public sealed partial class AwardsIndexService
+    public sealed partial class AwardsIndexService : IHostedService, IDisposable
     {
         internal const int SchemaVersion = 1;
         internal const int MaxIndexBytes = 64 * 1024 * 1024;
@@ -35,9 +36,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         private readonly TimeSpan _refreshTimeout;
         private readonly Action? _afterIndexStreamOpened;
         private readonly Action? _beforeMemoryPublication;
+        private readonly IPluginConfigProvider? _configProvider;
         private readonly object _refreshGate = new();
         private readonly object _loadGate = new();
-        private Task<bool>? _refreshFlight;
+        private readonly SemaphoreSlim _shutdownGate = new(1, 1);
+        private readonly CancellationTokenSource _lifetimeCancellation = new();
+        private readonly HashSet<Task> _retiredRefreshJoins = new();
+        private RefreshFlight? _refreshFlight;
+        private bool _acceptingRefreshes = true;
+        private bool _lifetimeCancellationRequested;
+        private int _disposeState;
         private bool _loaded;
         // PERF(S4): source-global provider keys, never local items × users;
         // hard-capped at 250k keys / MaxResidentIndexBytes (~634.1 MiB).
@@ -46,8 +54,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
         public AwardsIndexService(
             IAwardsSourceClient sourceClient,
-            ILogger<AwardsIndexService> logger)
-            : this(sourceClient, logger, ResolveDefaultIndexPath())
+            ILogger<AwardsIndexService> logger,
+            IPluginConfigProvider configProvider)
+            : this(sourceClient, logger, ResolveDefaultIndexPath(), configProvider: configProvider)
         {
         }
 
@@ -57,7 +66,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             string indexPath,
             TimeSpan? refreshTimeout = null,
             Action? afterIndexStreamOpened = null,
-            Action? beforeMemoryPublication = null)
+            Action? beforeMemoryPublication = null,
+            IPluginConfigProvider? configProvider = null)
         {
             _sourceClient = sourceClient;
             _logger = logger;
@@ -65,24 +75,59 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             _refreshTimeout = refreshTimeout ?? RefreshTimeout;
             _afterIndexStreamOpened = afterIndexStreamOpened;
             _beforeMemoryPublication = beforeMemoryPublication;
+            _configProvider = configProvider;
         }
 
-        public Task<bool> RefreshAsync(CancellationToken cancellationToken)
+        public async Task<bool> RefreshAsync(CancellationToken cancellationToken)
         {
-            Task<bool> flight;
+            cancellationToken.ThrowIfCancellationRequested();
+            RefreshFlight flight;
             lock (_refreshGate)
             {
-                if (_refreshFlight is null || _refreshFlight.IsCompleted)
+                if (!_acceptingRefreshes || !IsAwardsEnabled())
                 {
-                    // The provider owns hard request/page bounds. Do not let one
-                    // dashboard caller cancel shared refresh work for another caller.
-                    _refreshFlight = RefreshCoreAsync();
+                    return false;
+                }
+
+                if (_refreshFlight is null || _refreshFlight.Task.IsCompleted)
+                {
+                    var ownerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        _lifetimeCancellation.Token);
+                    var created = new RefreshFlight(ownerCancellation);
+                    created.Task = RefreshCoreAsync(created);
+                    _refreshFlight = created;
                 }
 
                 flight = _refreshFlight;
+                flight.ActiveWaiters++;
             }
 
-            return flight.WaitAsync(cancellationToken);
+            try
+            {
+                return await flight.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await ReleaseWaiterAsync(flight).ConfigureAwait(false);
+            }
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken cancellationToken) => StopCoreAsync();
+
+        internal Task NotifyConfigurationChangedAsync()
+            => IsAwardsEnabled() ? Task.CompletedTask : AbortActiveRefreshAsync();
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+            {
+                return;
+            }
+
+            StopCoreAsync().GetAwaiter().GetResult();
+            _lifetimeCancellation.Dispose();
         }
 
         public AwardsLookupResult Lookup(
@@ -153,16 +198,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             return keys;
         }
 
-        private async Task<bool> RefreshCoreAsync()
+        private async Task<bool> RefreshCoreAsync(RefreshFlight flight)
         {
             try
             {
                 using var refreshTimeout = new CancellationTokenSource(_refreshTimeout);
-                var source = await _sourceClient.FetchCompleteAsync(refreshTimeout.Token).ConfigureAwait(false);
+                using var refreshCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    flight.Cancellation.Token,
+                    refreshTimeout.Token);
+                var cancellationToken = refreshCancellation.Token;
+                var source = await _sourceClient.FetchCompleteAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 var document = BuildDocument(source.Records, DateTimeOffset.UtcNow);
                 var entries = ValidateDocument(document);
                 var json = JsonSerializer.Serialize(document, JsonOptions);
                 ValidateIndexByteLength(System.Text.Encoding.UTF8.GetByteCount(json));
+                cancellationToken.ThrowIfCancellationRequested();
 
                 var directory = Path.GetDirectoryName(_indexPath);
                 if (string.IsNullOrWhiteSpace(directory))
@@ -172,15 +223,31 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
                 Directory.CreateDirectory(directory);
                 _beforeMemoryPublication?.Invoke();
+                cancellationToken.ThrowIfCancellationRequested();
                 lock (_loadGate)
                 {
                     // Serialize the atomic disk replacement and publication with
                     // the one-time disk loader. This both avoids replacing a file
                     // that a Windows reader still has open and prevents an old
                     // startup read from overwriting the fresh memory snapshot.
-                    AtomicFile.WriteAllText(_indexPath, json);
-                    Volatile.Write(ref _entries, entries);
-                    _loaded = true;
+                    lock (_refreshGate)
+                    {
+                        // Cancellation, live disable, and host shutdown all take
+                        // this same owner gate before canceling the flight. Holding
+                        // it through the atomic replacement makes publication the
+                        // linearization point: either it completed while authority
+                        // was still live, or the cancellation fence wins and no
+                        // disk or memory generation can appear afterward.
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (flight.Retired || !_acceptingRefreshes || !IsAwardsEnabled())
+                        {
+                            throw new OperationCanceledException(cancellationToken);
+                        }
+
+                        AtomicFile.WriteAllText(_indexPath, json);
+                        Volatile.Write(ref _entries, entries);
+                        _loaded = true;
+                    }
                 }
 
                 _logger.LogInformation(
@@ -193,6 +260,185 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 _logger.LogWarning(exception, "Awards index refresh failed; retaining the last complete index");
                 return false;
             }
+        }
+
+        private bool IsAwardsEnabled()
+            => _configProvider is null || _configProvider.ConfigurationOrNull?.AwardsEnabled == true;
+
+        private async Task ReleaseWaiterAsync(RefreshFlight flight)
+        {
+            var ownsRetirement = false;
+            lock (_refreshGate)
+            {
+                flight.ActiveWaiters--;
+                if (flight.ActiveWaiters == 0)
+                {
+                    ownsRetirement = TryRetireFlightLocked(flight);
+                }
+            }
+
+            if (ownsRetirement)
+            {
+                await CompleteRetirementAsync(flight).ConfigureAwait(false);
+            }
+        }
+
+        private async Task AbortActiveRefreshAsync()
+        {
+            RefreshFlight? ownedFlight = null;
+            Task[] joins;
+            lock (_refreshGate)
+            {
+                var active = _refreshFlight;
+                if (active is not null && TryRetireFlightLocked(active))
+                {
+                    ownedFlight = active;
+                }
+
+                joins = _retiredRefreshJoins.ToArray();
+            }
+
+            if (ownedFlight is not null)
+            {
+                _ = CompleteRetirementAsync(ownedFlight);
+            }
+
+            await Task.WhenAll(joins).ConfigureAwait(false);
+        }
+
+        private async Task StopCoreAsync()
+        {
+            await _shutdownGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                RefreshFlight? ownedFlight = null;
+                Task[] joins;
+                var cancelLifetime = false;
+                lock (_refreshGate)
+                {
+                    _acceptingRefreshes = false;
+                    if (!_lifetimeCancellationRequested)
+                    {
+                        _lifetimeCancellationRequested = true;
+                        cancelLifetime = true;
+                    }
+
+                    var active = _refreshFlight;
+                    if (active is not null && TryRetireFlightLocked(active))
+                    {
+                        ownedFlight = active;
+                    }
+
+                    joins = _retiredRefreshJoins.ToArray();
+                }
+
+                if (cancelLifetime)
+                {
+                    try
+                    {
+                        _lifetimeCancellation.Cancel();
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.LogWarning(exception, "Awards index lifetime cancellation callback failed");
+                    }
+                }
+
+                if (ownedFlight is not null)
+                {
+                    _ = CompleteRetirementAsync(ownedFlight);
+                }
+
+                await Task.WhenAll(joins).ConfigureAwait(false);
+            }
+            finally
+            {
+                _shutdownGate.Release();
+            }
+        }
+
+        private bool TryRetireFlightLocked(RefreshFlight flight)
+        {
+            if (flight.Retired)
+            {
+                return false;
+            }
+
+            flight.Retired = true;
+            if (ReferenceEquals(_refreshFlight, flight))
+            {
+                _refreshFlight = null;
+            }
+
+            _retiredRefreshJoins.Add(flight.RetirementCompleted.Task);
+            return true;
+        }
+
+        private async Task CompleteRetirementAsync(RefreshFlight flight)
+        {
+            try
+            {
+                if (!flight.Task.IsCompleted)
+                {
+                    try
+                    {
+                        flight.Cancellation.Cancel();
+                    }
+                    catch (Exception exception)
+                    {
+                        // Cancellation is already observable even when a callback
+                        // throws. Continue the mandatory physical-work join.
+                        _logger.LogWarning(exception, "Awards index refresh cancellation callback failed");
+                    }
+                }
+
+                await JoinAndDisposeFlightAsync(flight).ConfigureAwait(false);
+            }
+            finally
+            {
+                flight.RetirementCompleted.TrySetResult();
+                lock (_refreshGate)
+                {
+                    _retiredRefreshJoins.Remove(flight.RetirementCompleted.Task);
+                }
+            }
+        }
+
+        private static async Task JoinAndDisposeFlightAsync(RefreshFlight flight)
+        {
+            try
+            {
+                await flight.Task.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // RefreshCoreAsync normally converts cancellation to a retained
+                // last-good result. Keep the lifecycle join defensive if a future
+                // pre-core path starts propagating cancellation.
+            }
+            finally
+            {
+                flight.Cancellation.Dispose();
+            }
+        }
+
+        private sealed class RefreshFlight
+        {
+            public RefreshFlight(CancellationTokenSource cancellation)
+            {
+                Cancellation = cancellation;
+            }
+
+            public CancellationTokenSource Cancellation { get; }
+
+            public Task<bool> Task { get; set; } = System.Threading.Tasks.Task.FromResult(false);
+
+            public int ActiveWaiters { get; set; }
+
+            public bool Retired { get; set; }
+
+            public TaskCompletionSource RetirementCompleted { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         private static string ResolveDefaultIndexPath()

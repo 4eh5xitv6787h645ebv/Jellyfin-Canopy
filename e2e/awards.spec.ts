@@ -214,9 +214,21 @@ test.describe.serial('cached awards index (#717)', () => {
             await expect(overlay).toHaveAttribute('aria-modal', 'true');
             await expect(overlay).toHaveAttribute('aria-labelledby', `jc-awards-heading-${secondId}`);
             expect(await overlay.evaluate((node) => getComputedStyle(node).position)).toBe('fixed');
-            expect(await page.evaluate(() => document.documentElement.scrollHeight),
-                'opening variable-height awards content remains out of document flow')
-                .toBe(flowAfterTrigger.scrollHeight);
+            const overlayFlow = await overlay.evaluate((node) => {
+                const before = document.documentElement.scrollHeight;
+                node.style.display = 'none';
+                const hidden = document.documentElement.scrollHeight;
+                node.style.removeProperty('display');
+                const restored = document.documentElement.scrollHeight;
+                return { before, hidden, restored };
+            });
+            expect(overlayFlow,
+                'synchronously removing and restoring variable-height awards content changes no document flow')
+                .toEqual({
+                    before: overlayFlow.before,
+                    hidden: overlayFlow.before,
+                    restored: overlayFlow.before,
+                });
             await expect(section).toHaveClass(/verticalSection/);
             await expect(section).toContainText('<img onerror=alert(1)>');
             await expect(section).toContainText('Audience Award');

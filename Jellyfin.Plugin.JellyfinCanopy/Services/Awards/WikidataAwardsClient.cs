@@ -103,7 +103,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
         public async Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var checkpoint = LoadCheckpoint();
+            cancellationToken.ThrowIfCancellationRequested();
             // PERF(S4): transient, source-global (not local-library/user keyed),
             // capped at 600k records within MaxTraversalResidentBytes.
             var records = checkpoint?.Records.ToHashSet()
@@ -121,6 +123,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 }
 
                 var sourcePage = await FetchPageAsync(cursor, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (bindingCount > _maxTotalBindings - sourcePage.BindingCount)
                 {
                     throw new InvalidDataException("Wikidata awards result exceeded the binding limit.");
@@ -139,6 +142,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
                 if (sourcePage.BindingCount < PageSize)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     DeleteCheckpoint(requiredForPublication: true);
                     return new AwardsSourceSnapshot(SortRecords(records));
                 }
@@ -146,6 +150,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 cursor = sourcePage.NextCursor
                     ?? throw new InvalidDataException("Wikidata awards page omitted its continuation cursor.");
                 completedPages++;
+                cancellationToken.ThrowIfCancellationRequested();
                 SaveCheckpoint(new AwardsSourceCheckpoint
                 {
                     Version = CheckpointVersion,

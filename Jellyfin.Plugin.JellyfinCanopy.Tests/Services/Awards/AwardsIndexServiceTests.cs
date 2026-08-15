@@ -1,4 +1,6 @@
+using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Awards;
+using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -76,6 +78,195 @@ public sealed class AwardsIndexServiceTests : IDisposable
         Assert.Equal(1, source.Calls);
         Assert.True(File.Exists(path));
         Assert.Empty(service.Lookup(AwardsMediaKind.Movie, new Dictionary<string, string>()).Wins);
+    }
+
+    [Fact]
+    public async Task Refresh_FinalCancelledWaiterCancelsAndJoinsPhysicalWorkWithoutLatePublication()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "final-waiter-index.json");
+        using var service = new AwardsIndexService(source, NullLogger<AwardsIndexService>.Instance, path);
+        using var cancellation = new CancellationTokenSource();
+        var refresh = service.RefreshAsync(cancellation.Token);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancellation.Cancel();
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(refresh.IsCompleted);
+        source.Release(FreshRecord());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
+        Assert.Equal(1, source.Calls);
+        Assert.False(File.Exists(path));
+        Assert.Empty(service.Lookup(
+            AwardsMediaKind.Movie,
+            new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins);
+    }
+
+    [Fact]
+    public async Task Refresh_CancelledWaiterCannotCancelOneSurvivingSharedWaiter()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "surviving-waiter-index.json");
+        using var service = new AwardsIndexService(source, NullLogger<AwardsIndexService>.Instance, path);
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = service.RefreshAsync(cancellation.Token);
+        var surviving = service.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+        Assert.False(source.CancellationObserved.IsCompleted);
+        Assert.False(surviving.IsCompleted);
+        source.Release(FreshRecord());
+
+        Assert.True(await surviving);
+        Assert.Equal(1, source.Calls);
+        Assert.True(File.Exists(path));
+        Assert.Equal(
+            "Fresh Award",
+            Assert.Single(service.Lookup(
+                AwardsMediaKind.Movie,
+                new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins).Name);
+    }
+
+    [Fact]
+    public async Task Disable_CancelsAndJoinsPhysicalWorkWithoutLateDiskOrMemoryPublication()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "disabled-index.json");
+        var config = new FakePluginConfigProvider(
+            new PluginConfiguration { AwardsEnabled = true });
+        using var service = new AwardsIndexService(
+            source,
+            NullLogger<AwardsIndexService>.Instance,
+            path,
+            configProvider: config);
+        var refresh = service.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        config.Current = new PluginConfiguration { AwardsEnabled = false };
+        var disable = service.NotifyConfigurationChangedAsync();
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(disable.IsCompleted);
+        source.Release(FreshRecord());
+
+        await disable;
+        Assert.False(await refresh);
+        Assert.Equal(1, source.Calls);
+        Assert.False(File.Exists(path));
+        Assert.Empty(service.Lookup(
+            AwardsMediaKind.Movie,
+            new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins);
+        Assert.False(await service.RefreshAsync(CancellationToken.None));
+        Assert.Equal(1, source.Calls);
+    }
+
+    [Fact]
+    public async Task DisableThenReenable_OldLateGenerationCannotOverwriteFreshPublication()
+    {
+        var stale = new LateReturningSource();
+        var fresh = new LateReturningSource();
+        var source = new SequenceLateSource(stale, fresh);
+        var path = Path.Combine(_root, "reenabled-index.json");
+        var config = new FakePluginConfigProvider(
+            new PluginConfiguration { AwardsEnabled = true });
+        using var service = new AwardsIndexService(
+            source,
+            NullLogger<AwardsIndexService>.Instance,
+            path,
+            configProvider: config);
+        var oldRefresh = service.RefreshAsync(CancellationToken.None);
+        await stale.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        config.Current = new PluginConfiguration { AwardsEnabled = false };
+        var disable = service.NotifyConfigurationChangedAsync();
+        await stale.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        config.Current = new PluginConfiguration { AwardsEnabled = true };
+        await service.NotifyConfigurationChangedAsync();
+        var newRefresh = service.RefreshAsync(CancellationToken.None);
+        await fresh.Started.WaitAsync(TimeSpan.FromSeconds(10));
+        fresh.Release(FreshRecord());
+
+        Assert.True(await newRefresh);
+        stale.Release(FreshRecord() with { AwardName = "Stale Award", Year = 2025 });
+        await disable;
+        Assert.False(await oldRefresh);
+        Assert.Equal(2, source.Calls);
+        Assert.Equal(
+            "Fresh Award",
+            Assert.Single(service.Lookup(
+                AwardsMediaKind.Movie,
+                new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins).Name);
+    }
+
+    [Fact]
+    public async Task StopAsync_CancelsAndJoinsPhysicalWorkWithoutLatePublication()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "shutdown-index.json");
+        using var service = new AwardsIndexService(source, NullLogger<AwardsIndexService>.Instance, path);
+        var refresh = service.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var stop = service.StopAsync(CancellationToken.None);
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(stop.IsCompleted);
+        source.Release(FreshRecord());
+
+        await stop;
+        Assert.False(await refresh);
+        Assert.False(File.Exists(path));
+        Assert.Empty(service.Lookup(
+            AwardsMediaKind.Movie,
+            new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins);
+        Assert.False(await service.RefreshAsync(CancellationToken.None));
+        Assert.Equal(1, source.Calls);
+    }
+
+    [Fact]
+    public async Task Dispose_CancelsAndJoinsPhysicalWorkWithoutLatePublication()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "disposed-index.json");
+        var service = new AwardsIndexService(source, NullLogger<AwardsIndexService>.Instance, path);
+        var refresh = service.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var dispose = Task.Run(service.Dispose);
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(dispose.IsCompleted);
+        source.Release(FreshRecord());
+
+        await dispose;
+        Assert.False(await refresh);
+        Assert.False(File.Exists(path));
+        Assert.Empty(service.Lookup(
+            AwardsMediaKind.Movie,
+            new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins);
+        Assert.Equal(1, source.Calls);
+    }
+
+    [Fact]
+    public async Task ConcurrentStopAndDispose_AreIdempotentAndJoinTheSamePhysicalFlight()
+    {
+        var source = new LateReturningSource();
+        var path = Path.Combine(_root, "concurrent-stop-dispose-index.json");
+        var service = new AwardsIndexService(source, NullLogger<AwardsIndexService>.Instance, path);
+        var refresh = service.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var stop = service.StopAsync(CancellationToken.None);
+        var dispose = Task.Run(service.Dispose);
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        source.Release(FreshRecord());
+
+        await Task.WhenAll(stop, dispose);
+        service.Dispose();
+        Assert.False(await refresh);
+        Assert.Equal(1, source.Calls);
+        Assert.False(File.Exists(path));
+        Assert.False(await service.RefreshAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -238,6 +429,47 @@ public sealed class AwardsIndexServiceTests : IDisposable
 
         public void Release(IReadOnlyList<AwardsSourceRecord> records)
             => _completion.SetResult(new AwardsSourceSnapshot(records));
+    }
+
+    private static AwardsSourceRecord FreshRecord()
+        => new("Q42", AwardsMediaKind.Movie, "tmdb", "123", "Fresh Award", 2026, AwardOutcome.Win);
+
+    private sealed class LateReturningSource : IAwardsSourceClient
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _cancellationObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<AwardsSourceSnapshot> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls { get; private set; }
+
+        public Task Started => _started.Task;
+
+        public Task CancellationObserved => _cancellationObserved.Task;
+
+        public async Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+        {
+            Calls++;
+            _started.TrySetResult();
+            using var registration = cancellationToken.Register(() => _cancellationObserved.TrySetResult());
+            return await _completion.Task.ConfigureAwait(false);
+        }
+
+        public void Release(AwardsSourceRecord record)
+            => _completion.TrySetResult(new AwardsSourceSnapshot([record]));
+    }
+
+    private sealed class SequenceLateSource(params LateReturningSource[] sources) : IAwardsSourceClient
+    {
+        private readonly Queue<LateReturningSource> _sources = new(sources);
+
+        public int Calls { get; private set; }
+
+        public Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+        {
+            Calls++;
+            return _sources.Dequeue().FetchCompleteAsync(cancellationToken);
+        }
     }
 
     private sealed class SequenceSource : IAwardsSourceClient

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Awards;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Qbittorrent;
 using MediaBrowser.Common.Plugins;
@@ -67,6 +68,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly ILogger<LiveNotifierService> _logger;
         private readonly ITagCacheLifecycle _tagCacheLifecycle;
         private readonly IQbittorrentTelemetryService _qbittorrentTelemetry;
+        private readonly AwardsIndexService _awardsIndexService;
 
         private BasePlugin<PluginConfiguration>? _plugin;
         private EventHandler<BasePluginConfiguration>? _handler;
@@ -83,6 +85,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             PlatformPreparedActionContextOwner platformPreparedContexts,
             ITagCacheLifecycle tagCacheLifecycle,
             IQbittorrentTelemetryService qbittorrentTelemetry,
+            AwardsIndexService awardsIndexService,
             ILogger<LiveNotifierService> logger)
         {
             _pluginManager = pluginManager;
@@ -97,6 +100,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _logger = logger;
             _tagCacheLifecycle = tagCacheLifecycle ?? throw new ArgumentNullException(nameof(tagCacheLifecycle));
             _qbittorrentTelemetry = qbittorrentTelemetry ?? throw new ArgumentNullException(nameof(qbittorrentTelemetry));
+            _awardsIndexService = awardsIndexService ?? throw new ArgumentNullException(nameof(awardsIndexService));
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -169,6 +173,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // enable remains unavailable until its one background generation commits.
             _tagCacheLifecycle.NotifyConfigurationChanged();
 
+            // Awards refresh work is process-owned and may outlive the scheduled
+            // task that started it. A live disable synchronously revokes that
+            // authority now; retain its join while the other configuration owners
+            // perform their own required synchronous invalidations below.
+            var awardsRefreshJoin = _awardsIndexService.NotifyConfigurationChangedAsync();
+
             // Reconcile monitor subscriptions + invalidate cached Seerr state BEFORE
             // the first await, so the fire-and-forget ConfigurationChanged callback
             // applies subscription ownership synchronously and cannot be delayed by
@@ -184,6 +194,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     "LiveNotifier: failed to invalidate {Owner} Seerr state on config change.",
                     failure.Owner);
             }
+
+            // No client push may announce the disabled configuration while its
+            // physical awards provider/checkpoint/index operation is still live.
+            await awardsRefreshJoin.ConfigureAwait(false);
 
             try
             {

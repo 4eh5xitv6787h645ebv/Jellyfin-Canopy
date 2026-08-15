@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 46975,
-        "totalLines": 56891
+        "coveredLines": 47090,
+        "totalLines": 57019
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 46971,
-        "maximumCoveredLines": 46975
+        "minimumCoveredLines": 47090,
+        "maximumCoveredLines": 47090
       },
       "tolerance": {
-        "missingCoveredLines": 4,
-        "rationale": "Issue #717 adds the disabled-by-default atomic Wikidata awards index, bounded serialized keyset pagination and resumable checkpoints, authorized minimal controller, scheduled/manual execution ownership, and identity- and navigation-fenced details UI on top of the combined #718/#732/#733 main tree. Two clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite coverage runs on this exact 56,891-line source and 4,463-test scope passed every test and measured 46,975/56,891 (82.570178%) and 46,971/56,891 (82.563147%). The reviewed observed high-water is therefore 46,975/56,891 and the exact observed floor is 46,971/56,891; the four-line instrumentation spread is 0.007031 percentage points, within the 0.15-point policy maximum. The earlier #732/#733 observations belong to the prior 55,954-line scope and are not mixed into this changed-scope envelope. One pre-test command with an incorrect project path is excluded because no tests ran; no non-clean test result entered this envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 0,
+        "rationale": "Issue #717 adds the disabled-by-default atomic Wikidata awards index, bounded serialized keyset pagination and resumable checkpoints, authorized minimal controller, scheduled/manual execution ownership, and identity- and navigation-fenced details UI on top of the combined #718/#732/#733 main tree. Its R4 lifecycle remediation gives every shared refresh generation an explicit final-waiter, live-disable, host-stop, and disposal cancellation-and-join owner, with retired-generation and cancellation fences before checkpoint, index, and memory publication plus deterministic concurrency regressions. Two clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite coverage runs on this exact 57,019-line source and 4,471-test scope passed every test and both measured 47,090/57,019 (82.586506%). The reviewed observed high-water and exact observed floor are therefore both 47,090/57,019 with zero instrumentation tolerance. The earlier R4 observations belong to the prior 57,014-line scope and are not mixed into this final changed-scope envelope. One preceding full-suite attempt passed 4,470/4,471 and is excluded in full because it was not clean; both accepted runs completed the identical canonical test scope and only the intentionally stale scope ratchet failed afterward. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

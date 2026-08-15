@@ -238,6 +238,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton(new Services.Awards.AwardsHostIdentity(applicationHost.SystemId));
             serviceCollection.AddSingleton<Services.Awards.IAwardsSourceClient, Services.Awards.WikidataAwardsClient>();
             serviceCollection.AddSingleton<Services.Awards.AwardsIndexService>();
+            serviceCollection.AddSingleton<IHostedService>(serviceProvider =>
+                serviceProvider.GetRequiredService<Services.Awards.AwardsIndexService>());
             serviceCollection.AddSingleton<ITagCacheLifecycle>(services =>
                 services.GetRequiredService<TagCacheLifecycleService>());
             serviceCollection.AddTransient<ArrTagsSyncTask>();
