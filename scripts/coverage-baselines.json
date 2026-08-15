@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2944,
-        "totalLines": 3329
+        "coveredLines": 2967,
+        "totalLines": 3352
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2944,
-        "maximumCoveredLines": 2944
+        "minimumCoveredLines": 2967,
+        "maximumCoveredLines": 2967
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #670 adds the shared ambiguity-safe file-source detector used by poster badges and item details, including canonical source normalization, symmetric generic-versus-specific evidence merging, legacy BluRay suffix compatibility, and multi-version consensus handling. Two clean full client runs on this exact 3,329-line core scope and 2,399-test tree both passed every test and measured 2,944/3,329 (88.435%), advancing the prior 2,943-line high-water by one fully covered line and improving the reviewed ratio from 88.431% with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,944/3,329 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #709 adds the shared typed effective-region resolver and catalog parser used by Elsewhere, TMDB release dates, Seerr provider icons and More Info, and discovery provider requests. Two clean full client runs on this exact 3,352-line core scope and 2,415-test tree both passed every test and measured 2,967/3,352 (88.514%), adding 23 fully covered instrumented lines and improving the reviewed ratio from 2,944/3,329 (88.435%) with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,967/3,352 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {

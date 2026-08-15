@@ -165,4 +165,73 @@ describe('Elsewhere account ownership', () => {
         document.getElementById('cancel-settings')!.click();
         expect(getRefreshSafetyHoldCount('modal')).toBe(0);
     });
+
+    it('uses the effective user region for automatic empty-result lookup and labels', async () => {
+        document.body.innerHTML = `
+            <div class="detailSectionContent">
+                <a href="https://www.themoviedb.org/movie/123">TMDB</a>
+            </div>`;
+        const context = JC.identity.capture()!;
+        JC.userConfig = JC.identity.own({
+            elsewhere: JC.identity.own({ Region: 'ca', Regions: [], Services: [] }, context),
+        }, context);
+        JC.t = (key: string, params?: Record<string, unknown>) =>
+            `${key}:${typeof params?.region === 'string' ? params.region : ''}`;
+        vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+            const url = input instanceof Request
+                ? input.url
+                : input instanceof URL ? input.href : input;
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                text: () => Promise.resolve(
+                    url.includes('providers.txt') ? 'Netflix' : 'US\tUnited States\nCA\tCanada',
+                ),
+            } as Response);
+        }));
+        const apiFetch = vi.fn().mockResolvedValue({ results: {} });
+        JC.core.api = { fetch: apiFetch } as unknown as typeof JC.core.api;
+
+        (JC as typeof JC & { initializeElsewhereScript: () => void }).initializeElsewhereScript();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(document.querySelector('.streaming-lookup-container')?.textContent)
+            .toContain('elsewhere_panel_not_available_in:Canada');
+        expect(apiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('persists an empty override when reset is selected so the current admin default is inherited', async () => {
+        const context = JC.identity.capture()!;
+        JC.pluginConfig.DEFAULT_REGION = 'GB';
+        JC.userConfig = JC.identity.own({
+            elsewhere: JC.identity.own({ Region: 'CA', Regions: [], Services: [] }, context),
+        }, context);
+        vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(
+                (input instanceof Request
+                    ? input.url
+                    : input instanceof URL ? input.href : input).includes('providers.txt')
+                    ? 'Netflix'
+                    : 'US\tUnited States\nGB\tUnited Kingdom\nCA\tCanada',
+            ),
+        } as Response)));
+        const save = vi.fn().mockResolvedValue({});
+        JC.saveUserSettings = save;
+
+        (JC as typeof JC & { initializeElsewhereScript: () => void }).initializeElsewhereScript();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const select = document.getElementById('region-select') as HTMLSelectElement;
+        select.value = '';
+        document.getElementById('save-settings')!.click();
+        await Promise.resolve();
+
+        expect(save).toHaveBeenCalledWith('elsewhere.json', expect.objectContaining({ Region: '' }));
+    });
 });

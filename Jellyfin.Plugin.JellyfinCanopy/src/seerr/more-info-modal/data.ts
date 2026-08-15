@@ -1,7 +1,7 @@
 // src/seerr/more-info-modal/data.ts
 // Fetch + pure data helpers for the more-info modal (ratings, details,
 // content rating resolution, currency formatting, error reporting).
-import { JC } from '../../globals';
+import { resolveEffectiveStreamingRegion } from '../../core/effective-region';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -84,7 +84,7 @@ try {
  */
 function getContentRating(data: any, mediaType: any) {
 // Resolve region: prefer Elsewhere user setting → plugin fallback → US
-const region = ((JC?.userConfig?.elsewhere as any)?.Region || JC?.pluginConfig?.DEFAULT_REGION || 'US')?.toUpperCase();
+const region = resolveEffectiveStreamingRegion();
 
 if (mediaType === 'movie') {
     // For movies: releases.results[].release_dates[].certification

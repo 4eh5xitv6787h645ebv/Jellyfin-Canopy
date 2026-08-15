@@ -8,6 +8,14 @@ import { assetUrl } from '../core/asset-urls';
 import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { createStableMethodFacade } from '../core/feature-loader';
+import {
+    normalizeStreamingRegion,
+    parseStreamingRegionCatalog,
+    resolveAdminStreamingRegion,
+    resolveCatalogStreamingRegion,
+    resolveEffectiveStreamingRegion,
+    type StreamingRegionCode,
+} from '../core/effective-region';
 import { onNavigate, onViewPage } from '../core/navigation';
 import type { ApiApi, JELegacyHelpers, PluginConfig } from '../types/jc';
 
@@ -33,7 +41,6 @@ const JC = JEBase as typeof JEBase & {
     pluginConfig: PluginConfig & {
         ElsewhereEnabled?: boolean;
         TmdbEnabled?: boolean;
-        DEFAULT_REGION?: string;
         DEFAULT_PROVIDERS?: string;
         IGNORE_PROVIDERS?: string;
         ElsewhereCustomBrandingText?: string;
@@ -128,7 +135,7 @@ function initializeElsewhereImpl(): void {
     }
     // --- Configuration ---
     const TmdbEnabled = !!JC.pluginConfig.TmdbEnabled;
-    const DEFAULT_REGION = JC.pluginConfig.DEFAULT_REGION || 'US';
+    const adminRegion = resolveAdminStreamingRegion(JC.pluginConfig);
     const DEFAULT_PROVIDERS = JC.pluginConfig.DEFAULT_PROVIDERS ? JC.pluginConfig.DEFAULT_PROVIDERS.replace(/'/g, '').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(s => s) : [];
     const IGNORE_PROVIDERS = JC.pluginConfig.IGNORE_PROVIDERS ? JC.pluginConfig.IGNORE_PROVIDERS.replace(/'/g, '').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(s => s) : [];
     const ELSEWHERE_CUSTOM_BRANDING_TEXT = JC.pluginConfig.ElsewhereCustomBrandingText || '';
@@ -139,11 +146,16 @@ function initializeElsewhereImpl(): void {
         return;
     }
 
-    let userRegion = DEFAULT_REGION;
+    let userRegion = resolveEffectiveStreamingRegion(JC.userConfig, JC.pluginConfig);
+    let userRegionOverride: StreamingRegionCode | '' = normalizeStreamingRegion(JC.userConfig?.elsewhere?.Region) || '';
     let userRegions: string[] = []; // Multiple regions for search
     let userServices: string[] = []; // Empty by default - will show all services from settings region
     let availableRegions: Record<string, string> = {};
     let availableProviders: string[] = [];
+
+    function ensureRegionDisplay(code: string): void {
+        if (code && !availableRegions[code]) availableRegions[code] = code;
+    }
 
     // Safe fallback for helpers.js Stage-3 load-order races.
     const extLink = JC.helpers?.createExternalLink || ((u: string, o?: ExternalLinkOptions) => {
@@ -167,14 +179,12 @@ function initializeElsewhereImpl(): void {
             .then(response => response.ok ? response.text() : Promise.reject(new Error(`HTTP ${response.status}`)))
             .then(text => {
                 if (!isInitializerCurrent()) return;
-                const lines = text.trim().split('\n');
-                lines.forEach(line => {
-                    if (line.startsWith('#')) return;
-                    const [code, name] = line.split('\t');
-                    if (code && name) {
-                        availableRegions[code] = name;
-                    }
-                });
+                const catalog = parseStreamingRegionCatalog(text);
+                if (catalog.length === 0) throw new Error('Empty regions catalog');
+                availableRegions = Object.fromEntries(catalog.map((entry) => [entry.code, entry.name]));
+                userRegion = resolveCatalogStreamingRegion(userRegion, catalog, adminRegion);
+                if (userRegionOverride && userRegion !== userRegionOverride) userRegionOverride = '';
+                ensureRegionDisplay(adminRegion);
             })
             .catch(() => {
                 if (!isInitializerCurrent()) return;
@@ -186,6 +196,9 @@ function initializeElsewhereImpl(): void {
                     'ES': 'Spain', 'NL': 'Netherlands', 'SE': 'Sweden', 'NO': 'Norway',
                     'DK': 'Denmark', 'FI': 'Finland'
                 };
+                // A stale/missing mirror must not erase a valid uncommon value.
+                ensureRegionDisplay(adminRegion);
+                ensureRegionDisplay(userRegion);
             });
 
              // Load providers
@@ -484,8 +497,9 @@ function initializeElsewhereImpl(): void {
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #ccc;">${JC.t('elsewhere_settings_country')}</label>
                 <select id="region-select" style="width: 100%; padding: 12px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
+                    <option value="" ${userRegionOverride === '' ? 'selected' : ''}>${JC.escapeHtml(`Use server default — ${availableRegions[adminRegion] || adminRegion} (${adminRegion})`)}</option>
                     ${Object.entries(availableRegions).map(([code, name]) =>
-                        `<option value="${JC.escapeHtml(code)}" ${code === userRegion ? 'selected' : ''}>${JC.escapeHtml(name)}</option>`
+                        `<option value="${JC.escapeHtml(code)}" ${code === userRegionOverride ? 'selected' : ''}>${JC.escapeHtml(`${name} (${code})`)}</option>`
                     ).join('')}
                 </select>
             </div>
@@ -542,7 +556,7 @@ function initializeElsewhereImpl(): void {
         document.getElementById('save-settings')!.onclick = (event) => {
             if (rejectStaleEvent(event)) return;
             const saveButton = document.getElementById('save-settings') as HTMLButtonElement;
-            const nextRegion = (document.getElementById('region-select') as HTMLSelectElement).value;
+            const nextRegionOverride = (document.getElementById('region-select') as HTMLSelectElement).value;
 
             // Get selected regions from autocomplete
             const selectedRegions: string[] = [];
@@ -560,18 +574,21 @@ function initializeElsewhereImpl(): void {
             });
             const elsewhereSettings = JC.identity.own({
                 Revision: Number(JC.userConfig.elsewhere?.Revision) || 0,
-                Region: nextRegion,
+                Region: nextRegionOverride,
                 Regions: selectedRegions,
                 Services: selectedServices
             }, identityContext);
             saveButton.disabled = true;
             void JC.saveUserSettings('elsewhere.json', elsewhereSettings).then(() => {
                 if (!isInitializerCurrent()) return;
-                userRegion = nextRegion;
+                userRegionOverride = normalizeStreamingRegion(nextRegionOverride) || '';
+                userRegion = userRegionOverride || adminRegion;
                 userRegions = selectedRegions;
                 userServices = selectedServices;
                 JC.userConfig.elsewhere = elsewhereSettings;
                 hideSettingsModal();
+                document.querySelectorAll('.streaming-lookup-container').forEach((node) => node.remove());
+                scheduleStreamingLookup();
             }).catch(() => undefined).finally(() => {
                 if (isInitializerCurrent()) saveButton.disabled = false;
             });
@@ -588,11 +605,16 @@ function initializeElsewhereImpl(): void {
 
     // Load saved settings
     function loadSettings(): void {
-        const settings = JC.userConfig.elsewhere;
+        const settings = JC.userConfig.elsewhere || {};
         JC.rememberUserSettingsSnapshot?.('elsewhere.json', settings);
-        userRegion = settings.Region || DEFAULT_REGION;
-        userRegions = settings.Regions || [];
-        userServices = settings.Services || [];
+        userRegionOverride = normalizeStreamingRegion(settings.Region) || '';
+        userRegion = resolveEffectiveStreamingRegion(JC.userConfig, JC.pluginConfig);
+        userRegions = Array.isArray(settings.Regions)
+            ? (settings.Regions as unknown[])
+                .map(normalizeStreamingRegion)
+                .filter((value): value is StreamingRegionCode => value !== null)
+            : [];
+        userServices = Array.isArray(settings.Services) ? settings.Services : [];
     }
 
     function createServiceBadge(service: any, tmdbId: string, mediaType: string): HTMLElement {
@@ -697,7 +719,7 @@ function initializeElsewhereImpl(): void {
 
     // Process streaming data for default region (auto-load)
     function processDefaultRegionData(data: any, tmdbId: string, mediaType: string): HTMLElement {
-        const regionData = data.results[DEFAULT_REGION];
+        const regionData = data?.results?.[userRegion];
 
         const container = document.createElement('div');
         container.style.cssText = `
@@ -757,7 +779,7 @@ function initializeElsewhereImpl(): void {
         );
 
         if (hasFilteredServices) {
-            title.textContent = JC.t('elsewhere_panel_available_in', { region: availableRegions[DEFAULT_REGION] || DEFAULT_REGION });
+            title.textContent = JC.t('elsewhere_panel_available_in', { region: availableRegions[userRegion] || userRegion });
         } else if (ELSEWHERE_CUSTOM_BRANDING_TEXT) {
             // Show custom branding when no services are available and custom text is configured
             title.textContent = ELSEWHERE_CUSTOM_BRANDING_TEXT;
@@ -792,7 +814,7 @@ function initializeElsewhereImpl(): void {
             }
         } else {
             // Fallback to default message if no custom text is set
-            title.textContent = JC.t('elsewhere_panel_not_available_in', { region: availableRegions[DEFAULT_REGION] || DEFAULT_REGION });
+            title.textContent = JC.t('elsewhere_panel_not_available_in', { region: availableRegions[userRegion] || userRegion });
         }
 
         title.style.cssText = `
@@ -985,7 +1007,7 @@ function initializeElsewhereImpl(): void {
                 const unavailableRegions: string[] = [];
 
                 regionsToSearch.forEach((region, index) => {
-                    const regionData = data.results[region];
+                    const regionData = data?.results?.[region];
                     const hasServices = regionData && regionData.flatrate && regionData.flatrate.length > 0;
 
                     if (hasServices) {
@@ -1113,7 +1135,7 @@ function initializeElsewhereImpl(): void {
 
     // Process streaming data for a specific region
     function processRegionData(data: any, tmdbId: string, mediaType: string, region: string, showAvailable = false): HTMLElement | null {
-        const regionData = data.results[region];
+        const regionData = data?.results?.[region];
         if (!regionData || !regionData.flatrate) {
             return null;
         }

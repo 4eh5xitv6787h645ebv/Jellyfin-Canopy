@@ -2577,7 +2577,99 @@
         // semantics via CONFIG_FIELD_OVERRIDES below. Anything more complex (multi-element
         // enums, validated text, list builders, arr instances) stays hand-written in
         // loadConfig/buildConfigFromForm.
+        var JC_DEFAULT_STREAMING_REGION = 'US';
+        var JC_REGION_CATALOG_CDN_URL = 'https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt';
+        var _jcRegionCatalogLoadToken = 0;
+
+        function jcNormalizeStreamingRegion(value) {
+            if (typeof value !== 'string') return null;
+            var normalized = value.trim().toUpperCase();
+            return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
+        }
+
+        function jcParseStreamingRegionCatalog(text) {
+            if (typeof text !== 'string') return [];
+            var seen = new Set();
+            var entries = [];
+            text.split(/\r?\n/).forEach(function (line) {
+                var trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return;
+                var separator = line.indexOf('\t');
+                if (separator < 0) return;
+                var code = jcNormalizeStreamingRegion(line.slice(0, separator));
+                var name = line.slice(separator + 1).trim();
+                if (!code || !name || seen.has(code)) return;
+                seen.add(code);
+                entries.push({ code: code, name: name });
+            });
+            return entries;
+        }
+
+        function jcResolveCatalogStreamingRegion(value, entries, catalogLoaded) {
+            var normalized = jcNormalizeStreamingRegion(value) || JC_DEFAULT_STREAMING_REGION;
+            if (!catalogLoaded) return normalized;
+            return entries.some(function (entry) { return entry.code === normalized; })
+                ? normalized
+                : JC_DEFAULT_STREAMING_REGION;
+        }
+
+        function jcSetDefaultRegionOptions(select, entries, selected, catalogLoaded) {
+            var resolved = jcResolveCatalogStreamingRegion(selected, entries, catalogLoaded);
+            var effectiveEntries = entries.slice();
+            if (!effectiveEntries.some(function (entry) { return entry.code === JC_DEFAULT_STREAMING_REGION; })) {
+                effectiveEntries.unshift({ code: JC_DEFAULT_STREAMING_REGION, name: 'United States of America' });
+            }
+            if (!catalogLoaded && !effectiveEntries.some(function (entry) { return entry.code === resolved; })) {
+                effectiveEntries.push({ code: resolved, name: 'Saved region' });
+            }
+            select.replaceChildren();
+            effectiveEntries.forEach(function (entry) {
+                var option = document.createElement('option');
+                option.value = entry.code;
+                option.textContent = entry.name + ' (' + entry.code + ')';
+                select.appendChild(option);
+            });
+            select.value = resolved;
+            return resolved;
+        }
+
+        async function jcLoadDefaultRegionCatalog(config) {
+            var select = document.getElementById('DEFAULT_REGION');
+            if (!select) return;
+            var token = ++_jcRegionCatalogLoadToken;
+            var persisted = jcNormalizeStreamingRegion(config.DEFAULT_REGION) || JC_DEFAULT_STREAMING_REGION;
+            var url = config.AssetCacheEnabled === false
+                ? JC_REGION_CATALOG_CDN_URL
+                : ApiClient.getUrl('/JellyfinCanopy/assets/elsewhere/regions.txt');
+            var controller = new AbortController();
+            var timeout = setTimeout(function () { controller.abort(); }, 5000);
+            try {
+                var response = await fetch(url, { signal: controller.signal, credentials: 'same-origin' });
+                if (!response.ok) throw new Error('Region catalog HTTP ' + response.status);
+                var entries = jcParseStreamingRegionCatalog(await response.text());
+                if (entries.length === 0) throw new Error('Region catalog is empty');
+                if (token !== _jcRegionCatalogLoadToken || !select.isConnected) return;
+                jcSetDefaultRegionOptions(select, entries, persisted, true);
+            } catch (error) {
+                if (token !== _jcRegionCatalogLoadToken || !select.isConnected) return;
+                // Keep the normalized saved code selectable. A mirror refresh or
+                // direct-CDN outage must not silently rewrite an uncommon region.
+                jcSetDefaultRegionOptions(select, [], persisted, false);
+                console.warn('Jellyfin Canopy: region catalog unavailable; preserving the saved region.', error);
+            } finally {
+                clearTimeout(timeout);
+            }
+        }
+
         const CONFIG_FIELD_OVERRIDES = {
+            DEFAULT_REGION: {
+                load: function (el, value) {
+                    jcSetDefaultRegionOptions(el, [], value, false);
+                },
+                save: function (el) {
+                    return jcNormalizeStreamingRegion(el.value) || JC_DEFAULT_STREAMING_REGION;
+                }
+            },
             // isNaN/min-max clamps preserved verbatim from the old per-field save sites.
             AutoMovieRequestMinutesWatched: {
                 save: function (el) {
@@ -2782,6 +2874,7 @@
                 // [data-config-key] element (see applyConfigToBoundFields above).
                 // Complex editors and multi-element settings stay hand-written below.
                 applyConfigToBoundFields(config);
+                void jcLoadDefaultRegionCatalog(config);
 
                 // Restore action checkboxes
                 let savedAction;

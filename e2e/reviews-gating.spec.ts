@@ -137,7 +137,7 @@ test.describe('reviews gating', () => {
             elsewhere.dispatchEvent(new Event('input', { bubbles: true }));
 
             function probe(id: string) {
-                const el = document.getElementById(id) as HTMLInputElement;
+                const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
                 const container = el.closest('.inputContainer') as HTMLElement | null;
                 return {
                     disabled: el.disabled,

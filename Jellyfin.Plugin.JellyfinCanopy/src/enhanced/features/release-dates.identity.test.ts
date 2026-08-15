@@ -68,4 +68,26 @@ describe('release-date identity ownership', () => {
         await vi.waitFor(() => expect(container.textContent).toContain('2030'));
         expect(container.textContent).not.toContain('2000');
     });
+
+    it('uses the effective per-user region and keeps cache entries region-scoped', async () => {
+        const context = JC.identity.capture()!;
+        JC.userConfig = JC.identity.own({
+            elsewhere: JC.identity.own({ Region: 'ca' }, context),
+        }, context);
+        const plugin = vi.fn().mockResolvedValue({
+            results: [
+                { iso_3166_1: 'US', release_dates: [{ type: 3, release_date: '2001-01-01' }] },
+                { iso_3166_1: 'CA', release_dates: [{ type: 3, release_date: '2031-03-04' }] },
+            ],
+        });
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        displayReleaseDate('same-item', container);
+
+        await vi.waitFor(() => expect(container.textContent).toContain('2031'));
+        expect(container.textContent).not.toContain('2001');
+        expect(container.querySelector<HTMLElement>('.mediaInfoItem-releaseDate')?.dataset.region).toBe('CA');
+    });
 });
