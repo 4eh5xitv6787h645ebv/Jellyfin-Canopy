@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr er utilgjengelig",
   "maintainerr_version": "Versjon {version}",
   "maintainerr_view_content": "Se medieelementer",
-  "maintainerr_views": "Maintainerr visninger"
+  "maintainerr_views": "Maintainerr visninger",
+  "track_off": "Av",
+  "aspect_ratio_auto": "Auto",
+  "aspect_ratio_cover": "Dekk",
+  "aspect_ratio_fill": "Fyll",
+  "playback_info_title": "Avspillingsinfo",
+  "pi_resolution": "Oppløsning",
+  "pi_speed": "Hastighet",
+  "pi_dropped_frames": "Tapte bilder",
+  "pi_buffer": "Bufret",
+  "pi_play_method": "Avspillingsmetode",
+  "pi_transcoding": "Omkoding",
+  "pi_bitrate": "Bitrate",
+  "pi_transcode_reason": "Årsak",
+  "pi_container": "Beholder",
+  "pi_audio": "Lyd",
+  "pi_subtitle": "Undertekster"
 }

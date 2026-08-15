@@ -104,9 +104,19 @@ Drive Jellyfin without reaching for the mouse: a comprehensive set of hotkeys co
 | `Z` | Jump to Last Position |
 | `0`–`9` | Jump to that percentage of the video (`1` = 10%, `5` = 50%, …) |
 
-The audio and subtitle cycle shortcuts wait for Jellyfin's active track menu to
-finish mounting before changing one track. Repeated shortcuts coalesce while a
-menu is opening, and leaving playback cancels the pending action.
+Cycling shortcuts act without opening any menus:
+
+- **Cycle Audio/Subtitle Tracks** switch the track through Jellyfin's own
+  remote-control API (the same channel a phone remote uses), so no menu ever
+  flashes on screen. Subtitles cycle through *Off*; a toast names the new
+  track. If the session can't be resolved (rare), the shortcut falls back to
+  driving the native menu: it waits for the menu to finish mounting, repeated
+  presses coalesce, and leaving playback cancels the pending action.
+- **Cycle Aspect Ratio** writes the same setting the native player reads and
+  restyles the video directly — the native settings menu stays in sync.
+- **Show Playback Info** toggles a Canopy-rendered overlay (resolution,
+  play method, transcoding, bitrate, active tracks, dropped frames) instead of
+  opening the native settings → stats panel.
 
 **To customize a shortcut:**
 

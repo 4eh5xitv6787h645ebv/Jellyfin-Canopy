@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr be unavailable",
   "maintainerr_version": "Version {version}",
   "maintainerr_view_content": "View th’ cargo",
-  "maintainerr_views": "Maintainerr lookouts"
+  "maintainerr_views": "Maintainerr lookouts",
+  "track_off": "Becalmed",
+  "aspect_ratio_auto": "Auto",
+  "aspect_ratio_cover": "Cover",
+  "aspect_ratio_fill": "Fill",
+  "playback_info_title": "Voyage Report",
+  "pi_resolution": "Spyglass Reach",
+  "pi_speed": "Speed",
+  "pi_dropped_frames": "Frames Lost at Sea",
+  "pi_buffer": "In the Hold",
+  "pi_play_method": "Sailin’ Method",
+  "pi_transcoding": "Transcodin’",
+  "pi_bitrate": "Bitrate",
+  "pi_transcode_reason": "Reason",
+  "pi_container": "Cargo Crate",
+  "pi_audio": "Shanty Track",
+  "pi_subtitle": "Text Scrolls"
 }

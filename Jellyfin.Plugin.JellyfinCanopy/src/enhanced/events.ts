@@ -143,32 +143,11 @@ function keyListener(e: KeyboardEvent, owner: EventOwner, videoPage = isVideoPag
             e.stopPropagation();
             callOptional('cycleAspect');
             break;
-        case canonicalizeShortcut(activeShortcuts.ShowPlaybackInfo): {
+        case canonicalizeShortcut(activeShortcuts.ShowPlaybackInfo):
             e.preventDefault();
             e.stopPropagation();
-            // Check if stats dialog is already open
-            const statsDialog = document.querySelector('.actionSheetContent button[data-id="stats"]');
-            if (statsDialog) {
-                // Stats menu is open, close it
-                const dialogBackdropContainer = document.getElementById('dialogBackdropContainer');
-                const dialogContainer = document.getElementById('dialogContainer');
-                if (dialogBackdropContainer) dialogBackdropContainer.remove();
-                if (dialogContainer) dialogContainer.remove();
-            } else {
-                // Stats menu is not open, open it
-                document.querySelector<HTMLElement>(
-                    '.videoOsdBottom .btnVideoOsdSettings, ' +
-                    '.videoOsdBottom button[title="Settings"], ' +
-                    '.videoOsdBottom button[aria-label="Settings"]'
-                )?.click();
-                owner.schedule(() => {
-                    if (owner.isCurrent() && JC.identity.isCurrent(context)) {
-                        document.querySelector<HTMLElement>('.actionSheetContent button[data-id="stats"]')?.click();
-                    }
-                }, 120);
-            }
+            callOptional('togglePlaybackInfo');
             break;
-        }
         case canonicalizeShortcut(activeShortcuts.SubtitleMenu): {
             e.preventDefault();
             e.stopPropagation();
