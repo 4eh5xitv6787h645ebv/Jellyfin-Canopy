@@ -10,6 +10,8 @@ vi.mock('./template', () => ({
         <div class="jc-panel-header"></div>
         <button id="closeSettingsPanel" type="button">close</button>
         <input id="retainedSettingsToggle" type="checkbox">
+        <input id="customSubtitleBgAlpha" type="range" min="0" max="255" value="255">
+        <div id="subtitlePositionPreview" style="padding:0.08em 0.2em"></div>
     `,
 }));
 vi.mock('./shortcut-editor', () => ({ wireShortcutEditor: vi.fn() }));
@@ -25,6 +27,16 @@ vi.mock('./settings', () => ({
                 canopy.currentSettings!.retainedSettingsToggle =
                     (event.target as HTMLInputElement).checked;
                 void canopy.saveUserSettings!('settings.json', canopy.currentSettings!);
+            });
+        ctx.help.querySelector<HTMLInputElement>('#customSubtitleBgAlpha')!
+            .addEventListener('input', (event) => {
+                const canopy = window.JellyfinCanopy;
+                const alpha = Number((event.target as HTMLInputElement).value);
+                canopy.currentSettings!.customSubtitleBgColor = alpha === 0
+                    ? '#00000000'
+                    : '#000000FF';
+                ctx.help.querySelector<HTMLElement>('#subtitlePositionPreview')!
+                    .style.padding = alpha === 0 ? '0' : '0.08em 0.2em';
             });
     },
 }));
@@ -95,5 +107,34 @@ describe('settings panel retained descendant ownership', () => {
 
         expect(JC.currentSettings.retainedSettingsToggle).toBe(false);
         expect(save).not.toHaveBeenCalled();
+    });
+
+    it('keeps detached subtitle controls inert after an actual owner replacement', async () => {
+        await showPanel!();
+        const stalePanel = document.getElementById('jellyfin-canopy-panel')!;
+        const staleAlpha = stalePanel.querySelector<HTMLInputElement>('#customSubtitleBgAlpha')!;
+        const stalePreview = stalePanel.querySelector<HTMLElement>('#subtitlePositionPreview')!;
+        const stalePreviewStyle = stalePreview.getAttribute('style');
+
+        const ownerB = JC.identity.transition('server-a', 'user-b', 'subtitle-panel-owner-b')!;
+        JC.userConfig = JC.identity.own({ settings: JC.identity.own({}, ownerB) }, ownerB);
+        JC.currentSettings = JC.identity.own({ customSubtitleBgColor: '#000000FF' }, ownerB);
+        JC.loadSettings = vi.fn(() => JC.identity.own(
+            { customSubtitleBgColor: '#000000FF' },
+            ownerB,
+        ) as UserSettings);
+        await showPanel!();
+        const replacement = document.getElementById('jellyfin-canopy-panel')!;
+        expect(replacement).not.toBe(stalePanel);
+
+        stalePanel.id = 'retained-stale-subtitle-panel';
+        document.body.appendChild(stalePanel);
+        staleAlpha.value = '0';
+        staleAlpha.dispatchEvent(new Event('input', { bubbles: true }));
+
+        expect(stalePreview.getAttribute('style')).toBe(stalePreviewStyle);
+        expect(JC.currentSettings.customSubtitleBgColor).toBe('#000000FF');
+        expect(document.getElementById('jellyfin-canopy-panel')).toBe(replacement);
+        stalePanel.remove();
     });
 });

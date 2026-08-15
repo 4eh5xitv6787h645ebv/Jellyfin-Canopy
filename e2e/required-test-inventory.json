@@ -171,6 +171,7 @@
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › anonymous image fetches resolve per-user by marker on a shared IP",
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › authenticated DTO responses carry per-user markers (distinct per user, blurhashes re-keyed)",
     "e2e/spoiler-identity-tags.spec.ts › spoiler guard identity tags (reverse-proxy-safe attribution) › unknown or absent markers fail safe (legacy ladder, no errors)",
+    "e2e/subtitle-layout.spec.ts › custom subtitle rendered geometry › one-line, explicit multiline, and natural wraps keep one bottom edge and remain contained",
     "e2e/tags.spec.ts › tags › 8K dimensions render from a title-sanitized server-cache projection",
     "e2e/tags.spec.ts › tags › Collection language coverage has poster and details parity",
     "e2e/tags.spec.ts › tags › hide-on-hover fades the detail-page primary poster tags",

@@ -14,6 +14,11 @@ import {
 } from '../shortcut-codec';
 import { escapeHtml } from '../../core/ui-kit';
 import { cssColorOr } from '../../core/css-safe';
+import {
+    clampSubtitleHorizontal,
+    clampSubtitleVertical,
+    resolveSubtitleStyle,
+} from '../subtitle-style-contract';
 import { GITHUB_REPO } from './release-notes';
 import type { PanelContext } from './panel';
 import {
@@ -98,6 +103,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
             toggleAccentColor, kbdBackground, presetBoxBackground, githubButtonBg,
             releaseNotesTextColor, logoUrl, brandGradient } = ctx;
     const settings = ctx.editor.settings as Record<string, any>;
+    const subtitlePreview = resolveSubtitleStyle(settings);
     const shortcuts = ctx.editor.shortcuts;
     const activeShortcuts = ctx.editor.activeShortcuts;
     const hiddenSettings = ctx.editor.hiddenContentSettings;
@@ -321,7 +327,7 @@ export function buildPanelHtml(ctx: PanelContext): string {
                                         <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(255,255,255,0.08);transform:translateY(-50%);"></div>
                                     </div>
                                     <!-- Subtitle preview text -->
-                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-50%); pointer-events:none; white-space:nowrap; font-size:clamp(8px,1.5vw,13px); font-weight:600; color:${cssColorOr(settings.customSubtitleTextColor?.substring(0,7), '#ffffff')}; background-color:${cssColorOr(settings.customSubtitleBgColor, 'transparent')}; padding:2px 6px; border-radius:3px; text-shadow:0 0 4px #000; left:${Number(settings.subtitleHorizontalPosition ?? 50) || 0}%; top:${Number(settings.subtitleVerticalPosition ?? 85) || 0}%;">AaBbCcDd</div>
+                                    <div id="subtitlePositionPreview" style="position:absolute; transform:translate(-50%,-100%); pointer-events:none; white-space:nowrap; font-size:${Number(subtitlePreview.previewFontSizePx) || 8}px; font-family:${escapeHtml(subtitlePreview.fontFamily)}; font-weight:600; color:${escapeHtml(subtitlePreview.textColor)}; background-color:${escapeHtml(subtitlePreview.backgroundColor)}; padding:${subtitlePreview.visibleBackground ? '0.08em 0.2em' : '0'}; border-radius:${subtitlePreview.visibleBackground ? '0.15em' : '0'}; text-shadow:${escapeHtml(subtitlePreview.textShadow)}; left:${clampSubtitleHorizontal(settings.subtitleHorizontalPosition)}%; top:${clampSubtitleVertical(settings.subtitleVerticalPosition)}%;">AaBbCcDd</div>
                                 </div>
                                 <div style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.4); text-align:center;">${JC.t!('panel_settings_subtitles_position_note') || 'Requires Jellyfin subtitle style set to <b>Custom</b> in Subtitle settings'}</div>
                             </div>
