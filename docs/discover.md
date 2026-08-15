@@ -55,7 +55,7 @@ Elsewhere requires a **TMDB API key**. Everything else ships ready to go — **E
 2. Open the **Elsewhere** tab.
 3. Confirm **Enable Elsewhere** is checked (it is on by default).
 4. Enter your **TMDB API Key**.
-5. Select your **Default Region** (for example US, GB, DE).
+5. Select your **Default Region** from the mirrored Elsewhere region catalog.
 6. Optionally configure default and ignored providers (see below).
 7. Click **Save**.
 
@@ -77,7 +77,7 @@ The server-wide defaults live on the **Elsewhere** tab. Each is also used by fea
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Default Region** | `US` (when blank) | The primary region for availability checks. Also used by **TMDB Release Dates** and the **Seerr streaming icons**. Examples: `US`, `GB`, `DE`, `FR`, `ES`, `IT`. [Full list of regions](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt). |
+| **Default Region** | `US` (when blank, malformed, or unsupported) | The primary region for availability checks. The selector is populated from Canopy's locally mirrored Elsewhere [region catalog](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt) when asset caching is enabled, or from that upstream catalog when it is disabled. Legacy lowercase codes are normalized. If the catalog cannot be refreshed, Canopy preserves a supported saved code—including an uncommon one—instead of silently replacing it; unknown legacy values fall back to `US`. |
 | **Default Providers** | Blank (show all) | Comma-separated list of providers to show by default — e.g. `Netflix,Hulu,Disney Plus`. Leave blank to show every provider. Also used by the Seerr streaming icons. [Full list of providers](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt). |
 | **Ignore Providers** | Blank | Comma-separated list of providers to hide from results. **Supports regex patterns.** Also used by the Seerr streaming icons. |
 
@@ -113,12 +113,14 @@ Everything above is the server-wide admin default. Any user can override the reg
 
 | Control | What it does |
 | --- | --- |
-| **Region** | A primary region select that overrides the admin **Default Region** for this user. |
+| **Region** | A primary region select that overrides the admin **Default Region** for this user. Choose **Use server default** to clear the override and inherit the admin's current value. |
 | **Add other countries** | An autocomplete for adding extra regions. When set, the panel's **Search** button looks the title up across every selected region at once. |
 | **Providers** | A provider-filter autocomplete that overrides the admin **Default Providers** for this user. Leave it empty to show every provider. |
 | **Search** | Runs the multi-region lookup for the chosen region(s) and shows availability for each. |
 
-Each user's choices are saved server-side to their own `elsewhere.json`, so they persist across devices and never change the admin defaults or anyone else's view. A user who never opens the dialog keeps the admin Default Region and Default Providers.
+Each user's choices are saved server-side to their own `elsewhere.json`, so they persist across devices and never change the admin defaults or anyone else's view. A user who never opens the dialog—or resets **Region** to **Use server default**—inherits the admin Default Region, including later admin changes.
+
+Canopy resolves one effective region for each signed-in user: a valid per-user override wins, otherwise the current admin default is used, and `US` is the final fallback. That effective region is used consistently by the automatic Elsewhere lookup and its labels, TMDB movie release-date selection, Seerr streaming-provider icons and More Info certifications/providers, and discovery watch-provider requests.
 
 ### Streaming posters on Seerr cards
 
@@ -128,7 +130,7 @@ Elsewhere's provider data can also appear on Seerr discovery and result cards, s
 2. Check **Show Streaming Providers on Posters**.
 3. Click **Save**.
 
-The cards then carry the same provider information shown on item pages. This uses the shared TMDB key and the same Default Region / provider settings.
+The cards then carry the same provider information shown on item pages. This uses the shared TMDB key and the user's effective region, plus their provider settings.
 
 ### Privacy, limitations & troubleshooting
 

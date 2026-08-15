@@ -10,6 +10,7 @@
 // the core API client with a cache key, inheriting retry / in-flight dedup / the response cache.
 
 import { JC } from '../globals';
+import { resolveEffectiveStreamingRegion } from '../core/effective-region';
 import type { DiscoveryRowSpec, DiscoveryMediaType } from './rows';
 
 function seerrEnabled(): boolean {
@@ -17,8 +18,7 @@ function seerrEnabled(): boolean {
 }
 
 function region(): string {
-    const r = JC.pluginConfig?.DEFAULT_REGION;
-    return encodeURIComponent(typeof r === 'string' && r ? r : 'US');
+    return encodeURIComponent(resolveEffectiveStreamingRegion());
 }
 
 interface ResultsResponse { results?: unknown[] }

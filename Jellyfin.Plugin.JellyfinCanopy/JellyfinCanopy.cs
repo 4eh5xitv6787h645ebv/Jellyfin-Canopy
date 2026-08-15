@@ -241,6 +241,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy
 
                 NormalizePreferredAudioLanguageForUpdate(config);
                 NormalizeRatingTagScopePolicyForUpdate(config);
+                NormalizeDefaultStreamingRegionForUpdate(config);
                 SanitizeExternalUrlFields(config);
             }
 
@@ -274,6 +275,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             }
 
             config.RatingTagScopePolicy = normalized;
+        }
+
+        internal static void NormalizeDefaultStreamingRegionForUpdate(PluginConfiguration config)
+        {
+            config.DEFAULT_REGION = StreamingRegionNormalizer.Normalize(config.DEFAULT_REGION);
         }
 
         // Armed while a startup migration failure is being handled. Enhanced import

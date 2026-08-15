@@ -151,6 +151,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
                 provider);
         }
 
+        private static (SeerrParentalFilter Filter, RecordingHttpMessageHandler Handler, SeerrCache Cache)
+            BuildRegionalFilter(string persistedRegion, string detail)
+        {
+            var handler = new RecordingHttpMessageHandler();
+            handler.AddResponse("/movie/900", detail);
+            var provider = new FakePluginConfigProvider(new PluginConfiguration
+            {
+                SeerrEnabled = true,
+                SeerrRespectParentalRatings = true,
+                SeerrUrls = "http://seerr:5055",
+                SeerrApiKey = "key",
+                DEFAULT_REGION = persistedRegion,
+            });
+            var user = new User("regional-kid", "Prov", "PwProv")
+            {
+                MaxParentalRatingScore = 13,
+                MaxParentalRatingSubScore = 0,
+            };
+            var cache = new SeerrCache(provider);
+            var filter = new SeerrParentalFilter(
+                new RecordingHttpClientFactory(handler),
+                NullLogger<SeerrParentalFilter>.Instance,
+                new StubPolicyUserManager(
+                    Guid.Parse(CallerGuid),
+                    user,
+                    new UserPolicy { BlockUnratedItems = Array.Empty<UnratedItem>() }),
+                new FakeLocalization(),
+                cache,
+                provider);
+            return (filter, handler, cache);
+        }
+
         private static Task<SeerrParentalResult> ApplyAsync(
             string body,
             string apiPath,
@@ -412,6 +444,43 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services.Seerr
             Assert.False(await filter.IsBlockedAsync("movie", 100, restricted));  // PG-13 -> allowed
             Assert.True(await filter.IsBlockedAsync("movie", 999, restricted));   // unverifiable -> fail closed
             Assert.True(await filter.IsBlockedAsync("movie", 0, restricted));     // unparseable id -> fail closed
+        }
+
+        [Fact]
+        public async Task UnsupportedPersistedRegion_UsesUsCertificationAndUsCachePartition()
+        {
+            const string detail = @"{ ""releases"": { ""results"": [
+                { ""iso_3166_1"": ""ZZ"", ""release_dates"": [ { ""type"": 3, ""certification"": ""G"" } ] },
+                { ""iso_3166_1"": ""US"", ""release_dates"": [ { ""type"": 3, ""certification"": ""R"" } ] }
+            ] } }";
+            var (filter, handler, cache) = BuildRegionalFilter("ZZ", detail);
+            var caller = new SeerrCaller(CallerGuid, false);
+
+            Assert.True(await filter.IsBlockedAsync("movie", 900, caller));
+            Assert.True(await filter.IsBlockedAsync("movie", 900, caller));
+
+            Assert.Single(handler.Requests);
+            var cacheKey = Assert.Single(cache.CertScoreCache.Keys);
+            Assert.StartsWith("movie:900:US|cfg:", cacheKey, StringComparison.Ordinal);
+            Assert.DoesNotContain(":ZZ|", cacheKey, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task SupportedUncommonRegion_UsesItsCertificationAndCachePartition()
+        {
+            const string detail = @"{ ""releases"": { ""results"": [
+                { ""iso_3166_1"": ""US"", ""release_dates"": [ { ""type"": 3, ""certification"": ""R"" } ] },
+                { ""iso_3166_1"": ""XK"", ""release_dates"": [ { ""type"": 3, ""certification"": ""G"" } ] }
+            ] } }";
+            var (filter, handler, cache) = BuildRegionalFilter(" xk ", detail);
+            var caller = new SeerrCaller(CallerGuid, false);
+
+            Assert.False(await filter.IsBlockedAsync("movie", 900, caller));
+            Assert.False(await filter.IsBlockedAsync("movie", 900, caller));
+
+            Assert.Single(handler.Requests);
+            var cacheKey = Assert.Single(cache.CertScoreCache.Keys);
+            Assert.StartsWith("movie:900:XK|cfg:", cacheKey, StringComparison.Ordinal);
         }
 
         [Fact]

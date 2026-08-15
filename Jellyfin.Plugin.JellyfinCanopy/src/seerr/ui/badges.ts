@@ -2,6 +2,7 @@
 // Card badge helpers: status badge, media-type/collection badges and
 // streaming-provider icons.
 import { JC } from '../../globals';
+import { resolveEffectiveStreamingRegion } from '../../core/effective-region';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -80,7 +81,7 @@ async function fetchProviderIcons(container: HTMLElement | null, tmdbId: any, me
         return;
     }
 
-    const DEFAULT_REGION = (JC.pluginConfig.DEFAULT_REGION as string) || 'US';
+    const effectiveRegion = resolveEffectiveStreamingRegion();
     const DEFAULT_PROVIDERS = JC.pluginConfig.DEFAULT_PROVIDERS ? (JC.pluginConfig.DEFAULT_PROVIDERS as string).replace(/'/g, '').replace(/\n/g, ',').split(',').map((s: any) => s.trim()).filter((s: any) => s) : [];
     const IGNORE_PROVIDERS = JC.pluginConfig.IGNORE_PROVIDERS ? (JC.pluginConfig.IGNORE_PROVIDERS as string).replace(/'/g, '').replace(/\n/g, ',').split(',').map((s: any) => s.trim()).filter((s: any) => s) : [];
 
@@ -89,7 +90,7 @@ async function fetchProviderIcons(container: HTMLElement | null, tmdbId: any, me
         // non-OK responses throw and land in the catch below.
         const data: any = await JC.core.api!.plugin(`/tmdb/${mediaType}/${tmdbId}/watch/providers`);
         if (!isCurrent()) return;
-        let providers = data.results?.[DEFAULT_REGION]?.flatrate;
+        let providers = data.results?.[effectiveRegion]?.flatrate;
 
         if (providers && providers.length > 0) {
 

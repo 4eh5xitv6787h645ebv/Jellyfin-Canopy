@@ -2042,10 +2042,12 @@
 
                                 <div class="inputContainer">
                                     <label class="inputLabel" for="DEFAULT_REGION">Default Region</label>
-                                    <input id="DEFAULT_REGION" data-config-key="DEFAULT_REGION" is="emby-input" type="text" placeholder="e.g., US"/>
+                                    <select id="DEFAULT_REGION" data-config-key="DEFAULT_REGION" is="emby-select" class="emby-select" aria-describedby="defaultRegionDescription">
+                                        <option value="US">United States of America (US)</option>
+                                    </select>
                                 </div>
                                     <div class="jc-setting-description" data-desc-for="DEFAULT_REGION">
-                                        <div class="fieldDescription">The default two-letter country code for streaming provider lookup. Empty defaults to US. <a class="sectionTitle" href="https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt" target="_blank">Full List</a><br/>Also used by <strong>TMDB Release Dates</strong> and the <strong>Seerr streaming icons</strong>, so it stays editable even when the Elsewhere panel is off.</div>
+                                        <div id="defaultRegionDescription" class="fieldDescription">The default country for streaming provider lookup. The list comes from Canopy's mirrored region catalog; if it cannot be refreshed, the current supported saved code remains selectable. Unknown legacy values fall back to US. Also used by <strong>TMDB Release Dates</strong> and the <strong>Seerr streaming icons</strong>, so it stays editable even when the Elsewhere panel is off.</div>
                                     </div>
                                 <div class="inputContainer">
                                     <label class="inputLabel" for="DEFAULT_PROVIDERS">Default Providers</label>

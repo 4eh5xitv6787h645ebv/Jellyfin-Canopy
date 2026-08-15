@@ -452,10 +452,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Seerr
         }
 
         private static string ResolveRegion(PluginConfiguration config)
-        {
-            var region = config.DEFAULT_REGION;
-            return string.IsNullOrWhiteSpace(region) ? "US" : region.Trim().ToUpperInvariant();
-        }
+            => StreamingRegionNormalizer.Normalize(config.DEFAULT_REGION);
 
         // ── Detail / single-title decisions ───────────────────────────────────
         private bool IsDetailBodyBlocked(string json, string mediaType, GateContext gate)

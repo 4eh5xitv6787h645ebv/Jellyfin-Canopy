@@ -7,6 +7,7 @@
 import { JC } from '../../globals';
 import { ensureMaterialSymbolsFont, removeCss } from '../../core/ui-kit';
 import { createBoundedCache } from '../../core/bounded-cache';
+import { resolveEffectiveStreamingRegion, type StreamingRegionCode } from '../../core/effective-region';
 import { addCSS, getItemCached } from '../helpers';
 import type { IdentityContext } from '../../types/jc';
 
@@ -139,12 +140,15 @@ function earliestOfBucket(releaseDates: ReleaseDateEntry[] | undefined, bucket: 
  * to one region's entry would silently drop digital/physical dates that
  * TMDB has recorded under a different country.
  */
-async function getMovieReleaseInfo(context: IdentityContext, tmdbId: string): Promise<ReleaseInfo[]> {
+async function getMovieReleaseInfo(
+    context: IdentityContext,
+    tmdbId: string,
+    region: StreamingRegionCode,
+): Promise<ReleaseInfo[]> {
     const data = await tmdbGet<MovieReleaseResponse>(context, `/movie/${tmdbId}/release_dates`);
     const results = data.results;
     if (!Array.isArray(results) || results.length === 0) return [];
 
-    const region = ((JC.pluginConfig?.DEFAULT_REGION as string) || 'US').toUpperCase();
     const preferredOrder = [region, 'US'].filter((iso, i, arr) => iso && arr.indexOf(iso) === i);
 
     const infos: ReleaseInfo[] = [];
@@ -201,12 +205,17 @@ async function getEpisodeReleaseInfo(context: IdentityContext, tmdbId: string, s
  * SeriesProviderIds, falling back to fetching the series item) the same
  * way reviews.js does for TMDB reviews.
  */
-async function resolveReleaseInfo(context: IdentityContext, item: JellyfinReleaseItem | null, userId: string): Promise<ReleaseInfo[]> {
+async function resolveReleaseInfo(
+    context: IdentityContext,
+    item: JellyfinReleaseItem | null,
+    userId: string,
+    region: StreamingRegionCode,
+): Promise<ReleaseInfo[]> {
     const mediaType = item?.Type;
 
     if (mediaType === 'Movie') {
         const tmdbId = item?.ProviderIds?.Tmdb;
-        return tmdbId ? getMovieReleaseInfo(context, String(tmdbId)) : [];
+        return tmdbId ? getMovieReleaseInfo(context, String(tmdbId), region) : [];
     }
 
     if (mediaType === 'Series') {
@@ -257,22 +266,25 @@ async function resolveReleaseInfo(context: IdentityContext, item: JellyfinReleas
 export function displayReleaseDate(itemId: string, container: HTMLElement): void {
     const context = JC.identity.capture();
     if (!context) return;
+    const region = resolveEffectiveStreamingRegion();
+    const cacheKey = `${context.serverId}:${context.userId}:${region}:${itemId}`;
     const existing = container.querySelector<HTMLElement>('.mediaInfoItem-releaseDate');
     if (existing) {
         // Already rendered (or in flight) for this itemId — nothing to do.
-        if (existing.dataset.itemId === itemId) return;
+        if (existing.dataset.itemId === itemId && existing.dataset.region === region) return;
         existing.remove();
     }
 
-    const cached = releaseDateCache.get(itemId);
+    const cached = releaseDateCache.get(cacheKey);
     if (cached && (Date.now() - cached.ts) < (cached.error ? ERROR_CACHE_TTL : RELEASEDATE_CACHE_TTL)) {
-        if (cached.infos.length > 0) renderReleaseDateChip(context, container, itemId, cached.infos);
+        if (cached.infos.length > 0) renderReleaseDateChip(context, container, itemId, region, cached.infos);
         return;
     }
 
     const placeholder = document.createElement('div');
     placeholder.className = 'mediaInfoItem mediaInfoItem-releaseDate';
     placeholder.dataset.itemId = itemId;
+    placeholder.dataset.region = region;
     placeholder.style.display = 'none';
     container.appendChild(placeholder);
 
@@ -283,9 +295,9 @@ export function displayReleaseDate(itemId: string, container: HTMLElement): void
             const userId = context.userId;
             const item = await getItemCached(itemId, { userId }) as JellyfinReleaseItem | null;
             if (!isActive(context, placeholder)) return;
-            const infos = await resolveReleaseInfo(context, item, userId);
+            const infos = await resolveReleaseInfo(context, item, userId, region);
             if (!isActive(context, placeholder)) return;
-            releaseDateCache.set(itemId, { infos, ts: now });
+            releaseDateCache.set(cacheKey, { infos, ts: now });
             // The user may have navigated away while this was in flight.
             if (!placeholder.isConnected) return;
             if (infos.length > 0) {
@@ -302,12 +314,12 @@ export function displayReleaseDate(itemId: string, container: HTMLElement): void
             // for dedup; it is removed only once retries are exhausted. The
             // chip appearing late is a single insert (R7) into the misc-info
             // row, same as the normal slow-TMDB path.
-            releaseDateCache.set(itemId, { infos: [], ts: now, error: true });
+            releaseDateCache.set(cacheKey, { infos: [], ts: now, error: true });
             if (attempt < FETCH_MAX_ATTEMPTS && placeholder.isConnected) {
                 const timer = window.setTimeout(() => {
                     retryTimers.delete(timer);
                     if (isActive(context, placeholder)) {
-                        releaseDateCache.delete(itemId);
+                        releaseDateCache.delete(cacheKey);
                         void performFetch(attempt + 1);
                     }
                 }, RETRY_BASE_DELAY_MS * attempt);
@@ -371,11 +383,18 @@ function fillReleaseDateChip(chip: HTMLElement, infos: ReleaseInfo[]): void {
 }
 
 /** Creates and appends a fresh release-date chip (cache-hit path, where there's no placeholder to fill). */
-function renderReleaseDateChip(context: IdentityContext, container: HTMLElement, itemId: string, infos: ReleaseInfo[]): void {
+function renderReleaseDateChip(
+    context: IdentityContext,
+    container: HTMLElement,
+    itemId: string,
+    region: StreamingRegionCode,
+    infos: ReleaseInfo[],
+): void {
     if (!JC.identity.isCurrent(context)) return;
     const chip = document.createElement('div');
     chip.className = 'mediaInfoItem mediaInfoItem-releaseDate';
     chip.dataset.itemId = itemId;
+    chip.dataset.region = region;
     fillReleaseDateChip(chip, infos);
     container.appendChild(chip);
 }

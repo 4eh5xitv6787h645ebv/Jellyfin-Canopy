@@ -413,7 +413,8 @@ There's also an admin-only chip for release dates:
 !!! note "Show Release/Air Date needs TMDB"
 
     The chip only takes effect once a **TMDB API Key** is set, and it uses the
-    **Default Region** you configure for Elsewhere to choose which country's
+    user's **effective region** (their Elsewhere Region override, or the current
+    admin **Default Region** when they choose **Use server default**) to choose which country's
     release dates to prefer (falling back to US, then any region TMDB has for that
     release type). Both are covered in [Discover & Request](discover.md).
 

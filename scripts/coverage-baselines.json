@@ -10,34 +10,34 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2944,
-        "totalLines": 3329
+        "coveredLines": 2974,
+        "totalLines": 3359
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2944,
-        "maximumCoveredLines": 2944
+        "minimumCoveredLines": 2974,
+        "maximumCoveredLines": 2974
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #670 adds the shared ambiguity-safe file-source detector used by poster badges and item details, including canonical source normalization, symmetric generic-versus-specific evidence merging, legacy BluRay suffix compatibility, and multi-version consensus handling. Two clean full client runs on this exact 3,329-line core scope and 2,399-test tree both passed every test and measured 2,944/3,329 (88.435%), advancing the prior 2,943-line high-water by one fully covered line and improving the reviewed ratio from 88.431% with no instrumentation spread. The reviewed observed high-water and exact observed floor are therefore both 2,944/3,329 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #709 adds the shared typed effective-region resolver and catalog parser used by Elsewhere, TMDB release dates, Seerr provider icons and More Info, and discovery provider requests, then closes the review boundary with a synchronous 139-code supported-region membership contract so unknown legacy values cannot reach any consumer. Clean full client runs on this exact 3,359-line core scope measured 2,974/3,359 (88.538%) without instrumentation spread; the final post-rebase 2,432-test tree also passed every test at that exact measurement. The change adds seven fully covered instrumented lines and improves the reviewed ratio from 2,967/3,352 (88.514%). The reviewed observed high-water and exact observed floor are therefore both 2,974/3,359 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45123,
-        "totalLines": 54910
+        "coveredLines": 45148,
+        "totalLines": 54938
       },
       "observations": {
-        "cleanRuns": 6,
-        "minimumCoveredLines": 45115,
-        "maximumCoveredLines": 45123
+        "cleanRuns": 4,
+        "minimumCoveredLines": 45140,
+        "maximumCoveredLines": 45148
       },
       "tolerance": {
         "missingCoveredLines": 8,
-        "rationale": "Issue #670 adds the independently persisted ShowFileSource setting to the canonical admin and per-user configuration contracts and covers the fail-closed unknown-target and unsupported-evidence branches in the admin target settings controller. Three clean local .NET 10.0.10 full-suite runs on this exact 54,910-line source and 4,302-test scope passed every test and each measured 45,115/54,910 covered lines (82.162%). Hosted Unit runs at exact reviewed heads bdf916990739dc39f273601544d7546e50614e68 and f0bd15ebdb818629302bb49b033167b2c53cf4db passed all 4,302 tests and measured 45,121/54,910 (82.173%) and 45,122/54,910 (82.174%): GitHub Actions runs 31081606003/job/92551460291 and 31098714654/job/92606837612. The clean hosted Unit run at exact #710 head 1c2efa34f913f6a58c76820e5b16b5e263118764 also passed all 4,302 tests and measured 45,123/54,910 (82.176%): GitHub Actions run 31882082338/job/95005978501. The reviewed high-water is therefore 45,123/54,910, while the directly observed identical-scope floor remains 45,115/54,910; the eight-line spread is 0.014569 percentage points, within the 0.15-point policy maximum. One separate non-clean 4,301/4,302 local run is excluded from the six-run coverage envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "rationale": "Issue #709 routes the server Seerr parental certification and certification-cache region through the shared 139-code membership authority, with orchestration regressions proving an unsupported persisted ZZ value uses the divergent US certification/cache partition while supported uncommon XK remains distinct. Two clean local .NET 10.0.9 full-suite runs and two clean hosted runs on this exact 54,938-line source and 4,314-test scope passed every test and measured 45,140/54,938 (82.165%), 45,143/54,938 (82.171%), 45,147/54,938 (82.178%), and 45,148/54,938 (82.180%). The reviewed observed high-water is therefore 45,148/54,938 and the exact observed floor is 45,140/54,938; the eight-line instrumentation spread is 0.014562 percentage points, within the 0.15-point policy maximum. Hosted evidence: GitHub Actions runs 31880813419 (Unit job 95003008339) and 31884925057 (Unit job 95012731245). coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }

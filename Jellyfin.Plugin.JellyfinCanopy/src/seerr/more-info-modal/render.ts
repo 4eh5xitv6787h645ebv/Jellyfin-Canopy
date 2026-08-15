@@ -4,6 +4,7 @@
 import { JC } from '../../globals';
 // PERF(R6): no remote assets — flag/icon images served from the local asset cache.
 import { assetUrl, flagPngUrl } from '../../core/asset-urls';
+import { resolveEffectiveStreamingRegion } from '../../core/effective-region';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- legacy Seerr payload + DOM shapes; typed incrementally */
 
@@ -205,7 +206,7 @@ if (!JC?.pluginConfig?.TmdbEnabled) {
 }
 
 // Resolve region: prefer Elsewhere user setting → plugin fallback → US
-const region = ((JC?.userConfig?.elsewhere as any)?.Region || JC?.pluginConfig?.DEFAULT_REGION || 'US')?.toUpperCase();
+const region = resolveEffectiveStreamingRegion();
 
 // watchProviders is already the array of region objects
 if (!Array.isArray(data.watchProviders)) return '';
