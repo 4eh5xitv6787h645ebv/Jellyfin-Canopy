@@ -2578,6 +2578,7 @@
         // enums, validated text, list builders, arr instances) stays hand-written in
         // loadConfig/buildConfigFromForm.
         var JC_DEFAULT_STREAMING_REGION = 'US';
+        var JC_SUPPORTED_STREAMING_REGIONS = new Set('AD AE AG AL AO AR AT AU AZ BA BB BE BF BG BH BM BO BR BS BY BZ CA CD CH CI CL CM CO CR CU CV CY CZ DE DK DO DZ EC EE EG ES FI FJ FR GB GF GH GI GP GQ GR GT GY HK HN HR HU ID IE IL IN IQ IS IT JM JO JP KE KR KW LB LC LI LT LU LV LY MA MC MD ME MG MK ML MT MU MW MX MY MZ NE NG NI NL NO NZ OM PA PE PF PG PH PK PL PS PT PY QA RO RS RU SA SC SE SG SI SK SM SN SV TC TD TH TN TR TT TW TZ UA UG US UY VA VE XK YE ZA ZM ZW'.split(' '));
         var JC_REGION_CATALOG_CDN_URL = 'https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt';
         var _jcRegionCatalogLoadToken = 0;
 
@@ -2585,6 +2586,11 @@
             if (typeof value !== 'string') return null;
             var normalized = value.trim().toUpperCase();
             return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
+        }
+
+        function jcNormalizeSupportedStreamingRegion(value) {
+            var normalized = jcNormalizeStreamingRegion(value);
+            return normalized && JC_SUPPORTED_STREAMING_REGIONS.has(normalized) ? normalized : null;
         }
 
         function jcParseStreamingRegionCatalog(text) {
@@ -2596,7 +2602,7 @@
                 if (!trimmed || trimmed.startsWith('#')) return;
                 var separator = line.indexOf('\t');
                 if (separator < 0) return;
-                var code = jcNormalizeStreamingRegion(line.slice(0, separator));
+                var code = jcNormalizeSupportedStreamingRegion(line.slice(0, separator));
                 var name = line.slice(separator + 1).trim();
                 if (!code || !name || seen.has(code)) return;
                 seen.add(code);
@@ -2606,7 +2612,7 @@
         }
 
         function jcResolveCatalogStreamingRegion(value, entries, catalogLoaded) {
-            var normalized = jcNormalizeStreamingRegion(value) || JC_DEFAULT_STREAMING_REGION;
+            var normalized = jcNormalizeSupportedStreamingRegion(value) || JC_DEFAULT_STREAMING_REGION;
             if (!catalogLoaded) return normalized;
             return entries.some(function (entry) { return entry.code === normalized; })
                 ? normalized
@@ -2637,7 +2643,7 @@
             var select = document.getElementById('DEFAULT_REGION');
             if (!select) return;
             var token = ++_jcRegionCatalogLoadToken;
-            var persisted = jcNormalizeStreamingRegion(config.DEFAULT_REGION) || JC_DEFAULT_STREAMING_REGION;
+            var persisted = jcNormalizeSupportedStreamingRegion(config.DEFAULT_REGION) || JC_DEFAULT_STREAMING_REGION;
             var url = config.AssetCacheEnabled === false
                 ? JC_REGION_CATALOG_CDN_URL
                 : ApiClient.getUrl('/JellyfinCanopy/assets/elsewhere/regions.txt');
@@ -2652,8 +2658,9 @@
                 jcSetDefaultRegionOptions(select, entries, persisted, true);
             } catch (error) {
                 if (token !== _jcRegionCatalogLoadToken || !select.isConnected) return;
-                // Keep the normalized saved code selectable. A mirror refresh or
-                // direct-CDN outage must not silently rewrite an uncommon region.
+                // Keep a supported normalized saved code selectable. A mirror
+                // refresh or direct-CDN outage must not silently rewrite an
+                // uncommon region, while unknown legacy values still fall to US.
                 jcSetDefaultRegionOptions(select, [], persisted, false);
                 console.warn('Jellyfin Canopy: region catalog unavailable; preserving the saved region.', error);
             } finally {
@@ -2667,7 +2674,7 @@
                     jcSetDefaultRegionOptions(el, [], value, false);
                 },
                 save: function (el) {
-                    return jcNormalizeStreamingRegion(el.value) || JC_DEFAULT_STREAMING_REGION;
+                    return jcNormalizeSupportedStreamingRegion(el.value) || JC_DEFAULT_STREAMING_REGION;
                 }
             },
             // isNaN/min-max clamps preserved verbatim from the old per-field save sites.

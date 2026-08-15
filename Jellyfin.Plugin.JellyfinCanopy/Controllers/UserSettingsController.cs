@@ -910,6 +910,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                     settings.RatingTagScopeOverrides = normalizedRatingScope;
                 }
             }
+            else if (state is ElsewhereSettings elsewhere)
+            {
+                // User overrides share the same synchronous supported-region
+                // boundary as the admin configuration and every client consumer.
+                // Empty/invalid means "inherit admin"; additional manual-search
+                // regions are normalized, de-duplicated, and unsupported entries
+                // are discarded before persistence.
+                elsewhere.Region = StreamingRegionNormalizer.NormalizeOverride(elsewhere.Region);
+                elsewhere.Regions = StreamingRegionNormalizer.NormalizeOverrides(elsewhere.Regions);
+            }
         }
 
         private bool IsUserAdministrator(string userId)

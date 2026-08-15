@@ -3,6 +3,21 @@ import type { PluginConfig } from '../types/jc';
 
 export const FALLBACK_STREAMING_REGION = 'US' as const;
 
+/**
+ * TMDB watch-provider regions mirrored by Elsewhere's regions.txt catalog.
+ *
+ * Runtime consumers need a synchronous, fail-closed membership boundary before
+ * the asynchronously mirrored catalog is available. Keep this release snapshot
+ * in lockstep with StreamingRegionNormalizer.cs and the config-page guard; the
+ * mirror remains the source of display names and may preserve an existing
+ * supported uncommon value while its refresh is unavailable.
+ */
+export const SUPPORTED_STREAMING_REGION_CODES = Object.freeze(
+    'AD AE AG AL AO AR AT AU AZ BA BB BE BF BG BH BM BO BR BS BY BZ CA CD CH CI CL CM CO CR CU CV CY CZ DE DK DO DZ EC EE EG ES FI FJ FR GB GF GH GI GP GQ GR GT GY HK HN HR HU ID IE IL IN IQ IS IT JM JO JP KE KR KW LB LC LI LT LU LV LY MA MC MD ME MG MK ML MT MU MW MX MY MZ NE NG NI NL NO NZ OM PA PE PF PG PH PK PL PS PT PY QA RO RS RU SA SC SE SG SI SK SM SN SV TC TD TH TN TR TT TW TZ UA UG US UY VA VE XK YE ZA ZM ZW'.split(' '),
+) as readonly StreamingRegionCode[];
+
+const SUPPORTED_STREAMING_REGIONS = new Set<string>(SUPPORTED_STREAMING_REGION_CODES);
+
 /** A normalized two-letter streaming-region code. */
 export type StreamingRegionCode = string & { readonly __streamingRegionCode: unique symbol };
 
@@ -28,9 +43,21 @@ export function normalizeStreamingRegion(value: unknown): StreamingRegionCode | 
         : null;
 }
 
+/** True only for a normalized code supported by TMDB's provider-region contract. */
+export function isSupportedStreamingRegion(value: unknown): boolean {
+    const normalized = normalizeStreamingRegion(value);
+    return normalized !== null && SUPPORTED_STREAMING_REGIONS.has(normalized);
+}
+
+/** Normalize and enforce supported catalog membership synchronously. */
+export function normalizeSupportedStreamingRegion(value: unknown): StreamingRegionCode | null {
+    const normalized = normalizeStreamingRegion(value);
+    return normalized && SUPPORTED_STREAMING_REGIONS.has(normalized) ? normalized : null;
+}
+
 /** Resolve the administrator default, including legacy empty/malformed values. */
 export function resolveAdminStreamingRegion(config: PluginConfig | null | undefined = JC.pluginConfig): StreamingRegionCode {
-    return normalizeStreamingRegion(config?.DEFAULT_REGION)
+    return normalizeSupportedStreamingRegion(config?.DEFAULT_REGION)
         || FALLBACK_STREAMING_REGION as StreamingRegionCode;
 }
 
@@ -49,7 +76,7 @@ export function resolveEffectiveStreamingRegion(
     const elsewhere = record?.elsewhere && typeof record.elsewhere === 'object'
         ? record.elsewhere as ElsewhereRegionSettings
         : null;
-    return normalizeStreamingRegion(elsewhere?.Region)
+    return normalizeSupportedStreamingRegion(elsewhere?.Region)
         || resolveAdminStreamingRegion(pluginConfig);
 }
 
@@ -62,7 +89,7 @@ export function parseStreamingRegionCatalog(text: unknown): readonly RegionCatal
         if (!trimmed || trimmed.startsWith('#')) continue;
         const separator = line.indexOf('\t');
         if (separator < 0) continue;
-        const code = normalizeStreamingRegion(line.slice(0, separator));
+        const code = normalizeSupportedStreamingRegion(line.slice(0, separator));
         const name = line.slice(separator + 1).trim();
         if (!code || !name || byCode.has(code)) continue;
         byCode.set(code, Object.freeze({ code, name }));
@@ -79,7 +106,9 @@ export function resolveCatalogStreamingRegion(
     catalog: readonly RegionCatalogEntry[] | null,
     fallback: StreamingRegionCode = FALLBACK_STREAMING_REGION as StreamingRegionCode,
 ): StreamingRegionCode {
-    const normalized = normalizeStreamingRegion(value) || fallback;
+    const supportedFallback = normalizeSupportedStreamingRegion(fallback)
+        || FALLBACK_STREAMING_REGION as StreamingRegionCode;
+    const normalized = normalizeSupportedStreamingRegion(value) || supportedFallback;
     if (catalog === null) return normalized;
-    return catalog.some((entry) => entry.code === normalized) ? normalized : fallback;
+    return catalog.some((entry) => entry.code === normalized) ? normalized : supportedFallback;
 }

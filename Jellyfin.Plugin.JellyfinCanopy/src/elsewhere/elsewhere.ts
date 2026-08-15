@@ -9,7 +9,7 @@ import { isDetailsPageVisible } from '../core/details-view';
 import { onBodyMutation } from '../core/dom-observer';
 import { createStableMethodFacade } from '../core/feature-loader';
 import {
-    normalizeStreamingRegion,
+    normalizeSupportedStreamingRegion,
     parseStreamingRegionCatalog,
     resolveAdminStreamingRegion,
     resolveCatalogStreamingRegion,
@@ -147,7 +147,7 @@ function initializeElsewhereImpl(): void {
     }
 
     let userRegion = resolveEffectiveStreamingRegion(JC.userConfig, JC.pluginConfig);
-    let userRegionOverride: StreamingRegionCode | '' = normalizeStreamingRegion(JC.userConfig?.elsewhere?.Region) || '';
+    let userRegionOverride: StreamingRegionCode | '' = normalizeSupportedStreamingRegion(JC.userConfig?.elsewhere?.Region) || '';
     let userRegions: string[] = []; // Multiple regions for search
     let userServices: string[] = []; // Empty by default - will show all services from settings region
     let availableRegions: Record<string, string> = {};
@@ -581,7 +581,7 @@ function initializeElsewhereImpl(): void {
             saveButton.disabled = true;
             void JC.saveUserSettings('elsewhere.json', elsewhereSettings).then(() => {
                 if (!isInitializerCurrent()) return;
-                userRegionOverride = normalizeStreamingRegion(nextRegionOverride) || '';
+                userRegionOverride = normalizeSupportedStreamingRegion(nextRegionOverride) || '';
                 userRegion = userRegionOverride || adminRegion;
                 userRegions = selectedRegions;
                 userServices = selectedServices;
@@ -607,11 +607,11 @@ function initializeElsewhereImpl(): void {
     function loadSettings(): void {
         const settings = JC.userConfig.elsewhere || {};
         JC.rememberUserSettingsSnapshot?.('elsewhere.json', settings);
-        userRegionOverride = normalizeStreamingRegion(settings.Region) || '';
+        userRegionOverride = normalizeSupportedStreamingRegion(settings.Region) || '';
         userRegion = resolveEffectiveStreamingRegion(JC.userConfig, JC.pluginConfig);
         userRegions = Array.isArray(settings.Regions)
             ? (settings.Regions as unknown[])
-                .map(normalizeStreamingRegion)
+                .map(normalizeSupportedStreamingRegion)
                 .filter((value): value is StreamingRegionCode => value !== null)
             : [];
         userServices = Array.isArray(settings.Services) ? settings.Services : [];

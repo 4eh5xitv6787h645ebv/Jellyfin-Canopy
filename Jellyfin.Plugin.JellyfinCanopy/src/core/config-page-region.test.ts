@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as ts from 'typescript';
+import { SUPPORTED_STREAMING_REGION_CODES } from './effective-region';
 
 const TEST_FILE_PATH = decodeURIComponent(new URL(import.meta.url).pathname);
 const SRC_ROOT = TEST_FILE_PATH.replace(/\/core\/[^/]+$/, '/');
 const CONFIG_PAGE_JS = SRC_ROOT.replace(/src\/$/, 'Configuration/config-page.js');
 const CONFIG_PAGE_HTML = SRC_ROOT.replace(/src\/$/, 'Configuration/configPage.html');
+const SERVER_REGION_NORMALIZER = SRC_ROOT.replace(/src\/$/, 'Configuration/StreamingRegionNormalizer.cs');
 
 function read(path: string): string {
     const source = ts.sys.readFile(path);
@@ -23,6 +25,7 @@ function productionFunction(source: string, name: string): string {
 
 interface AdminRegionHelpers {
     normalize(value: unknown): string | null;
+    normalizeSupported(value: unknown): string | null;
     parse(value: unknown): Array<{ code: string; name: string }>;
     resolve(value: unknown, entries: Array<{ code: string; name: string }>, loaded: boolean): string;
     setOptions(
@@ -35,16 +38,20 @@ interface AdminRegionHelpers {
 
 function regionHelpers(source: string): AdminRegionHelpers {
     const constant = source.match(/^ {8}var JC_DEFAULT_STREAMING_REGION = '[A-Z]{2}';/m);
+    const supported = source.match(/^ {8}var JC_SUPPORTED_STREAMING_REGIONS = new Set\('[A-Z ]+'\.split\(' '\)\);/m);
     expect(constant).toBeTruthy();
+    expect(supported).toBeTruthy();
     // Execute only closed helpers extracted from committed production source.
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const factory = new Function([
         constant![0],
+        supported![0],
         productionFunction(source, 'jcNormalizeStreamingRegion'),
+        productionFunction(source, 'jcNormalizeSupportedStreamingRegion'),
         productionFunction(source, 'jcParseStreamingRegionCatalog'),
         productionFunction(source, 'jcResolveCatalogStreamingRegion'),
         productionFunction(source, 'jcSetDefaultRegionOptions'),
-        'return { normalize: jcNormalizeStreamingRegion, parse: jcParseStreamingRegionCatalog, resolve: jcResolveCatalogStreamingRegion, setOptions: jcSetDefaultRegionOptions };',
+        'return { normalize: jcNormalizeStreamingRegion, normalizeSupported: jcNormalizeSupportedStreamingRegion, parse: jcParseStreamingRegionCatalog, resolve: jcResolveCatalogStreamingRegion, setOptions: jcSetDefaultRegionOptions };',
     ].join('\n')) as () => AdminRegionHelpers;
     return factory();
 }
@@ -52,6 +59,7 @@ function regionHelpers(source: string): AdminRegionHelpers {
 describe('admin default-region binding', () => {
     const html = read(CONFIG_PAGE_HTML);
     const js = read(CONFIG_PAGE_JS);
+    const server = read(SERVER_REGION_NORMALIZER);
     const helpers = regionHelpers(js);
 
     it('uses a bound accessible select instead of accepting free text', () => {
@@ -61,18 +69,28 @@ describe('admin default-region binding', () => {
         expect(js).toContain("ApiClient.getUrl('/JellyfinCanopy/assets/elsewhere/regions.txt')");
         expect(js).toContain('config.AssetCacheEnabled === false');
         expect(js).toContain('signal: controller.signal');
-        expect(js).toMatch(/DEFAULT_REGION:\s*\{[\s\S]*?load:[\s\S]*?jcSetDefaultRegionOptions[\s\S]*?save:[\s\S]*?jcNormalizeStreamingRegion/);
+        expect(js).toMatch(/DEFAULT_REGION:\s*\{[\s\S]*?load:[\s\S]*?jcSetDefaultRegionOptions[\s\S]*?save:[\s\S]*?jcNormalizeSupportedStreamingRegion/);
     });
 
     it('normalizes legacy persisted syntax and parses the mirrored catalog', () => {
         expect(helpers.normalize(' xk ')).toBe('XK');
         expect(helpers.normalize('United States')).toBeNull();
         expect(helpers.normalize('')).toBeNull();
-        expect(helpers.parse('# header\nus\tUnited States\nXK\tKosovo\nUS\tDuplicate'))
+        expect(helpers.normalizeSupported('xk')).toBe('XK');
+        expect(helpers.normalizeSupported('zz')).toBeNull();
+        expect(helpers.parse('# header\nus\tUnited States\nXK\tKosovo\nUS\tDuplicate\nZZ\tUnsupported'))
             .toEqual([
                 { code: 'US', name: 'United States' },
                 { code: 'XK', name: 'Kosovo' },
             ]);
+    });
+
+    it('keeps the exact 139-code runtime contract synchronized across client, admin, and server', () => {
+        const adminCodes = js.match(/JC_SUPPORTED_STREAMING_REGIONS = new Set\('([A-Z ]+)'/)?.[1].split(' ');
+        const serverCodes = server.match(/SupportedCodeList =\s*\n\s*"([A-Z ]+)";/)?.[1].split(' ');
+        expect(adminCodes).toEqual(SUPPORTED_STREAMING_REGION_CODES);
+        expect(serverCodes).toEqual(SUPPORTED_STREAMING_REGION_CODES);
+        expect(adminCodes).toHaveLength(139);
     });
 
     it('rejects unknown codes with a loaded catalog but preserves uncommon syntax on failure', () => {
@@ -80,6 +98,7 @@ describe('admin default-region binding', () => {
         expect(helpers.resolve('zz', catalog, true)).toBe('US');
         expect(helpers.resolve('xk', catalog, true)).toBe('XK');
         expect(helpers.resolve('xk', [], false)).toBe('XK');
+        expect(helpers.resolve('zz', [], false)).toBe('US');
         expect(helpers.resolve('', [], false)).toBe('US');
 
         const select = document.createElement('select');

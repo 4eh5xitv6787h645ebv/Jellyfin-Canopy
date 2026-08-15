@@ -77,7 +77,7 @@ The server-wide defaults live on the **Elsewhere** tab. Each is also used by fea
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Default Region** | `US` (when blank or invalid) | The primary region for availability checks. The selector is populated from Canopy's locally mirrored Elsewhere [region catalog](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt) when asset caching is enabled, or from that upstream catalog when it is disabled. Legacy lowercase codes are normalized. If the catalog cannot be refreshed, Canopy preserves a syntactically valid saved code—including an uncommon one—instead of silently replacing it. |
+| **Default Region** | `US` (when blank, malformed, or unsupported) | The primary region for availability checks. The selector is populated from Canopy's locally mirrored Elsewhere [region catalog](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/regions.txt) when asset caching is enabled, or from that upstream catalog when it is disabled. Legacy lowercase codes are normalized. If the catalog cannot be refreshed, Canopy preserves a supported saved code—including an uncommon one—instead of silently replacing it; unknown legacy values fall back to `US`. |
 | **Default Providers** | Blank (show all) | Comma-separated list of providers to show by default — e.g. `Netflix,Hulu,Disney Plus`. Leave blank to show every provider. Also used by the Seerr streaming icons. [Full list of providers](https://cdn.jsdelivr.net/gh/n00bcodr/Jellyfin-Elsewhere/resources/providers.txt). |
 | **Ignore Providers** | Blank | Comma-separated list of providers to hide from results. **Supports regex patterns.** Also used by the Seerr streaming icons. |
 

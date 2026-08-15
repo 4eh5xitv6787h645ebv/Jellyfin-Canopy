@@ -202,6 +202,48 @@ describe('Elsewhere account ownership', () => {
         expect(apiFetch).toHaveBeenCalledTimes(1);
     });
 
+    it('never lets unsupported user or admin codes reach automatic lookup or labels', async () => {
+        document.body.innerHTML = `
+            <div class="detailSectionContent">
+                <a href="https://www.themoviedb.org/movie/123">TMDB</a>
+            </div>`;
+        const context = JC.identity.capture()!;
+        JC.pluginConfig.DEFAULT_REGION = 'ZZ';
+        JC.userConfig = JC.identity.own({
+            elsewhere: JC.identity.own({ Region: 'zz', Regions: ['ZZ'], Services: [] }, context),
+        }, context);
+        JC.t = (key: string, params?: Record<string, unknown>) =>
+            `${key}:${typeof params?.region === 'string' ? params.region : ''}`;
+        vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(
+                (input instanceof Request
+                    ? input.url
+                    : input instanceof URL ? input.href : input).includes('providers.txt')
+                    ? 'Wrong Provider'
+                    : 'US\tUnited States\nXK\tKosovo\nZZ\tUnsupported',
+            ),
+        } as Response)));
+        JC.core.api = {
+            fetch: vi.fn().mockResolvedValue({
+                results: { ZZ: { flatrate: [{ provider_name: 'Wrong Provider' }] } },
+            }),
+        } as unknown as typeof JC.core.api;
+
+        (JC as typeof JC & { initializeElsewhereScript: () => void }).initializeElsewhereScript();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const panel = document.querySelector('.streaming-lookup-container');
+        expect(panel?.textContent).toContain('elsewhere_panel_not_available_in:United States');
+        expect(panel?.textContent).not.toContain('Wrong Provider');
+        const modal = document.getElementById('streaming-settings-modal')!;
+        expect((modal.querySelector('#region-select') as HTMLSelectElement).value).toBe('');
+        expect(modal.textContent).not.toContain('Unsupported');
+    });
+
     it('persists an empty override when reset is selected so the current admin default is inherited', async () => {
         const context = JC.identity.capture()!;
         JC.pluginConfig.DEFAULT_REGION = 'GB';

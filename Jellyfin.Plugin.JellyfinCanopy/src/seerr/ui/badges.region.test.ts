@@ -47,4 +47,31 @@ describe('Seerr provider icon effective region', () => {
         expect(container.querySelector('img')?.title).toBe('Right');
         expect(container.querySelector('img')?.src).toContain('/ca.png');
     });
+
+    it('falls back to US when both persisted user and admin codes are unsupported', async () => {
+        JC.pluginConfig.DEFAULT_REGION = 'ZZ';
+        const context = JC.identity.capture()!;
+        JC.userConfig = JC.identity.own({
+            elsewhere: JC.identity.own({ Region: 'zz' }, context),
+        }, context);
+        const card = document.createElement('div');
+        card.className = 'seerr-card';
+        const container = document.createElement('div');
+        card.appendChild(container);
+        document.body.appendChild(card);
+        JC.identity.own(card, context);
+        JC.core.api = {
+            plugin: vi.fn().mockResolvedValue({
+                results: {
+                    ZZ: { flatrate: [{ provider_name: 'Wrong', logo_path: '/zz.png' }] },
+                    US: { flatrate: [{ provider_name: 'Fallback', logo_path: '/us.png' }] },
+                },
+            }),
+        } as unknown as ApiApi;
+
+        await internal.fetchProviderIcons!(container, 42, 'movie');
+
+        expect(container.querySelector('img')?.title).toBe('Fallback');
+        expect(container.querySelector('img')?.src).toContain('/us.png');
+    });
 });
