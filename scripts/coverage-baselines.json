@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45122,
+        "coveredLines": 45123,
         "totalLines": 54910
       },
       "observations": {
-        "cleanRuns": 5,
+        "cleanRuns": 6,
         "minimumCoveredLines": 45115,
-        "maximumCoveredLines": 45122
+        "maximumCoveredLines": 45123
       },
       "tolerance": {
-        "missingCoveredLines": 7,
-        "rationale": "Issue #670 adds the independently persisted ShowFileSource setting to the canonical admin and per-user configuration contracts and covers the fail-closed unknown-target and unsupported-evidence branches in the admin target settings controller. Three clean local .NET 10.0.10 full-suite runs on this exact 54,910-line source and 4,302-test scope passed every test and each measured 45,115/54,910 covered lines (82.162%). The first hosted Unit run at exact head bdf916990739dc39f273601544d7546e50614e68 also passed all 4,302 tests and measured 45,121/54,910 (82.173%): https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/actions/runs/31081606003/job/92551460291. The next hosted Unit run at exact amended head f0bd15ebdb818629302bb49b033167b2c53cf4db again passed all 4,302 tests and measured 45,122/54,910 (82.174%): https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/actions/runs/31098714654/job/92606837612. The reviewed high-water is therefore 45,122/54,910, while the directly observed identical-scope floor remains 45,115/54,910; the seven-line spread is 0.012748 percentage points, within the 0.15-point policy maximum. One separate non-clean 4,301/4,302 local run is excluded from the five-run coverage envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 8,
+        "rationale": "Issue #670 adds the independently persisted ShowFileSource setting to the canonical admin and per-user configuration contracts and covers the fail-closed unknown-target and unsupported-evidence branches in the admin target settings controller. Three clean local .NET 10.0.10 full-suite runs on this exact 54,910-line source and 4,302-test scope passed every test and each measured 45,115/54,910 covered lines (82.162%). Hosted Unit runs at exact reviewed heads bdf916990739dc39f273601544d7546e50614e68 and f0bd15ebdb818629302bb49b033167b2c53cf4db passed all 4,302 tests and measured 45,121/54,910 (82.173%) and 45,122/54,910 (82.174%): GitHub Actions runs 31081606003/job/92551460291 and 31098714654/job/92606837612. The clean hosted Unit run at exact #710 head 1c2efa34f913f6a58c76820e5b16b5e263118764 also passed all 4,302 tests and measured 45,123/54,910 (82.176%): GitHub Actions run 31882082338/job/95005978501. The reviewed high-water is therefore 45,123/54,910, while the directly observed identical-scope floor remains 45,115/54,910; the eight-line spread is 0.014569 percentage points, within the 0.15-point policy maximum. One separate non-clean 4,301/4,302 local run is excluded from the six-run coverage envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
