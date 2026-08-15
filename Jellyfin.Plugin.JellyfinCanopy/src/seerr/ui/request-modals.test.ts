@@ -115,6 +115,8 @@ describe('collection request modal rich cards', () => {
                         <div class="seerr-modal-footer"></div>
                     </div>
                 `;
+                (modalElement as HTMLElement & { _jcIdentityCleanups?: Set<() => void> })
+                    ._jcIdentityCleanups = new Set();
                 document.body.appendChild(modalElement);
                 return { modalElement, show: vi.fn() };
             }),
@@ -124,6 +126,11 @@ describe('collection request modal rich cards', () => {
     });
 
     afterEach(() => {
+        const cleanups = (modalElement as HTMLElement & {
+            _jcIdentityCleanups?: Set<() => void>;
+        } | undefined)?._jcIdentityCleanups;
+        cleanups?.forEach((cleanup) => cleanup());
+        cleanups?.clear();
         document.body.innerHTML = '';
     });
 

@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2974,
-        "totalLines": 3359
+        "coveredLines": 2976,
+        "totalLines": 3362
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2974,
-        "maximumCoveredLines": 2974
+        "minimumCoveredLines": 2976,
+        "maximumCoveredLines": 2976
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #709 established this exact 3,359-line core scope and 2,974-line reviewed high-water. Issue #715 adds qBittorrent telemetry outside src/core and extends the final review tree with account-transition, timestamp, polling, and transport/session regressions without changing that instrumented scope. Two clean full client runs on the exact final issue #715 source passed all 270 files and 2,588 tests and both measured 2,974/3,359 (88.538%) without instrumentation spread. The reviewed observed high-water and exact observed floor therefore remain 2,974/3,359 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #718 adds ordered, canonical language-tag filter support to the shared media-language core after the #709 effective-region resolver, including bounded fail-closed policy parsing, explicit regional identity, authoritative Original selection, and compatibility-default handling. Two coordinated clean post-rebase full client runs on this exact 3,362-line core scope passed every test and measured 2,976/3,362 (88.519%) with no instrumentation spread. The three new instrumented lines are reviewed feature scope rather than coverage loss, and the covered-line high-water advances by two. The reviewed observed high-water and exact observed floor are therefore both 2,976/3,362 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
