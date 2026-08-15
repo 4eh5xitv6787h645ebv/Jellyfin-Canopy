@@ -83,7 +83,13 @@ test.describe('tags', () => {
                     ),
                     dataType: 'json',
                 });
-                return structuredClone(value.LanguageTagFilter ?? value.languageTagFilter ?? null);
+                const policy = value.LanguageTagFilter ?? value.languageTagFilter ?? null;
+                if (!policy) return null;
+                return {
+                    schemaVersion: policy.SchemaVersion ?? policy.schemaVersion,
+                    languages: structuredClone(policy.Languages ?? policy.languages),
+                    includeOriginal: policy.IncludeOriginal ?? policy.includeOriginal,
+                };
             });
             const openLanguageChoices = async () => {
                 await page.evaluate(() => { void (window as any).JellyfinCanopy.showEnhancedPanel(); });

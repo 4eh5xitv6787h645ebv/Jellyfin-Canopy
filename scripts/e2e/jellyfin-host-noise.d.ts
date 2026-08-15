@@ -1,4 +1,5 @@
 export const SCROLL_HANDLER_ERROR: 'pageerror: t.scrollHandler is not a function';
+export const SCROLL_HANDLER_WEBKIT_ERROR: "pageerror: t.scrollHandler is not a function. (In 't.scrollHandler()', 't.scrollHandler' is null)";
 export const HOME_TAB_PREFIX: "[Home] failed to get tab controller TypeError: Cannot read properties of undefined (reading 'querySelector')";
 export const HOME_SELECTED_INDEX_ERROR: "pageerror: Cannot read properties of undefined (reading 'selectedIndex')";
 export const HOME_LOGOUT_AXIOS_401: 'AxiosError: Request failed with status code 401';
