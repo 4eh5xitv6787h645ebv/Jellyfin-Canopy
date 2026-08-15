@@ -140,7 +140,7 @@
   "RemoveContinueWatchingEnabled": true,
   "RequestApprovalsEnabled": false,
   "RequestsAllowSeerrStatusAndHistoryForRegularUsers": false,
-  "ResolutionTagOrder": 1188,
+  "ResolutionTagOrder": 1189,
   "ReviewsExpandedByDefault": true,
   "SeerrAutoImportUsers": true,
   "SeerrBaseUrl": "cfg-SeerrUrls",
@@ -308,13 +308,8 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
-<<<<<<< ours
-  "SourceTagOrder": 1249,
-  "SpecialFormatTagOrder": 1250,
-=======
-  "SourceTagOrder": 1243,
-  "SpecialFormatTagOrder": 1244,
->>>>>>> theirs
+  "SourceTagOrder": 1250,
+  "SpecialFormatTagOrder": 1251,
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
@@ -330,21 +325,11 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
-<<<<<<< ours
-  "TagsCacheTtlDays": 1283,
+  "TagsCacheTtlDays": 1284,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
   "TmdbEnabled": true,
-  "ToastDuration": 1286,
+  "ToastDuration": 1287,
   "UseIcons": false,
-  "VideoCodecTagOrder": 1289
-=======
-  "TagsCacheTtlDays": 1277,
-  "TagsHideOnHover": true,
-  "ThemeSelectorEnabled": true,
-  "TmdbEnabled": true,
-  "ToastDuration": 1280,
-  "UseIcons": false,
-  "VideoCodecTagOrder": 1283
->>>>>>> theirs
+  "VideoCodecTagOrder": 1290
 }
