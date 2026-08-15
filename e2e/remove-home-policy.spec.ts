@@ -387,21 +387,36 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
         }
 
         const cleanupFailures = await runIndependentRestorations({
-            pageCleanup: async () => {
-                await page.evaluate(() => {
-                    document.querySelector('#jc-remove-policy-proof')?.remove();
-                    document.querySelector('#jc-remove-policy-sheet')?.remove();
-                });
+            pageCleanup: async (signal) => {
+                let closePromise: Promise<void> | null = null;
+                const closeOnAbort = () => {
+                    closePromise = page.isClosed()
+                        ? Promise.resolve()
+                        : page.close({ runBeforeUnload: false });
+                };
+                signal.addEventListener('abort', closeOnAbort, { once: true });
+                try {
+                    signal.throwIfAborted();
+                    await page.evaluate(() => {
+                        document.querySelector('#jc-remove-policy-proof')?.remove();
+                        document.querySelector('#jc-remove-policy-sheet')?.remove();
+                    });
+                } finally {
+                    signal.removeEventListener('abort', closeOnAbort);
+                    if (closePromise) await closePromise;
+                }
             },
-            restoreDurableUserState: async () => {
+            restoreDurableUserState: async (signal) => {
                 const userStateFailures: string[] = [];
                 const attempt = async (label: string, operation: () => Promise<Response>) => {
+                    signal.throwIfAborted();
                     try {
                         const response = await operation();
                         if (!response.ok) {
                             throw new Error(`HTTP ${response.status}`);
                         }
                     } catch (error) {
+                        if (signal.aborted) throw signal.reason ?? error;
                         userStateFailures.push(
                             `${label}: ${error instanceof Error ? error.message : String(error)}`
                         );
@@ -415,21 +430,21 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
                             baseURL!,
                             `/JellyfinCanopy/continue-watching/hide/${encodeURIComponent(ids[index])}`,
                             user.token,
-                            { method: 'DELETE' },
+                            { method: 'DELETE', signal },
                         ));
                     }
                     await attempt(`restore user data ${index}`, () => apiRaw(
                         baseURL!,
                         `/UserItems/${encodeURIComponent(ids[index])}/UserData?userId=${encodeURIComponent(user.userId)}`,
                         user.token,
-                        { method: 'POST', body: JSON.stringify(originalUserData[index]) },
+                        { method: 'POST', body: JSON.stringify(originalUserData[index]), signal },
                     ));
                 }
 
                 try {
                     const settingsPath = `/JellyfinCanopy/user-settings/${encodeURIComponent(user.userId)}/settings.json`;
                     const current = await api<Record<string, any>>(
-                        baseURL!, settingsPath, user.token
+                        baseURL!, settingsPath, user.token, { signal }
                     );
                     if (!current) throw new Error('current settings response is empty');
                     const revision = field<number>(current, 'Revision', 'revision');
@@ -450,9 +465,11 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
                             method: 'POST',
                             headers: { 'If-Match': `"${revision}"` },
                             body: JSON.stringify(restored),
+                            signal,
                         },
                     ));
                 } catch (error) {
+                    if (signal.aborted) throw signal.reason ?? error;
                     userStateFailures.push(
                         `restore user Remove policy: ${error instanceof Error ? error.message : String(error)}`
                     );
@@ -462,10 +479,11 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
                     throw new Error(userStateFailures.join('; '));
                 }
             },
-            restoreAdministratorConfig: async () => {
+            restoreAdministratorConfig: async (signal) => {
                 const restore = await apiRaw(baseURL!, CONFIG_PATH, admin.token, {
                     method: 'POST',
                     body: JSON.stringify(originalConfig),
+                    signal,
                 });
                 expect(restore.status).toBe(204);
             },

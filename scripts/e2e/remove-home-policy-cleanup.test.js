@@ -63,15 +63,25 @@ test('acknowledged scoped mutation is journaled before a product failure and eve
     assert.match(combined.message, /page cleanup rejected/);
 });
 
-test('timed-out page cleanup cannot bypass the independently bounded administrator restore', async () => {
+test('timed-out restoration aborts and settles without any touch after return', async () => {
     const calls = [];
     const failures = await runIndependentRestorations({
         pageCleanup: async () => {
-            calls.push('page cleanup started');
-            await new Promise(() => {});
+            calls.push('page cleanup');
         },
-        restoreDurableUserState: async () => {
-            calls.push('restore durable user state');
+        restoreDurableUserState: async (signal) => {
+            calls.push('user cleanup started');
+            await new Promise((resolve, reject) => {
+                const lateTouch = setTimeout(() => {
+                    calls.push('late user touch');
+                    resolve();
+                }, 30);
+                signal.addEventListener('abort', () => {
+                    clearTimeout(lateTouch);
+                    calls.push('user cleanup aborted');
+                    reject(signal.reason);
+                }, { once: true });
+            });
         },
         restoreAdministratorConfig: async () => {
             calls.push('restore administrator configuration');
@@ -80,10 +90,53 @@ test('timed-out page cleanup cannot bypass the independently bounded administrat
     });
 
     assert.deepEqual(calls, [
-        'page cleanup started',
-        'restore durable user state',
+        'page cleanup',
+        'user cleanup started',
+        'user cleanup aborted',
         'restore administrator configuration',
     ]);
     assert.equal(failures.length, 1);
-    assert.match(failures[0], /restore page-owned state exceeded 5ms/);
+    assert.match(failures[0], /restore durable user state exceeded 5ms/);
+    calls.push('helper returned');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.deepEqual(calls, [
+        'page cleanup',
+        'user cleanup started',
+        'user cleanup aborted',
+        'restore administrator configuration',
+        'helper returned',
+    ]);
+});
+
+test('rejected acknowledgement never journals or schedules a scoped DELETE', async () => {
+    const calls = [];
+    const rejection = new Error('POST was not acknowledged');
+    let journaled = false;
+
+    await assert.rejects(completeAcknowledgedMutation({
+        verifyAcknowledgement: () => {
+            calls.push('acknowledgement rejected');
+            throw rejection;
+        },
+        journalMutation: () => {
+            journaled = true;
+            calls.push('journal scoped POST');
+        },
+        verifyProductState: async () => calls.push('product assertion'),
+    }), (error) => error === rejection);
+
+    await runIndependentRestorations({
+        pageCleanup: async () => calls.push('page cleanup'),
+        restoreDurableUserState: async () => {
+            if (journaled) calls.push('DELETE scoped item');
+        },
+        restoreAdministratorConfig: async () => calls.push('restore administrator configuration'),
+        timeoutMs: 100,
+    });
+
+    assert.deepEqual(calls, [
+        'acknowledgement rejected',
+        'page cleanup',
+        'restore administrator configuration',
+    ]);
 });

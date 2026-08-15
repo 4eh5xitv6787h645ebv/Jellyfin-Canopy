@@ -1,5 +1,7 @@
 'use strict';
 
+const { AbortController: NodeAbortController } = globalThis;
+
 function toError(value) {
     return value instanceof Error ? value : new Error(String(value));
 }
@@ -15,19 +17,22 @@ async function completeAcknowledgedMutation({
 }
 
 async function boundedRestoration(label, operation, timeoutMs) {
-    let timer;
+    const controller = new NodeAbortController();
+    const timeoutError = new Error(`${label} exceeded ${timeoutMs}ms`);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(timeoutError);
+    }, timeoutMs);
     try {
-        await Promise.race([
-            Promise.resolve().then(operation),
-            new Promise((_, reject) => {
-                timer = setTimeout(
-                    () => reject(new Error(`${label} exceeded ${timeoutMs}ms`)),
-                    timeoutMs,
-                );
-            }),
-        ]);
+        // A timeout transfers ownership to AbortController, but does not let
+        // this domain go. The operation must observe the signal and settle
+        // before the next state owner is allowed to run.
+        await operation(controller.signal);
+        if (timedOut) return `${label}: ${timeoutError.message}`;
         return null;
     } catch (error) {
+        if (timedOut) return `${label}: ${timeoutError.message}`;
         return `${label}: ${toError(error).message}`;
     } finally {
         clearTimeout(timer);

@@ -5,9 +5,9 @@ export function completeAcknowledgedMutation(options: {
 }): Promise<void>;
 
 export function runIndependentRestorations(options: {
-    pageCleanup: () => Promise<void>;
-    restoreDurableUserState: () => Promise<void>;
-    restoreAdministratorConfig: () => Promise<void>;
+    pageCleanup: (signal: AbortSignal) => Promise<void>;
+    restoreDurableUserState: (signal: AbortSignal) => Promise<void>;
+    restoreAdministratorConfig: (signal: AbortSignal) => Promise<void>;
     timeoutMs?: number;
 }): Promise<string[]>;
 
