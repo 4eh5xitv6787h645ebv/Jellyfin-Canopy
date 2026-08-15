@@ -80,7 +80,7 @@ test.describe('tags', () => {
             });
             await page.reload({ waitUntil: 'domcontentloaded' });
             await expect.poll(() => page.evaluate(() =>
-                structuredClone((window as any).JellyfinCanopy.currentSettings.languageTagFilter)), {
+                structuredClone((window as any).JellyfinCanopy.currentSettings?.languageTagFilter ?? null)), {
                 timeout: 60_000,
                 message: 'the acting user policy survives the acknowledged save and reload',
             }).toEqual({
@@ -99,6 +99,8 @@ test.describe('tags', () => {
                 '#itemDetailPage:not(.hide) .detailPagePrimaryContainer .card, '
                 + '#itemDetailPage:not(.hide) .detailImageContainer .card',
             ).filter({ has: page.locator('.language-overlay-container') }).first();
+            await expect(detailPoster.locator('.language-tag-presentation[data-region="BR"]'))
+                .toHaveCount(1, { timeout: 60_000 });
             const posterRegions = await detailPoster.locator('.language-tag-presentation')
                 .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.region));
             expect(posterRegions).toEqual(['BR', 'US']);
@@ -118,6 +120,9 @@ test.describe('tags', () => {
             ]);
             expect(consoleErrors.real()).toEqual([]);
         } finally {
+            await page.waitForFunction(() => !!(window as any).JellyfinCanopy.currentSettings, undefined, {
+                timeout: 60_000,
+            });
             await page.evaluate(async (snapshot) => {
                 const canopy = (window as any).JellyfinCanopy;
                 for (const [key, state] of Object.entries(snapshot) as Array<[
