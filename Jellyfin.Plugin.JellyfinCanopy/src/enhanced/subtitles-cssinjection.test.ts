@@ -94,4 +94,112 @@ describe('subtitles ::cue insertRule injection', () => {
         await Promise.resolve();
         expect(innerB.getAttribute('style')).toBeNull();
     });
+
+    it('bottom-anchors custom DOM cues, clamps positions, and keeps backgrounds compact', async () => {
+        const JC = window.JellyfinCanopy;
+        JC.identity.transition('subtitle-server', 'geometry-user', 'subtitle-geometry');
+        JC.currentSettings = {
+            subtitleHorizontalPosition: 140,
+            subtitleVerticalPosition: -20,
+            disableCustomSubtitleStyles: false,
+        };
+        document.body.appendChild(document.createElement('video'));
+        const container = document.createElement('div');
+        container.className = 'videoSubtitles';
+        const inner = document.createElement('div');
+        inner.className = 'videoSubtitlesInner';
+        inner.textContent = 'First line\nSecond line';
+        container.appendChild(inner);
+        document.body.appendChild(container);
+        const clientSheet = document.createElement('style');
+        clientSheet.id = 'htmlvideoplayer-cuestyle';
+        document.head.appendChild(clientSheet);
+
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#000000CC', 2, 'Arial', 'none');
+
+        expect(container.style.getPropertyValue('left')).toBe('100%');
+        expect(container.style.getPropertyValue('top')).toBe('0%');
+        expect(container.style.getPropertyValue('transform')).toBe('translate(-50%, -100%)');
+        expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em');
+        expect(inner.style.getPropertyValue('border-radius')).toBe('0.15em');
+
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#00000000', 2, 'Arial', 'none');
+        expect(inner.style.getPropertyValue('padding')).toBe('0px');
+        expect(inner.style.getPropertyValue('border-radius')).toBe('');
+        const cueRule = (document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement)
+            .sheet?.cssRules[0]?.cssText || '';
+        expect(cueRule).not.toMatch(/(?:^|[;{])\s*(?:top|left|bottom|transform)\s*:/i);
+    });
+
+    it('restores host inline styles and removes its cue sheet on teardown', async () => {
+        const JC = window.JellyfinCanopy;
+        JC.identity.transition('subtitle-server', 'restore-user', 'subtitle-restore');
+        JC.currentSettings = { disableCustomSubtitleStyles: false };
+        document.body.appendChild(document.createElement('video'));
+        const container = document.createElement('div');
+        container.className = 'videoSubtitles';
+        container.style.setProperty('position', 'fixed');
+        container.style.setProperty('left', '10px');
+        container.style.setProperty('transform', 'scale(1)');
+        const inner = document.createElement('div');
+        inner.className = 'videoSubtitlesInner';
+        inner.style.setProperty('background-color', 'rgb(1, 2, 3)');
+        inner.style.setProperty('padding', '1em');
+        inner.style.setProperty('border-radius', '9px');
+        container.appendChild(inner);
+        document.body.appendChild(container);
+        const clientSheet = document.createElement('style');
+        clientSheet.id = 'htmlvideoplayer-cuestyle';
+        document.head.appendChild(clientSheet);
+
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#000000CC', 2, 'Arial', 'none');
+        expect(container.style.getPropertyValue('position')).toBe('absolute');
+        expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em');
+
+        disposeSubtitles();
+        disposeSubtitles = undefined;
+
+        expect(container.style.getPropertyValue('position')).toBe('fixed');
+        expect(container.style.getPropertyValue('left')).toBe('10px');
+        expect(container.style.getPropertyValue('transform')).toBe('scale(1)');
+        expect(inner.style.getPropertyValue('background-color')).toBe('rgb(1, 2, 3)');
+        expect(inner.style.getPropertyValue('padding')).toBe('1em');
+        expect(inner.style.getPropertyValue('border-radius')).toBe('9px');
+        expect(document.getElementById('jc-html-videoplayer-cuestyle')).toBeNull();
+    });
+
+    it('restores removed subtitle nodes and safely owns them again after reattachment', async () => {
+        const JC = window.JellyfinCanopy;
+        JC.identity.transition('subtitle-server', 'reattach-user', 'subtitle-reattach');
+        JC.currentSettings = { disableCustomSubtitleStyles: false };
+        document.body.appendChild(document.createElement('video'));
+        const container = document.createElement('div');
+        container.className = 'videoSubtitles';
+        const inner = document.createElement('div');
+        inner.className = 'videoSubtitlesInner';
+        inner.style.padding = '1em';
+        container.appendChild(inner);
+        document.body.appendChild(container);
+        const clientSheet = document.createElement('style');
+        clientSheet.id = 'htmlvideoplayer-cuestyle';
+        document.head.appendChild(clientSheet);
+
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#000000CC', 2, 'Arial', 'none');
+        expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em');
+
+        container.remove();
+        await vi.waitFor(() => expect(inner.style.getPropertyValue('padding')).toBe('1em'));
+        document.body.appendChild(container);
+        await vi.waitFor(() => expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em'));
+
+        disposeSubtitles();
+        disposeSubtitles = undefined;
+        expect(inner.style.getPropertyValue('padding')).toBe('1em');
+    });
 });

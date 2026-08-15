@@ -154,7 +154,7 @@ Fine-tune how subtitles look with presets, custom colors, and a draggable positi
 - User-configurable **background color** with alpha support.
 - A live preview in settings, plus a computed text shadow for transparent or black backgrounds.
 
-**Positioning:** the **Settings** tab has a draggable subtitle **position grid** — click or drag anywhere on it to place the subtitles, and use the **reset** button to return to the defaults of vertical **85%** and horizontal **50%**. Position is a per-user setting and takes effect only when Jellyfin's own subtitle style is set to **Custom**.
+**Positioning:** the **Settings** tab has a draggable subtitle **position grid** — click or drag anywhere on it to place the subtitles, and use the **reset** button to return to the defaults of vertical **85%** and horizontal **50%**. The chosen point anchors the bottom-center of custom subtitles, so a second line grows upward instead of shifting the caption lower. Position is a per-user setting and takes effect only when Jellyfin's own subtitle style is set to **Custom**.
 
 **To customize:**
 

@@ -22,12 +22,95 @@ let subtitleObserver: BodySubscriberHandle | null = null;
 let currentSubtitleStyle: SubtitleStyle = {};
 let activeSubtitleContext: IdentityContext | null = null;
 
+type StylePropertySnapshot = Readonly<{ value: string; priority: string }>;
+type StyleSnapshot = ReadonlyMap<string, StylePropertySnapshot>;
+
+const subtitleStyleProperties = [
+    'background-color', 'color', 'font-size', 'font-family', 'text-shadow',
+    'border-radius', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'font-weight', 'font-style', 'font-variant',
+] as const;
+const containerStyleProperties = [
+    'position', 'left', 'top', 'bottom', 'transform', 'width', 'max-width', 'text-align',
+] as const;
+const subtitleStyleSnapshots = new WeakMap<HTMLElement, StyleSnapshot>();
+const containerStyleSnapshots = new WeakMap<HTMLElement, StyleSnapshot>();
+const styledSubtitleElements = new Set<HTMLElement>();
+const positionedSubtitleContainers = new Set<HTMLElement>();
+
+function rememberStyles(
+    element: HTMLElement,
+    properties: readonly string[],
+    snapshots: WeakMap<HTMLElement, StyleSnapshot>,
+    owned: Set<HTMLElement>,
+): void {
+    if (!snapshots.has(element)) {
+        snapshots.set(element, new Map(properties.map((property) => [property, {
+            value: element.style.getPropertyValue(property),
+            priority: element.style.getPropertyPriority(property),
+        }])));
+    }
+    owned.add(element);
+}
+
+function restoreStyles(
+    element: HTMLElement,
+    snapshots: WeakMap<HTMLElement, StyleSnapshot>,
+    owned: Set<HTMLElement>,
+): void {
+    const snapshot = snapshots.get(element);
+    if (snapshot) {
+        for (const [property, { value, priority }] of snapshot) {
+            // Remove the generated declaration first. Some engines expand an
+            // !important shorthand into important longhands that a later
+            // non-important shorthand cannot otherwise replace.
+            element.style.removeProperty(property);
+            if (value) element.style.setProperty(property, value, priority);
+        }
+    }
+    snapshots.delete(element);
+    owned.delete(element);
+}
+
+function clampPercentage(value: unknown, fallback: number): number {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : fallback;
+}
+
+function hasVisibleBackground(value: string | undefined): boolean {
+    const normalized = value?.replace(/\s+/g, '').toLowerCase();
+    return Boolean(normalized
+        && normalized !== 'transparent'
+        && normalized !== '#00000000'
+        && normalized !== 'rgba(0,0,0,0)'
+        && normalized !== 'hsla(0,0%,0%,0)');
+}
+
+function restoreOwnedTree(node: Node): void {
+    if (!(node instanceof HTMLElement)) return;
+    if (styledSubtitleElements.has(node)) {
+        restoreStyles(node, subtitleStyleSnapshots, styledSubtitleElements);
+    }
+    if (positionedSubtitleContainers.has(node)) {
+        restoreStyles(node, containerStyleSnapshots, positionedSubtitleContainers);
+    }
+    node.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach((element) => {
+        if (styledSubtitleElements.has(element)) {
+            restoreStyles(element, subtitleStyleSnapshots, styledSubtitleElements);
+        }
+    });
+    node.querySelectorAll<HTMLElement>('.videoSubtitles').forEach((container) => {
+        if (positionedSubtitleContainers.has(container)) {
+            restoreStyles(container, containerStyleSnapshots, positionedSubtitleContainers);
+        }
+    });
+}
+
 /**
  * Applies subtitle position to the .videoSubtitles container element.
- * xPct and yPct are percentages (0-100) representing the center anchor point
- * of the subtitle text within the video area.
- * Using top+transform(translate -50%,-50%) means the anchor is always the
- * center of the text, so font size changes don't shift the visual position.
+ * xPct and yPct are percentages (0-100). Horizontal position is center-anchored;
+ * vertical position is bottom-anchored so additional cue lines grow upward
+ * without moving the selected bottom edge.
  * When disableCustomSubtitleStyles is true, removes JC position overrides entirely.
  */
 function applySubtitlePosition(context: IdentityContext | null = activeSubtitleContext): void {
@@ -39,23 +122,16 @@ function applySubtitlePosition(context: IdentityContext | null = activeSubtitleC
 
     containers.forEach(container => {
         if (disabled) {
-            // Remove JC overrides — let vanilla Jellyfin control position
-            container.style.removeProperty('position');
-            container.style.removeProperty('left');
-            container.style.removeProperty('top');
-            container.style.removeProperty('bottom');
-            container.style.removeProperty('transform');
-            container.style.removeProperty('width');
-            container.style.removeProperty('text-align');
+            restoreStyles(container, containerStyleSnapshots, positionedSubtitleContainers);
         } else {
-            const xPct = (JC.currentSettings?.subtitleHorizontalPosition as number | undefined) ?? 50;
-            const yPct = (JC.currentSettings?.subtitleVerticalPosition as number | undefined) ?? 85;
-            // Position the container so its center sits at (xPct, yPct) of the video
+            const xPct = clampPercentage(JC.currentSettings?.subtitleHorizontalPosition, 50);
+            const yPct = clampPercentage(JC.currentSettings?.subtitleVerticalPosition, 85);
+            rememberStyles(container, containerStyleProperties, containerStyleSnapshots, positionedSubtitleContainers);
             container.style.setProperty('position', 'absolute', 'important');
             container.style.setProperty('left', `${xPct}%`, 'important');
             container.style.setProperty('top', `${yPct}%`, 'important');
             container.style.setProperty('bottom', 'auto', 'important');
-            container.style.setProperty('transform', 'translate(-50%, -50%)', 'important');
+            container.style.setProperty('transform', 'translate(-50%, -100%)', 'important');
             container.style.setProperty('text-align', 'center', 'important');
         }
     });
@@ -67,32 +143,13 @@ function applySubtitlePosition(context: IdentityContext | null = activeSubtitleC
  */
 function removeInjectedStyles(): void {
     // Clear the native-cue override too (Chrome/native rendering path).
-    const cueOverride = document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement | null;
-    if (cueOverride?.sheet) {
-        while (cueOverride.sheet.cssRules.length > 0) cueOverride.sheet.deleteRule(0);
+    document.getElementById('jc-html-videoplayer-cuestyle')?.remove();
+    for (const element of [...styledSubtitleElements]) {
+        restoreStyles(element, subtitleStyleSnapshots, styledSubtitleElements);
     }
-    document.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach(el => {
-        el.style.removeProperty('background-color');
-        el.style.removeProperty('color');
-        el.style.removeProperty('font-size');
-        el.style.removeProperty('font-family');
-        el.style.removeProperty('text-shadow');
-        el.style.removeProperty('border-radius');
-        el.style.removeProperty('padding');
-        el.style.removeProperty('font-weight');
-        el.style.removeProperty('font-style');
-        el.style.removeProperty('font-variant');
-    });
-    document.querySelectorAll<HTMLElement>('.videoSubtitles').forEach(container => {
-        container.style.removeProperty('position');
-        container.style.removeProperty('left');
-        container.style.removeProperty('top');
-        container.style.removeProperty('bottom');
-        container.style.removeProperty('transform');
-        container.style.removeProperty('width');
-        container.style.removeProperty('max-width');
-        container.style.removeProperty('text-align');
-    });
+    for (const container of [...positionedSubtitleContainers]) {
+        restoreStyles(container, containerStyleSnapshots, positionedSubtitleContainers);
+    }
     // Stop the observer — no point watching when styles are disabled
     if (subtitleObserver) {
         subtitleObserver.unsubscribe();
@@ -112,6 +169,8 @@ function forceApplyInlineStyles(
     if (!element || !context || !JC.identity.isCurrent(context)
         || JC.currentSettings?.disableCustomSubtitleStyles) return;
 
+    rememberStyles(element, subtitleStyleProperties, subtitleStyleSnapshots, styledSubtitleElements);
+
     // Apply all custom styles directly to videoSubtitlesInner
     element.style.setProperty('background-color', currentSubtitleStyle.bgColor!, 'important');
     element.style.setProperty('color', currentSubtitleStyle.textColor!, 'important');
@@ -119,14 +178,19 @@ function forceApplyInlineStyles(
     element.style.setProperty('font-family', currentSubtitleStyle.fontFamily!, 'important');
     element.style.setProperty('text-shadow', currentSubtitleStyle.textShadow || 'none', 'important');
 
-    // Border radius, not configurable in the UI ***
-    element.style.setProperty('border-radius', '5px', 'important');
-
-    // Some padding when a background is visible to prevent text touching the edges
-    if (currentSubtitleStyle.bgColor && currentSubtitleStyle.bgColor !== 'transparent') {
-        element.style.setProperty('padding', '0.2em 0.4em', 'important');
+    // Keep opaque cue boxes compact; transparent cues must not retain a box.
+    if (hasVisibleBackground(currentSubtitleStyle.bgColor)) {
+        element.style.setProperty('border-radius', '0.15em', 'important');
+        element.style.setProperty('padding-top', '0.08em', 'important');
+        element.style.setProperty('padding-right', '0.2em', 'important');
+        element.style.setProperty('padding-bottom', '0.08em', 'important');
+        element.style.setProperty('padding-left', '0.2em', 'important');
     } else {
-        element.style.setProperty('padding', '0', 'important');
+        element.style.removeProperty('border-radius');
+        element.style.setProperty('padding-top', '0', 'important');
+        element.style.setProperty('padding-right', '0', 'important');
+        element.style.setProperty('padding-bottom', '0', 'important');
+        element.style.setProperty('padding-left', '0', 'important');
     }
 
     // Explicitly reset vanilla Jellyfin properties that could conflict with our styling
@@ -143,6 +207,7 @@ function startSubtitleObserver(context: IdentityContext): void {
     subtitleObserver = onBodyMutation('subtitles', (mutations) => {
         if (!JC.identity.isCurrent(context)) return;
         for (const mutation of mutations) {
+            mutation.removedNodes.forEach(restoreOwnedTree);
             for (const node of mutation.addedNodes) {
                 if (node.nodeType === 1) {
                     const el = node as HTMLElement;
