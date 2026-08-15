@@ -61,7 +61,7 @@ Gives each activity type on the Dashboard a distinct Material Design icon in its
 
 ### Colored Ratings Backgrounds
 
-Adds value-based colored backgrounds to the rating chips on detail pages, with different colors per rating type. It supports TMDB, IMDb, and Rotten Tomatoes scores, so a strong rating reads differently from a weak one at a glance.
+Adds value-based colored backgrounds to the rating chips on detail pages, with different colors per rating type. It supports TMDB, IMDb, and Rotten Tomatoes scores, so a strong rating reads differently from a weak one at a glance. Jellyfin's text certification badge is also grouped by age tier, including exact bare labels such as `L`, `12+`, `14`, `U/A 13+`, and `NC16` when metadata providers omit a region prefix.
 
 ![Colored Ratings](images/ratings.png)
 
