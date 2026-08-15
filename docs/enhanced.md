@@ -117,9 +117,6 @@ Cycling shortcuts act without opening any menus:
 - **Show Playback Info** toggles a Canopy-rendered overlay (resolution,
   play method, transcoding, bitrate, active tracks, dropped frames) instead of
   opening the native settings → stats panel.
-- **Skip Intro/Outro** jumps past the current media segment using the same
-  segment data auto-skip uses; the visible skip button is only used as a
-  fallback (e.g. third-party skip plugins).
 
 **To customize a shortcut:**
 

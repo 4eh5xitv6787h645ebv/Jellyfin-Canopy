@@ -6,8 +6,9 @@ import { installPlayback } from './playback';
 
 async function flushPromises(): Promise<void> {
     // Enough microtask rounds for the press-time probe, the per-kind chain
-    // hop, the op probe (Promise.all), the POST, and publication.
-    for (let i = 0; i < 12; i++) await Promise.resolve();
+    // hop, the op probe (Promise.all), failed-command ownership reprobes, the
+    // POST, and publication.
+    for (let i = 0; i < 24; i++) await Promise.resolve();
 }
 
 function mountVideo(): HTMLVideoElement {
@@ -21,7 +22,12 @@ function ownSession(overrides: Record<string, unknown> = {}): Record<string, unk
     return {
         Id: 'sess-1',
         DeviceId: 'device-1',
-        PlayState: { AudioStreamIndex: 1, SubtitleStreamIndex: 2, PlayMethod: 'DirectPlay' },
+        PlayState: {
+            AudioStreamIndex: 1,
+            SubtitleStreamIndex: 2,
+            PlayMethod: 'DirectPlay',
+            MediaSourceId: '1',
+        },
         NowPlayingItem: {
             Id: 'item-1',
             MediaStreams: [
@@ -299,7 +305,7 @@ describe('DOM-free player shortcuts', () => {
             resolveSessions([sessionForItem(ITEM_B)]);
             await flushPromises();
 
-            expect(jf).toHaveBeenCalledTimes(1); // probe only — no command
+            expect(jf).toHaveBeenCalledTimes(2); // press + operation probes only — no command
             expect(triggerClick).not.toHaveBeenCalled(); // and no menu fallback
         });
 
@@ -323,7 +329,7 @@ describe('DOM-free player shortcuts', () => {
             resolveSessions([]);
             await flushPromises();
 
-            expect(jf).toHaveBeenCalledTimes(1);
+            expect(jf).toHaveBeenCalledTimes(2);
             expect(triggerClick).not.toHaveBeenCalled();
         });
 
@@ -349,15 +355,96 @@ describe('DOM-free player shortcuts', () => {
             resolveSessions([session]);
             await flushPromises();
 
-            expect(jf).toHaveBeenCalledTimes(1); // stale probe only; no POST
+            expect(jf).toHaveBeenCalledTimes(2); // stale press/operation probes only; no POST
             expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('rejects a same-item replacement playback session captured after the press', async () => {
+            mountItemVideo(ITEM_A);
+            let sessionCall = 0;
+            const commands: string[] = [];
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    const session = sessionForItem(ITEM_A);
+                    if (sessionCall >= 2) session.Id = 'replacement-session';
+                    return Promise.resolve([session]);
+                }
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await flushPromises();
+
+            expect(commands).toHaveLength(0);
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('rejects a blob press whose session media source switches before execution', async () => {
+            mountVideo();
+            let sessionCall = 0;
+            const commands: string[] = [];
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    const session = sessionForItem(ITEM_A);
+                    (session.PlayState as Record<string, unknown>).MediaSourceId = sessionCall === 1 ? '1' : '2';
+                    return Promise.resolve([session]);
+                }
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnSubtitles';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+
+            expect(commands).toHaveLength(0);
+            expect(triggerClick).not.toHaveBeenCalled();
+        });
+
+        it('fails closed when a known media-source identity becomes unknown', async () => {
+            const mounted = mountItemVideo(ITEM_A);
+            let sessionCall = 0;
+            let resolveExecution!: (value: unknown) => void;
+            const commands: string[] = [];
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    if (sessionCall === 1) return Promise.resolve([sessionForItem(ITEM_A)]);
+                    return new Promise((resolve) => { resolveExecution = resolve; });
+                }
+                commands.push(path);
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleAudioTrack!();
+            await flushPromises();
+            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream`); // MediaSourceId was known, now absent
+            const unknownSource = sessionForItem(ITEM_A);
+            delete (unknownSource.PlayState as Record<string, unknown>).MediaSourceId;
+            resolveExecution([unknownSource]);
+            await flushPromises();
+
+            expect(commands).toHaveLength(0);
         });
 
         it('a SAME-item stream restart (e.g. quality change) does NOT swallow the press', async () => {
             const mounted = mountItemVideo(ITEM_A);
-            let resolveSessions!: (v: unknown) => void;
+            const resolveSessions: Array<(value: unknown) => void> = [];
             const jf = vi.fn((path: string) => {
-                if (path.startsWith('/Sessions?')) return new Promise((r) => { resolveSessions = r; });
+                if (path.startsWith('/Sessions?')) return new Promise((resolve) => { resolveSessions.push(resolve); });
                 return Promise.resolve({});
             });
             JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
@@ -365,11 +452,11 @@ describe('DOM-free player shortcuts', () => {
             JC.cycleSubtitleTrack!();
             await Promise.resolve();
             await Promise.resolve();
-            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream.m3u8?PlaySessionId=new`);
-            resolveSessions([sessionForItem(ITEM_A)]);
+            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream.m3u8?MediaSourceId=1&PlaySessionId=new`);
+            resolveSessions.forEach((resolve) => resolve([sessionForItem(ITEM_A)]));
             await flushPromises();
 
-            expect(jf).toHaveBeenCalledTimes(2); // probe + command — press survives the restart
+            expect(jf).toHaveBeenCalledTimes(3); // press probe + operation probe + command
         });
 
         it('a queued rapid press survives the first command’s own same-item restart', async () => {
@@ -392,7 +479,7 @@ describe('DOM-free player shortcuts', () => {
             expect(commands).toHaveLength(1);
             JC.cycleSubtitleTrack!(); // press B queued at keypress time
             // Press A's success restarts the stream for the SAME item.
-            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream.m3u8?PlaySessionId=restart`);
+            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream.m3u8?MediaSourceId=1&PlaySessionId=restart`);
             const firstResolve = resolveCommand;
             firstResolve({});
             await flushPromises();
@@ -457,6 +544,37 @@ describe('DOM-free player shortcuts', () => {
             await flushPromises();
 
             expect(triggerClick).not.toHaveBeenCalled(); // fresh probe proves the moved item
+        });
+
+        it('a rejected POST cannot fall back after same-item session and source replacement', async () => {
+            const mounted = mountItemVideo(ITEM_A);
+            let sessionCall = 0;
+            let rejectCommand!: (error: unknown) => void;
+            const jf = vi.fn((path: string) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    const session = sessionForItem(ITEM_A);
+                    if (sessionCall >= 3) {
+                        session.Id = 'replacement-session';
+                        (session.PlayState as Record<string, unknown>).MediaSourceId = '2';
+                    }
+                    return Promise.resolve([session]);
+                }
+                return new Promise((_resolve, reject) => { rejectCommand = reject; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+            const trigger = document.createElement('button');
+            trigger.className = 'btnAudio';
+            const triggerClick = vi.spyOn(trigger, 'click');
+            document.body.appendChild(trigger);
+
+            JC.cycleAudioTrack!();
+            await flushPromises();
+            mounted.setSrc(`http://jf.test/Videos/${ITEM_A}/stream?MediaSourceId=2`);
+            rejectCommand(new Error('replaced while pending'));
+            await flushPromises();
+
+            expect(triggerClick).not.toHaveBeenCalled();
         });
 
         it('BLOB source: an unresolved press-time ownership probe falls back to the DOM path, never commands', async () => {
@@ -641,8 +759,8 @@ describe('DOM-free player shortcuts', () => {
         });
     });
 
-    describe('manual skip consumer fallback (MANUAL-SKIP-STALE-ITEM proof)', () => {
-        it('after a source change, skipIntroOutro falls back to the visible skip button instead of seeking stale boundaries', async () => {
+    describe('manual skip contract preservation', () => {
+        it('uses the visible native skip button even when auto-skip owns an active segment', async () => {
             const ITEM = 'e5'.repeat(16);
             const video = document.createElement('video');
             let src = `http://jf.test/Videos/${ITEM}/stream.mp4?MediaSourceId=1`;
@@ -667,13 +785,11 @@ describe('DOM-free player shortcuts', () => {
             const buttonClick = vi.spyOn(skipButton, 'click').mockImplementation(() => undefined);
             document.body.appendChild(skipButton);
 
-            // Next episode: same element, new unresolvable source; position is
-            // inside the OLD item's intro but those boundaries are now stale.
-            src = 'blob:next-episode';
             JC.skipIntroOutro!();
 
-            expect(video.currentTime).toBe(10); // never seeks with stale boundaries
-            expect(buttonClick).toHaveBeenCalledTimes(1); // visible-button fallback engaged
+            expect(src).toContain(ITEM);
+            expect(video.currentTime).toBe(10); // shortcut did not seek through the auto-skip engine
+            expect(buttonClick).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -736,6 +852,22 @@ describe('DOM-free player shortcuts', () => {
             await flushPromises();
             expect(commands.map((c) => (c.body as { Arguments: { Index: string } }).Arguments.Index))
                 .toEqual(['3', '-1', '2']);
+        });
+
+        it('an external subtitle selection before acknowledgement overrides optimistic memory', async () => {
+            mountVideo();
+            const session = ownSession();
+            const { commands } = installApi([session]);
+
+            JC.cycleSubtitleTrack!(); // reports 2, commands 3
+            await flushPromises();
+            (session.PlayState as Record<string, unknown>).SubtitleStreamIndex = -1; // external menu selects Off
+            JC.cycleSubtitleTrack!(); // external Off is authoritative, so next is 2
+            await flushPromises();
+
+            expect(commands.map((command) =>
+                (command.body as { Arguments: { Index: string } }).Arguments.Index))
+                .toEqual(['3', '2']);
         });
 
         it('BLOB: a press-time probe resolving after a surface change is NOT accepted as ownership', async () => {
@@ -876,6 +1008,33 @@ describe('DOM-free player shortcuts', () => {
 
             expect(overlay.textContent).not.toContain('DirectPlay'); // mixed sample discarded
         });
+
+        it('overlay: an id-bearing to id-less transition between ticks tears down despite a lagging session', async () => {
+            const video = document.createElement('video');
+            let src = `http://jf.test/Videos/${ITEM_A}/stream.mp4?MediaSourceId=1`;
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const lagging = sessionForItem(ITEM_A);
+            const jf = vi.fn((path: string) => path.startsWith('/Sessions?')
+                ? Promise.resolve([lagging])
+                : Promise.resolve({}));
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.togglePlaybackInfo!();
+            await flushPromises();
+            const overlay = document.querySelector('[data-jc-playback-info="true"]')!;
+            expect(overlay.textContent).toContain('DirectPlay');
+
+            // The transition completes before the next refresh begins. The
+            // server still reports A, so only the persisted surface token can
+            // prevent those old rows from being adopted for the new playback.
+            src = 'blob:new-item-without-id';
+            vi.advanceTimersByTime(1_000);
+            await flushPromises();
+
+            expect(overlay.isConnected).toBe(false);
+            expect(jf).toHaveBeenCalledTimes(1); // rejected before trusting another lagging sample
+        });
     });
 
     describe('aspect ratio without panels', () => {
@@ -1013,6 +1172,34 @@ describe('DOM-free player shortcuts', () => {
             vi.advanceTimersByTime(1_000);
             await flushPromises();
             expect(document.querySelector('[data-jc-playback-info="true"]')).toBeNull();
+        });
+
+        it('refreshes coherently across a proven same-item media-source change', async () => {
+            const ITEM = 'f6'.repeat(16);
+            const video = document.createElement('video');
+            let src = `http://jf.test/Videos/${ITEM}/stream?MediaSourceId=1`;
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const session = ownSession();
+            (session.NowPlayingItem as Record<string, unknown>).Id = ITEM;
+            const jf = vi.fn((path: string) => path.startsWith('/Sessions?')
+                ? Promise.resolve([session])
+                : Promise.resolve({}));
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.togglePlaybackInfo!();
+            await flushPromises();
+            const overlay = document.querySelector('[data-jc-playback-info="true"]')!;
+            expect(overlay.textContent).toContain('DirectPlay');
+
+            src = `http://jf.test/Videos/${ITEM}/stream?MediaSourceId=2`;
+            (session.PlayState as Record<string, unknown>).MediaSourceId = '2';
+            (session.PlayState as Record<string, unknown>).PlayMethod = 'Transcode';
+            vi.advanceTimersByTime(1_000);
+            await flushPromises();
+
+            expect(overlay.isConnected).toBe(true);
+            expect(overlay.textContent).toContain('Transcode');
         });
 
         it('is removed by the identity reset (navigation away)', () => {
