@@ -52,7 +52,10 @@ declare module '../types/jc' {
 const logPrefix = '🪼 Jellyfin Canopy: Seerr Modal:';
 const modal = {} as SeerrModalApi;
 type ManagedModal = SeerrModalHandle & { destroy: () => void };
-type IdentityCleanupElement = HTMLElement & { _jcIdentityCleanups?: Set<() => void> };
+type IdentityCleanupElement = HTMLElement & {
+    _jcIdentityCleanups?: Set<() => void>;
+    _jcModalActive?: boolean;
+};
 type UnknownRecord = Record<string, unknown>;
 
 interface NormalizedAdvancedServer {
@@ -1749,6 +1752,9 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     }) | null = null;
     const cleanups = new Set<() => void>();
     modalElement._jcIdentityCleanups = cleanups;
+    // Connected is not synonymous with live: animated close deliberately
+    // retains the element for 300 ms after its controls have been retired.
+    modalElement._jcModalActive = true;
     const isCurrent = () => !!identity
         && JC.identity.isCurrent(identity)
         && !isClosing
@@ -1833,6 +1839,7 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     const closeInternal = (immediate: boolean, restoreFocus = true) => {
         if (isClosing) return;
         isClosing = true;
+        modalElement._jcModalActive = false;
         const owner = getHistoryOwner();
         if (historyToken !== null) {
             owner.records.delete(historyToken);
@@ -2075,18 +2082,32 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
  * @param {'standard'|'4k'} initialVariant - The request mode whose configured default should be selected.
  */
 modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVariant) {
+    const managedModalElement = modalElement as IdentityCleanupElement;
     const identity = JC.identity.ownerOf(modalElement) || JC.identity.capture();
+    let active = managedModalElement._jcModalActive !== false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let applyVariantDefault: (() => void) | null = null;
     const isCurrent = () => !!identity
+        && active
+        && managedModalElement._jcModalActive !== false
         && JC.identity.isCurrent(identity)
         && document.body.contains(modalElement);
     let variant = initialVariant;
-    let applyVariantDefault: (() => void) | null = null;
     const handle: SeerrAdvancedOptionsHandle = {
         setVariant(nextVariant) {
             variant = nextVariant;
             if (isCurrent()) applyVariantDefault?.();
         },
     };
+    const deactivate = () => {
+        active = false;
+        applyVariantDefault = null;
+        if (interval !== null) {
+            clearInterval(interval);
+            interval = null;
+        }
+    };
+    managedModalElement._jcIdentityCleanups?.add(deactivate);
     // Backend failed to load server options: show an error note instead of
     // polling for selects that will only ever be populated with empty
     // placeholders — three empty dropdowns look like a valid config (W4-ERR-5).
@@ -2101,9 +2122,9 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVa
     // Use a timer to ensure emby-select elements are ready
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds
-    const interval = setInterval(() => {
+    interval = setInterval(() => {
         if (!isCurrent()) {
-            clearInterval(interval);
+            deactivate();
             return;
         }
         const serverSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-server`);
@@ -2111,7 +2132,10 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVa
         const folderSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-folder`);
 
         if (serverSelect && qualitySelect && folderSelect) {
-            clearInterval(interval);
+            if (interval !== null) {
+                clearInterval(interval);
+                interval = null;
+            }
 
             serverSelect.innerHTML = '<option value="">Select Server...</option>';
             qualitySelect.innerHTML = '<option value="">Select Quality...</option>';
@@ -2184,19 +2208,21 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVa
             };
             applyVariantDefault();
 
-            const cleanups = (modalElement as IdentityCleanupElement)._jcIdentityCleanups;
-            cleanups?.add(() => serverSelect.removeEventListener('change', updateServerDependentOptions));
+            managedModalElement._jcIdentityCleanups?.add(
+                () => serverSelect.removeEventListener('change', updateServerDependentOptions)
+            );
 
         } else {
             attempts++;
             if (attempts > maxAttempts) {
-                clearInterval(interval);
+                if (interval !== null) {
+                    clearInterval(interval);
+                    interval = null;
+                }
                 console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
             }
         }
     }, 100);
-    const cleanups = (modalElement as IdentityCleanupElement)._jcIdentityCleanups;
-    cleanups?.add(() => clearInterval(interval));
     return handle;
 };
 

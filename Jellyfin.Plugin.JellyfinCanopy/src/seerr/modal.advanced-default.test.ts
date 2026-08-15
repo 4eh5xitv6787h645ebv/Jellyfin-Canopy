@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../globals';
 
+const HISTORY_STATE_KEY = '__jellyfinCanopySeerrModal';
+
 describe('Seerr advanced request server defaults', () => {
     beforeAll(async () => {
         JC.t = (key: string) => key;
@@ -20,18 +22,22 @@ describe('Seerr advanced request server defaults', () => {
         vi.useRealTimers();
     });
 
-    function openAdvancedOptions(servers: unknown[], variant: 'standard' | '4k' = 'standard') {
+    function openAdvancedOptions(
+        servers: unknown[],
+        variant: 'standard' | '4k' = 'standard',
+        idPrefix = 'movie',
+    ) {
         const modal = JC.seerrModal!.create({
             title: 'Request',
             subtitle: 'Fixture',
-            bodyHtml: JC.seerrModal!.createAdvancedOptionsHTML('movie'),
+            bodyHtml: JC.seerrModal!.createAdvancedOptionsHTML(idPrefix),
             onSave: vi.fn(),
         });
         modal.show();
         const handle = JC.seerrModal!.populateAdvancedOptions(
             modal.modalElement,
             { servers, tags: [] },
-            'movie',
+            idPrefix,
             variant,
         );
         return { modal, handle };
@@ -113,7 +119,48 @@ describe('Seerr advanced request server defaults', () => {
         expect(modal.modalElement.querySelector<HTMLSelectElement>('#movie-quality')!.value).toBe('101');
         expect(modal.modalElement.querySelector<HTMLSelectElement>('#movie-folder')!.value).toBe('/four-k');
         expect(changed).not.toHaveBeenCalled();
+
+        server.value = '7';
+        server.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(modal.modalElement.querySelector<HTMLSelectElement>('#movie-quality')!.value).toBe('71');
+        expect(modal.modalElement.querySelector<HTMLSelectElement>('#movie-folder')!.value).toBe('/standard-seven');
+        expect(changed).toHaveBeenCalledTimes(1);
     });
+
+    it.each([
+        { onlyVariant: 'standard' as const, initialVariant: 'standard' as const, initialValue: '1', nextVariant: '4k' as const },
+        { onlyVariant: '4k' as const, initialVariant: '4k' as const, initialValue: '1', nextVariant: 'standard' as const },
+    ])(
+        'selects an isolated $onlyVariant default only for its exact mode',
+        async ({ onlyVariant, initialVariant, initialValue, nextVariant }) => {
+            const { modal, handle } = openAdvancedOptions([{
+                id: 1,
+                name: `${onlyVariant} only`,
+                isDefault: true,
+                is4k: onlyVariant === '4k',
+                activeProfileId: 11,
+                activeDirectory: `/${onlyVariant}`,
+                qualityProfiles: [{ id: 11, name: `${onlyVariant} profile` }],
+                rootFolders: [{ path: `/${onlyVariant}` }],
+            }], initialVariant);
+
+            await vi.advanceTimersByTimeAsync(100);
+
+            const server = modal.modalElement.querySelector<HTMLSelectElement>('#movie-server')!;
+            const quality = modal.modalElement.querySelector<HTMLSelectElement>('#movie-quality')!;
+            const folder = modal.modalElement.querySelector<HTMLSelectElement>('#movie-folder')!;
+            expect(server.value).toBe(initialValue);
+            expect(quality.value).toBe('11');
+            expect(folder.value).toBe(`/${onlyVariant}`);
+
+            handle.setVariant(nextVariant);
+
+            expect(server.value).toBe('');
+            expect(quality.options).toHaveLength(1);
+            expect(folder.options).toHaveLength(1);
+        },
+    );
 
     it('keeps the placeholder when default mode metadata is absent or malformed', async () => {
         const { modal, handle } = openAdvancedOptions([
@@ -165,5 +212,67 @@ describe('Seerr advanced request server defaults', () => {
         await vi.advanceTimersByTimeAsync(10_000);
 
         expect(retainedServer.options).toHaveLength(0);
+    });
+
+    it('makes a retained handle inert during same-identity navigation replacement', async () => {
+        const stale = openAdvancedOptions([
+            {
+                id: 1,
+                name: 'Old standard',
+                isDefault: true,
+                is4k: false,
+                activeProfileId: 11,
+                activeDirectory: '/old-standard',
+                qualityProfiles: [{ id: 11, name: 'Old standard profile' }],
+                rootFolders: [{ path: '/old-standard' }],
+            },
+            {
+                id: 2,
+                name: 'Old 4K',
+                isDefault: true,
+                is4k: true,
+                activeProfileId: 21,
+                activeDirectory: '/old-four-k',
+                qualityProfiles: [{ id: 21, name: 'Old 4K profile' }],
+                rootFolders: [{ path: '/old-four-k' }],
+            },
+        ]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        const staleServer = stale.modal.modalElement.querySelector<HTMLSelectElement>('#movie-server')!;
+        const staleQuality = stale.modal.modalElement.querySelector<HTMLSelectElement>('#movie-quality')!;
+        const staleFolder = stale.modal.modalElement.querySelector<HTMLSelectElement>('#movie-folder')!;
+        const modalState = history.state as Record<string, unknown>;
+        const marker = modalState[HISTORY_STATE_KEY] as { hostState: unknown };
+        History.prototype.replaceState.call(history, marker.hostState, '', location.href);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: marker.hostState }));
+
+        expect(stale.modal.modalElement.isConnected).toBe(true);
+
+        const replacement = openAdvancedOptions([{
+            id: 3,
+            name: 'Replacement standard',
+            isDefault: true,
+            is4k: false,
+            activeProfileId: 31,
+            activeDirectory: '/replacement',
+            qualityProfiles: [{ id: 31, name: 'Replacement profile' }],
+            rootFolders: [{ path: '/replacement' }],
+        }], 'standard', 'tv');
+        const replacementServer = replacement.modal.modalElement.querySelector<HTMLSelectElement>('#tv-server')!;
+        await vi.advanceTimersByTimeAsync(100);
+        expect(replacement.modal.modalElement.isConnected).toBe(true);
+        expect(replacementServer.value).toBe('3');
+
+        stale.handle.setVariant('4k');
+
+        expect(staleServer.value).toBe('1');
+        expect(staleQuality.value).toBe('11');
+        expect(staleFolder.value).toBe('/old-standard');
+        expect(replacementServer.value).toBe('3');
+
+        await vi.advanceTimersByTimeAsync(300);
+        expect(stale.modal.modalElement.isConnected).toBe(false);
+        expect(replacement.modal.modalElement.isConnected).toBe(true);
     });
 });
