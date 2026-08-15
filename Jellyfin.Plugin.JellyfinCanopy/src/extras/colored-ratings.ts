@@ -27,11 +27,13 @@ const CONFIG = {
     navSettleDelay: 500,
     cssId: 'jellyfin-ratings-style'
 };
+const SUPPORTED_FSK_RATINGS = new Set(['FSK-0', 'FSK-6', 'FSK-12', 'FSK-16', 'FSK-18']);
 
 let observerHandle: { unsubscribe(): void } | null = null;
 let navUnsubscribe: (() => void) | null = null;
 let navSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let ratingTextObservers = new Map<HTMLElement, MutationObserver>();
 interface RatingElementState {
     sourceText: string | null;
     sourceRating: string | null;
@@ -41,6 +43,8 @@ interface RatingElementState {
     renderedRating: string;
     renderedAriaLabel: string | null;
     renderedTitle: string | null;
+    ownsAriaLabel: boolean;
+    ownsTitle: boolean;
 }
 let elementStates = new WeakMap<HTMLElement, RatingElementState>();
 let generation = 0;
@@ -69,11 +73,45 @@ function injectCSS(): void {
     }
 }
 
+function observeRatingText(
+    element: HTMLElement,
+    context: IdentityContext,
+    expectedGeneration: number
+): void {
+    if (!window.MutationObserver || ratingTextObservers.has(element)) return;
+
+    const observer = new MutationObserver((mutations) => {
+        if (!isActive(context, expectedGeneration)) return;
+        if (mutations.some((mutation) => mutation.type === 'characterData')) {
+            debouncedProcess(context, expectedGeneration);
+        }
+    });
+    // PERF(R3): character-data observation is deliberately limited to the
+    // handful of live rating elements. Observing body/document would also see
+    // high-frequency playback clock and OSD updates.
+    observer.observe(element, { characterData: true, subtree: true });
+    ratingTextObservers.set(element, observer);
+}
+
+function pruneRatingTextObservers(liveElements: Set<HTMLElement>): void {
+    ratingTextObservers.forEach((observer, element) => {
+        if (liveElements.has(element) && element.isConnected) return;
+        observer.disconnect();
+        ratingTextObservers.delete(element);
+    });
+}
+
+function writeOptionalAttribute(element: HTMLElement, name: string, value: string | null): void {
+    if (value === null) element.removeAttribute(name);
+    else element.setAttribute(name, value);
+}
+
 
 function processRatingElements(context: IdentityContext, expectedGeneration: number): void {
     if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
     try {
         const elements = document.querySelectorAll<HTMLElement>(CONFIG.targetSelector);
+        const liveElements = new Set(elements);
 
         elements.forEach((element) => {
             if (!isActive(context, expectedGeneration)) return;
@@ -92,8 +130,14 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
                 // as the new host-owned state so teardown restores the right item.
                 if (currentText !== state.renderedText) state.sourceText = currentText;
                 if (currentRating !== state.renderedRating) state.sourceRating = currentRating;
-                if (currentAriaLabel !== state.renderedAriaLabel) state.sourceAriaLabel = currentAriaLabel;
-                if (currentTitle !== state.renderedTitle) state.sourceTitle = currentTitle;
+                if (currentAriaLabel !== state.renderedAriaLabel) {
+                    state.sourceAriaLabel = currentAriaLabel;
+                    state.ownsAriaLabel = false;
+                }
+                if (currentTitle !== state.renderedTitle) {
+                    state.sourceTitle = currentTitle;
+                    state.ownsTitle = false;
+                }
             } else {
                 state = {
                     sourceText: element.textContent,
@@ -104,6 +148,8 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
                     renderedRating: '',
                     renderedAriaLabel: element.getAttribute('aria-label'),
                     renderedTitle: element.getAttribute('title'),
+                    ownsAriaLabel: false,
+                    ownsTitle: false,
                 };
                 elementStates.set(element, state);
             }
@@ -111,19 +157,29 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
             const ratingText = element.textContent?.trim();
             if (ratingText && ratingText.length > 0) {
                 const normalizedRating = normalizeRating(ratingText);
-                const isFsk = normalizedRating.startsWith('FSK-');
+                const isFsk = SUPPORTED_FSK_RATINGS.has(normalizedRating);
                 const visibleText = isFsk ? normalizedRating : element.textContent;
                 let ariaLabel = element.getAttribute('aria-label');
                 let title = element.getAttribute('title');
                 if (visibleText !== element.textContent) element.textContent = visibleText;
                 element.setAttribute(CONFIG.attributeName, normalizedRating);
-                if (isFsk || ariaLabel === null) {
+                if (isFsk || (state.ownsAriaLabel && state.sourceAriaLabel === null) || ariaLabel === null) {
                     ariaLabel = `Content rated ${normalizedRating}`;
                     element.setAttribute('aria-label', ariaLabel);
+                    state.ownsAriaLabel = true;
+                } else if (state.ownsAriaLabel) {
+                    ariaLabel = state.sourceAriaLabel;
+                    writeOptionalAttribute(element, 'aria-label', ariaLabel);
+                    state.ownsAriaLabel = false;
                 }
-                if (isFsk || title === null) {
+                if (isFsk || (state.ownsTitle && state.sourceTitle === null) || title === null) {
                     title = `Rating: ${normalizedRating}`;
                     element.setAttribute('title', title);
+                    state.ownsTitle = true;
+                } else if (state.ownsTitle) {
+                    title = state.sourceTitle;
+                    writeOptionalAttribute(element, 'title', title);
+                    state.ownsTitle = false;
                 }
                 element.dataset.jcColoredRating = 'true';
                 state.renderedText = visibleText;
@@ -131,7 +187,9 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
                 state.renderedAriaLabel = ariaLabel;
                 state.renderedTitle = title;
             }
+            observeRatingText(element, context, expectedGeneration);
         });
+        pruneRatingTextObservers(liveElements);
 
     } catch (error) {
         console.error('🪼 Jellyfin Canopy: Error processing rating elements', error);
@@ -188,6 +246,14 @@ export function mutationsTouchRatings(mutations: MutationRecord[]): boolean {
             }
         }
 
+        for (const node of mutation.removedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            const el = node as Element;
+            if (el.matches?.(CONFIG.targetSelector) || el.querySelector?.(CONFIG.targetSelector)) {
+                return true;
+            }
+        }
+
         const target = mutation.target as Element;
         if (target.nodeType === Node.ELEMENT_NODE &&
             (target.matches(CONFIG.targetSelector) || target.closest(CONFIG.targetSelector))) {
@@ -203,9 +269,9 @@ function setupMutationObserver(context: IdentityContext, expectedGeneration: num
     try {
         // PERF(R3): rides the shared structural body observer instead of a
         // dedicated characterData:true body observer — that one fired on the
-        // OSD clock's text updates every second during playback. Rating text
-        // only ever (re)renders via childList mutations, and the
-        // per-navigation pass below covers cached-page re-shows.
+        // OSD clock's text updates every second during playback. Retained text
+        // nodes are covered by the element-scoped observers installed above;
+        // this shared subscription discovers new/replaced rating elements.
         observerHandle = onBodyMutation('colored-ratings', (mutations) => {
             if (isActive(context, expectedGeneration) && mutationsTouchRatings(mutations)) {
                 debouncedProcess(context, expectedGeneration);
@@ -270,6 +336,8 @@ function cleanup(): void {
         clearTimeout(debounceTimer);
         debounceTimer = null;
     }
+    ratingTextObservers.forEach((observer) => observer.disconnect());
+    ratingTextObservers.clear();
 }
 
 export function resetColoredRatings(): void {
@@ -279,13 +347,9 @@ export function resetColoredRatings(): void {
         const state = elementStates.get(element);
         if (state) {
             element.textContent = state.sourceText;
-            const restore = (name: string, value: string | null) => {
-                if (value === null) element.removeAttribute(name);
-                else element.setAttribute(name, value);
-            };
-            restore(CONFIG.attributeName, state.sourceRating);
-            restore('aria-label', state.sourceAriaLabel);
-            restore('title', state.sourceTitle);
+            writeOptionalAttribute(element, CONFIG.attributeName, state.sourceRating);
+            writeOptionalAttribute(element, 'aria-label', state.sourceAriaLabel);
+            writeOptionalAttribute(element, 'title', state.sourceTitle);
         } else {
             element.removeAttribute(CONFIG.attributeName);
             element.removeAttribute('aria-label');
@@ -294,6 +358,7 @@ export function resetColoredRatings(): void {
         delete element.dataset.jcColoredRating;
     });
     elementStates = new WeakMap();
+    ratingTextObservers = new Map();
     document.getElementById(CONFIG.cssId)?.remove();
 }
 

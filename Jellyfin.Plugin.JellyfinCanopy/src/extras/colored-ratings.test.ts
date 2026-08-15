@@ -32,6 +32,14 @@ describe('mutationsTouchRatings', () => {
         expect(mutationsTouchRatings(batch)).toBe(true);
     });
 
+    it('matches a removed rating subtree so element observers can be pruned', () => {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = '<span class="mediaInfoOfficialRating">PG-13</span>';
+
+        const batch = [record({ removedNodes: [wrapper] as unknown as NodeList })];
+        expect(mutationsTouchRatings(batch)).toBe(true);
+    });
+
     it('matches a childList change whose target is a rating element (text swap)', () => {
         const rating = document.createElement('div');
         rating.className = 'mediaInfoOfficialRating';

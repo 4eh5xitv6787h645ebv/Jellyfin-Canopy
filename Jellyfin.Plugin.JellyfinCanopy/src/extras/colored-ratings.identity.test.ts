@@ -95,14 +95,17 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.dataset.jcColoredRating).toBeUndefined();
     });
 
-    it('updates a retained host node to a new FSK value and restores the latest source text', () => {
+    it('updates a retained text node through the production observer path', async () => {
         const rating = addRating('FSK 6');
         JC.initializeColoredRatings!();
         expect(rating.textContent).toBe('FSK-6');
 
-        rating.textContent = 'DE-16';
-        JC.resumeRatingsPolling!();
-        vi.advanceTimersByTime(100);
+        // Move beyond the fixed navigation-settle window, then model React's
+        // retained text-node update. No compatibility resume hook is invoked.
+        await vi.advanceTimersByTimeAsync(600);
+        expect(rating.firstChild).toBeInstanceOf(Text);
+        rating.firstChild!.nodeValue = 'DE-16';
+        await vi.advanceTimersByTimeAsync(100);
 
         expect(rating.textContent).toBe('FSK-16');
         expect(rating.getAttribute('rating')).toBe('FSK-16');
@@ -114,5 +117,69 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.hasAttribute('rating')).toBe(false);
         expect(rating.hasAttribute('aria-label')).toBe(false);
         expect(rating.hasAttribute('title')).toBe(false);
+    });
+
+    it('updates plugin-owned accessibility metadata from FSK to non-FSK', async () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+
+        rating.firstChild!.nodeValue = 'PG-13';
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(rating.textContent).toBe('PG-13');
+        expect(rating.getAttribute('rating')).toBe('PG-13');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated PG-13');
+        expect(rating.getAttribute('title')).toBe('Rating: PG-13');
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('PG-13');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+    });
+
+    it('restores host accessibility metadata when a retained FSK node becomes non-FSK', async () => {
+        const rating = addRating('DE-12');
+        rating.setAttribute('aria-label', 'Host rating label');
+        rating.setAttribute('title', 'Host rating title');
+        JC.initializeColoredRatings!();
+
+        rating.firstChild!.nodeValue = 'PG-13';
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(rating.getAttribute('aria-label')).toBe('Host rating label');
+        expect(rating.getAttribute('title')).toBe('Host rating title');
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('PG-13');
+        expect(rating.getAttribute('aria-label')).toBe('Host rating label');
+        expect(rating.getAttribute('title')).toBe('Host rating title');
+    });
+
+    it('does not process retained text updates after lifecycle cleanup', async () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        resetColoredRatings();
+
+        rating.firstChild!.nodeValue = 'DE-16';
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(rating.textContent).toBe('DE-16');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+    });
+
+    it('preserves host metadata for unsupported FSK-prefixed values', () => {
+        const rating = addRating('FSK-21');
+        rating.setAttribute('aria-label', 'Host unknown FSK label');
+        rating.setAttribute('title', 'Host unknown FSK title');
+
+        JC.initializeColoredRatings!();
+
+        expect(rating.textContent).toBe('FSK-21');
+        expect(rating.getAttribute('rating')).toBe('FSK-21');
+        expect(rating.getAttribute('aria-label')).toBe('Host unknown FSK label');
+        expect(rating.getAttribute('title')).toBe('Host unknown FSK title');
     });
 });
