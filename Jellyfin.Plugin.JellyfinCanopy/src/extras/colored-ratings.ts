@@ -32,7 +32,17 @@ let observerHandle: { unsubscribe(): void } | null = null;
 let navUnsubscribe: (() => void) | null = null;
 let navSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let processedElements = new WeakSet<Element>();
+interface RatingElementState {
+    sourceText: string | null;
+    sourceRating: string | null;
+    sourceAriaLabel: string | null;
+    sourceTitle: string | null;
+    renderedText: string | null;
+    renderedRating: string;
+    renderedAriaLabel: string | null;
+    renderedTitle: string | null;
+}
+let elementStates = new WeakMap<HTMLElement, RatingElementState>();
 let generation = 0;
 
 function isActive(context: IdentityContext, expectedGeneration: number): boolean {
@@ -67,32 +77,59 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
 
         elements.forEach((element) => {
             if (!isActive(context, expectedGeneration)) return;
-            if (processedElements.has(element)) {
-                const currentRating = element.textContent?.trim();
-                const existingRating = element.getAttribute(CONFIG.attributeName);
-                if (currentRating === existingRating) {
+            let state = elementStates.get(element);
+            if (state) {
+                const currentText = element.textContent;
+                const currentRating = element.getAttribute(CONFIG.attributeName);
+                const currentAriaLabel = element.getAttribute('aria-label');
+                const currentTitle = element.getAttribute('title');
+                if (currentText === state.renderedText && currentRating === state.renderedRating
+                    && currentAriaLabel === state.renderedAriaLabel && currentTitle === state.renderedTitle) {
                     return;
                 }
+                // A retained host node can be populated with a different item on
+                // navigation. Treat values that no longer match our last render
+                // as the new host-owned state so teardown restores the right item.
+                if (currentText !== state.renderedText) state.sourceText = currentText;
+                if (currentRating !== state.renderedRating) state.sourceRating = currentRating;
+                if (currentAriaLabel !== state.renderedAriaLabel) state.sourceAriaLabel = currentAriaLabel;
+                if (currentTitle !== state.renderedTitle) state.sourceTitle = currentTitle;
+            } else {
+                state = {
+                    sourceText: element.textContent,
+                    sourceRating: element.getAttribute(CONFIG.attributeName),
+                    sourceAriaLabel: element.getAttribute('aria-label'),
+                    sourceTitle: element.getAttribute('title'),
+                    renderedText: element.textContent,
+                    renderedRating: '',
+                    renderedAriaLabel: element.getAttribute('aria-label'),
+                    renderedTitle: element.getAttribute('title'),
+                };
+                elementStates.set(element, state);
             }
 
             const ratingText = element.textContent?.trim();
             if (ratingText && ratingText.length > 0) {
                 const normalizedRating = normalizeRating(ratingText);
-
-                if (element.getAttribute(CONFIG.attributeName) !== normalizedRating) {
-                    element.setAttribute(CONFIG.attributeName, normalizedRating);
-                    element.dataset.jcColoredRating = 'true';
-                    processedElements.add(element);
-
-                    if (!element.getAttribute('aria-label')) {
-                        element.setAttribute('aria-label', `Content rated ${normalizedRating}`);
-                        element.dataset.jcColoredRatingAria = 'true';
-                    }
-                    if (!element.getAttribute('title')) {
-                        element.setAttribute('title', `Rating: ${normalizedRating}`);
-                        element.dataset.jcColoredRatingTitle = 'true';
-                    }
+                const isFsk = normalizedRating.startsWith('FSK-');
+                const visibleText = isFsk ? normalizedRating : element.textContent;
+                let ariaLabel = element.getAttribute('aria-label');
+                let title = element.getAttribute('title');
+                if (visibleText !== element.textContent) element.textContent = visibleText;
+                element.setAttribute(CONFIG.attributeName, normalizedRating);
+                if (isFsk || ariaLabel === null) {
+                    ariaLabel = `Content rated ${normalizedRating}`;
+                    element.setAttribute('aria-label', ariaLabel);
                 }
+                if (isFsk || title === null) {
+                    title = `Rating: ${normalizedRating}`;
+                    element.setAttribute('title', title);
+                }
+                element.dataset.jcColoredRating = 'true';
+                state.renderedText = visibleText;
+                state.renderedRating = normalizedRating;
+                state.renderedAriaLabel = ariaLabel;
+                state.renderedTitle = title;
             }
         });
 
@@ -101,7 +138,7 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
     }
 }
 
-function normalizeRating(rating: string): string {
+export function normalizeRating(rating: string): string {
     if (!rating) return '';
 
     const normalized = rating.replace(/\s+/g, ' ').trim().toUpperCase();
@@ -114,6 +151,9 @@ function normalizeRating(rating: string): string {
         'APPROVED': 'APPROVED',
         'PASSED': 'PASSED'
     };
+
+    const fsk = normalized.match(/^(?:DE-|FSK(?:-| )?)(0|6|12|16|18)$/);
+    if (fsk) return `FSK-${fsk[1]}`;
 
     return ratingMappings[normalized] || rating.trim();
 }
@@ -230,20 +270,30 @@ function cleanup(): void {
         clearTimeout(debounceTimer);
         debounceTimer = null;
     }
-    processedElements = new WeakSet();
 }
 
 export function resetColoredRatings(): void {
     generation += 1;
     cleanup();
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
-        element.removeAttribute(CONFIG.attributeName);
-        if (element.dataset.jcColoredRatingAria === 'true') element.removeAttribute('aria-label');
-        if (element.dataset.jcColoredRatingTitle === 'true') element.removeAttribute('title');
+        const state = elementStates.get(element);
+        if (state) {
+            element.textContent = state.sourceText;
+            const restore = (name: string, value: string | null) => {
+                if (value === null) element.removeAttribute(name);
+                else element.setAttribute(name, value);
+            };
+            restore(CONFIG.attributeName, state.sourceRating);
+            restore('aria-label', state.sourceAriaLabel);
+            restore('title', state.sourceTitle);
+        } else {
+            element.removeAttribute(CONFIG.attributeName);
+            element.removeAttribute('aria-label');
+            element.removeAttribute('title');
+        }
         delete element.dataset.jcColoredRating;
-        delete element.dataset.jcColoredRatingAria;
-        delete element.dataset.jcColoredRatingTitle;
     });
+    elementStates = new WeakMap();
     document.getElementById(CONFIG.cssId)?.remove();
 }
 

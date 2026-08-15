@@ -63,6 +63,8 @@ Gives each activity type on the Dashboard a distinct Material Design icon in its
 
 Adds value-based colored backgrounds to the rating chips on detail pages, with different colors per rating type. It supports TMDB, IMDb, and Rotten Tomatoes scores, so a strong rating reads differently from a weak one at a glance. Jellyfin's text certification badge is also grouped by age tier, including exact bare labels such as `L`, `12+`, `14`, `U/A 13+`, and `NC16` when metadata providers omit a region prefix.
 
+German content-rating aliases such as `DE-12`, `FSK12`, and `FSK 12` are shown consistently as `FSK-12`. FSK 0, 6, 12, 16, and 18 use the official white, yellow, green, blue, and red identities with contrast-safe text.
+
 ![Colored Ratings](images/ratings.png)
 
 ### Theme Selector (Jellyfish)

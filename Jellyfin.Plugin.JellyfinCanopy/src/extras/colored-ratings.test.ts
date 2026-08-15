@@ -3,7 +3,7 @@
 // observer (PERF(R3/R5) fix). Only batches that can actually contain rating elements
 // may schedule the full-document processing pass.
 import { describe, expect, it } from 'vitest';
-import { mutationsTouchRatings } from './colored-ratings';
+import { mutationsTouchRatings, normalizeRating } from './colored-ratings';
 
 function record(partial: Partial<MutationRecord>): MutationRecord {
     return {
@@ -61,5 +61,22 @@ describe('mutationsTouchRatings', () => {
             record({ addedNodes: [text] as unknown as NodeList })
         ];
         expect(mutationsTouchRatings(batch)).toBe(false);
+    });
+});
+
+describe('normalizeRating', () => {
+    it.each([
+        ['DE-0', 'FSK-0'],
+        ['de-6', 'FSK-6'],
+        ['FSK12', 'FSK-12'],
+        ['fsk 16', 'FSK-16'],
+        ['FSK-18', 'FSK-18'],
+    ])('canonicalizes supported German alias %s', (input, expected) => {
+        expect(normalizeRating(input)).toBe(expected);
+        expect(normalizeRating(expected)).toBe(expected);
+    });
+
+    it.each(['DE-15', 'FSK-21', 'DE12', 'US-12', 'TV-14'])('does not rewrite %s', (input) => {
+        expect(normalizeRating(input)).toBe(input);
     });
 });

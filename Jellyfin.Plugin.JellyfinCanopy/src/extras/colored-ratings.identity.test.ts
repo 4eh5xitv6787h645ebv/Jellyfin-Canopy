@@ -73,4 +73,46 @@ describe('colored ratings identity lifecycle', () => {
         expect(JC.core.navigation!.getNavCallbackCount()).toBe(navCount);
         expect(document.querySelectorAll('[data-jc-colored-rating="true"]')).toHaveLength(1);
     });
+
+    it('keeps the visible and accessible FSK value canonical, then restores host state', () => {
+        const rating = addRating('DE-12');
+        rating.setAttribute('rating', 'host-rating');
+        rating.setAttribute('aria-label', 'Host DE-12 label');
+        rating.setAttribute('title', 'Host DE-12 title');
+
+        JC.initializeColoredRatings!();
+
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.getAttribute('rating')).toBe('FSK-12');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated FSK-12');
+        expect(rating.getAttribute('title')).toBe('Rating: FSK-12');
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('DE-12');
+        expect(rating.getAttribute('rating')).toBe('host-rating');
+        expect(rating.getAttribute('aria-label')).toBe('Host DE-12 label');
+        expect(rating.getAttribute('title')).toBe('Host DE-12 title');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
+    it('updates a retained host node to a new FSK value and restores the latest source text', () => {
+        const rating = addRating('FSK 6');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-6');
+
+        rating.textContent = 'DE-16';
+        JC.resumeRatingsPolling!();
+        vi.advanceTimersByTime(100);
+
+        expect(rating.textContent).toBe('FSK-16');
+        expect(rating.getAttribute('rating')).toBe('FSK-16');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated FSK-16');
+        expect(rating.getAttribute('title')).toBe('Rating: FSK-16');
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('DE-16');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+    });
 });

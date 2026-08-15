@@ -111,4 +111,28 @@ describe('ratings.css lint guards', () => {
             expect(backgrounds.has(unknown), `${unknown} was unexpectedly classified`).toBe(false);
         }
     });
+
+    it('uses the official FSK identities with contrast-safe foregrounds', () => {
+        const official = new Map([
+            ['FSK-0', '#FFFFFF'],
+            ['FSK-6', '#FFEB00'],
+            ['FSK-12', '#12B53F'],
+            ['FSK-16', '#1597D4'],
+            ['FSK-18', '#ED0016'],
+        ]);
+        const luminance = (hex: string): number => {
+            const channels = hex.match(/[0-9a-f]{2}/gi)!.map((part) => parseInt(part, 16) / 255)
+                .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+            return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+        };
+        for (const [rating, expectedBackground] of official) {
+            const escaped = rating.replace('-', '\\-');
+            const block = CSS.match(new RegExp(`\\[rating='${escaped}'\\]\\s*\\{([^}]*)\\}`));
+            expect(block, `${rating} rule not found`).toBeTruthy();
+            expect(block![1]).toContain(`background-color: ${expectedBackground} !important`);
+            expect(block![1]).toContain('color: #000000 !important');
+            const contrast = (luminance(expectedBackground) + 0.05) / 0.05;
+            expect(contrast, `${rating} contrast ${contrast.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+        }
+    });
 });
