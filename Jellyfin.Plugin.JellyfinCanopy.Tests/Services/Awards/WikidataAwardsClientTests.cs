@@ -14,8 +14,8 @@ public sealed class WikidataAwardsClientTests
     {
         var records = WikidataAwardsClient.ParsePage(Encoding.UTF8.GetBytes("""
             {"results":{"bindings":[
-              {"item":{"value":"http://www.wikidata.org/entity/Q42"},"kind":{"value":"Movie"},"outcome":{"value":"win"},"awardLabel":{"value":"Best Picture"},"date":{"value":"2024-02-10T00:00:00Z"},"imdb":{"value":"tt1234567"},"tmdbMovie":{"value":"123"},"tmdbSeries":{"value":"999"}},
-              {"item":{"value":"Q84"},"kind":{"value":"Series"},"outcome":{"value":"nomination"},"awardLabel":{"value":"Best Series"},"tmdbMovie":{"value":"111"},"tmdbSeries":{"value":"456"},"tvdb":{"value":"789"}}
+              {"cursor":{"value":"cursor-1"},"item":{"value":"http://www.wikidata.org/entity/Q42"},"kind":{"value":"Movie"},"outcome":{"value":"win"},"awardLabel":{"value":"Best Picture"},"date":{"value":"2024-02-10T00:00:00Z"},"imdb":{"value":"tt1234567"},"tmdbMovie":{"value":"123"},"tmdbSeries":{"value":"999"}},
+              {"cursor":{"value":"cursor-2"},"item":{"value":"Q84"},"kind":{"value":"Series"},"outcome":{"value":"nomination"},"awardLabel":{"value":"Best Series"},"tmdbMovie":{"value":"111"},"tmdbSeries":{"value":"456"},"tvdb":{"value":"789"}}
             ]}}
             """));
 
@@ -37,18 +37,28 @@ public sealed class WikidataAwardsClientTests
     [Fact]
     public void ParsePage_RejectsInvalidProviderIdentifier()
         => Assert.Throws<InvalidDataException>(() => WikidataAwardsClient.ParsePage(Encoding.UTF8.GetBytes("""
-            {"results":{"bindings":[{"item":{"value":"Q42"},"kind":{"value":"Movie"},"outcome":{"value":"win"},"awardLabel":{"value":"Award"},"imdb":{"value":"javascript:1"}}]}}
+            {"results":{"bindings":[{"cursor":{"value":"cursor-1"},"item":{"value":"Q42"},"kind":{"value":"Movie"},"outcome":{"value":"win"},"awardLabel":{"value":"Award"},"imdb":{"value":"javascript:1"}}]}}
             """)));
 
     [Fact]
     public void BuildQuery_IsPagedDeterministicallyAndUsesOfficialAwardProperties()
     {
-        var query = WikidataAwardsClient.BuildQuery(5000);
+        var query = WikidataAwardsClient.BuildQuery("cursor-5000");
         Assert.Contains("p:P166", query, StringComparison.Ordinal);
         Assert.Contains("p:P1411", query, StringComparison.Ordinal);
-        Assert.Contains("ORDER BY", query, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY ?cursor", query, StringComparison.Ordinal);
         Assert.Contains("LIMIT 5000", query, StringComparison.Ordinal);
-        Assert.Contains("OFFSET 5000", query, StringComparison.Ordinal);
+        Assert.Contains("FILTER(?cursor > \"cursor-5000\")", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("OFFSET", query, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => WikidataAwardsClient.BuildQuery("cursor\"injection"));
+    }
+
+    [Fact]
+    public void ParsePage_RejectsNonIncreasingContinuationRows()
+    {
+        var body = PageBody(2, 1).Replace("cursor-000000002", "cursor-000000001", StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() =>
+            WikidataAwardsClient.ParsePage(Encoding.UTF8.GetBytes(body)));
     }
 
     [Fact]
@@ -123,12 +133,12 @@ public sealed class WikidataAwardsClientTests
     [Fact]
     public async Task FetchComplete_RejectsAFullFinalPageAsPartial()
     {
-        const string binding = "{\"item\":{\"value\":\"Q42\"},\"kind\":{\"value\":\"Movie\"},\"outcome\":{\"value\":\"win\"},\"awardLabel\":{\"value\":\"Award\"},\"tmdbMovie\":{\"value\":\"42\"}}";
-        var body = "{\"results\":{\"bindings\":[" + string.Join(',', Enumerable.Repeat(binding, WikidataAwardsClient.PageSize)) + "]}}";
+        var body = PageBody(WikidataAwardsClient.PageSize, 1);
         var client = CreateClient(
             (_, _) => Task.FromResult(JsonResponse(body)),
             (_, _) => Task.CompletedTask,
-            maxPages: 1);
+            maxPagesPerInvocation: 1,
+            maxTotalPages: 1);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => client.FetchCompleteAsync(CancellationToken.None));
     }
@@ -136,29 +146,133 @@ public sealed class WikidataAwardsClientTests
     [Fact]
     public async Task FetchComplete_UsesBindingCountRatherThanExpandedProviderCountForCompletion()
     {
-        const string binding = "{\"item\":{\"value\":\"Q42\"},\"kind\":{\"value\":\"Movie\"},\"outcome\":{\"value\":\"win\"},\"awardLabel\":{\"value\":\"Award\"},\"imdb\":{\"value\":\"tt1234567\"},\"tmdbMovie\":{\"value\":\"42\"}}";
-        var body = "{\"results\":{\"bindings\":[" + string.Join(',', Enumerable.Repeat(binding, WikidataAwardsClient.PageSize / 2)) + "]}}";
+        var body = PageBody(WikidataAwardsClient.PageSize / 2, 1, includeImdb: true);
         var client = CreateClient(
             (_, _) => Task.FromResult(JsonResponse(body)),
             (_, _) => Task.CompletedTask,
-            maxPages: 1);
+            maxPagesPerInvocation: 1,
+            maxTotalPages: 1);
 
         var snapshot = await client.FetchCompleteAsync(CancellationToken.None);
 
         Assert.Equal(WikidataAwardsClient.PageSize, snapshot.Records.Count);
     }
 
+    [Fact]
+    public async Task FetchComplete_TraversesCurrentProductionScaleBeyondFortyThousandBindings()
+    {
+        var calls = 0;
+        var client = CreateClient(
+            (_, _) =>
+            {
+                calls++;
+                var count = calls <= 9 ? WikidataAwardsClient.PageSize : 153;
+                return Task.FromResult(JsonResponse(PageBody(count, ((calls - 1) * WikidataAwardsClient.PageSize) + 1)));
+            },
+            (_, _) => Task.CompletedTask,
+            maxPagesPerInvocation: 10,
+            maxTotalPages: 10);
+
+        var snapshot = await client.FetchCompleteAsync(CancellationToken.None);
+
+        Assert.Equal(45_153, snapshot.Records.Count);
+        Assert.Equal(10, calls);
+    }
+
+    [Fact]
+    public async Task FetchComplete_ResumesAValidatedCheckpointWithoutRepeatingPriorPages()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jc-awards-source-" + Guid.NewGuid().ToString("N"));
+        var checkpointPath = Path.Combine(root, "checkpoint.json");
+        var calls = 0;
+        var requestedQueries = new List<string>();
+        try
+        {
+            Task<HttpResponseMessage> Send(HttpRequestMessage request, CancellationToken _)
+            {
+                calls++;
+                requestedQueries.Add(Uri.UnescapeDataString(request.RequestUri!.Query));
+                var count = calls <= 2 ? WikidataAwardsClient.PageSize : 1;
+                return Task.FromResult(JsonResponse(PageBody(count, ((calls - 1) * WikidataAwardsClient.PageSize) + 1)));
+            }
+
+            var client = CreateClient(
+                Send,
+                (_, _) => Task.CompletedTask,
+                checkpointPath: checkpointPath,
+                maxPagesPerInvocation: 2,
+                maxTotalPages: 4);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => client.FetchCompleteAsync(CancellationToken.None));
+            Assert.True(File.Exists(checkpointPath));
+
+            var restartedClient = CreateClient(
+                Send,
+                (_, _) => Task.CompletedTask,
+                checkpointPath: checkpointPath,
+                maxPagesPerInvocation: 2,
+                maxTotalPages: 4);
+            var snapshot = await restartedClient.FetchCompleteAsync(CancellationToken.None);
+
+            Assert.Equal(10_001, snapshot.Records.Count);
+            Assert.Equal(3, calls);
+            Assert.Contains("FILTER(?cursor >", requestedQueries[2], StringComparison.Ordinal);
+            Assert.False(File.Exists(checkpointPath));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FetchComplete_DoesNotPublishWhenCompletedCheckpointCannotBeRemoved()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jc-awards-checkpoint-dir-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var client = CreateClient(
+                (_, _) => Task.FromResult(JsonResponse("{\"results\":{\"bindings\":[]}}")),
+                (_, _) => Task.CompletedTask,
+                checkpointPath: root);
+
+            await Assert.ThrowsAsync<IOException>(() => client.FetchCompleteAsync(CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static WikidataAwardsClient CreateClient(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send,
         Func<TimeSpan, CancellationToken, Task> delay,
         TimeSpan? timeout = null,
-        int maxPages = WikidataAwardsClient.MaxPages)
+        string checkpointPath = "",
+        int maxPagesPerInvocation = WikidataAwardsClient.MaxPagesPerInvocation,
+        int maxTotalPages = WikidataAwardsClient.MaxTotalPages)
         => new(
             new FixedHttpClientFactory(new CallbackHandler(send)),
             NullLogger<WikidataAwardsClient>.Instance,
             timeout ?? TimeSpan.FromSeconds(1),
             delay,
-            maxPages);
+            checkpointPath,
+            maxPagesPerInvocation,
+            maxTotalPages);
+
+    private static string PageBody(int count, int start, bool includeImdb = false)
+    {
+        var bindings = Enumerable.Range(start, count).Select(value =>
+        {
+            var imdb = includeImdb ? $"\"imdb\":{{\"value\":\"tt{value + 1_000_000:D7}\"}}," : string.Empty;
+            return $"{{\"cursor\":{{\"value\":\"cursor-{value:D9}\"}},\"item\":{{\"value\":\"Q{value}\"}},\"kind\":{{\"value\":\"Movie\"}},\"outcome\":{{\"value\":\"win\"}},\"awardLabel\":{{\"value\":\"Award {value}\"}},{imdb}\"tmdbMovie\":{{\"value\":\"{value}\"}}}}";
+        });
+        return "{\"results\":{\"bindings\":[" + string.Join(',', bindings) + "]}}";
+    }
 
     private static HttpResponseMessage JsonResponse(string json)
         => new(HttpStatusCode.OK)

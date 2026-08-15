@@ -58,7 +58,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
             if (!await _indexService.RefreshAsync(cancellationToken).ConfigureAwait(false))
             {
                 throw new InvalidOperationException(
-                    "The Wikidata awards refresh failed or was incomplete; the last complete index was retained.");
+                    "The Wikidata awards refresh failed or remains incomplete; the last complete index was retained. "
+                    + "If bounded continuation progress was saved, wait for this task to finish and run it again.");
             }
 
             progress.Report(100);

@@ -52,6 +52,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         public List<AwardFact> Awards { get; set; } = new();
     }
 
+    internal sealed class AwardsSourceCheckpoint
+    {
+        public int Version { get; set; }
+
+        public bool Complete { get; set; }
+
+        public DateTimeOffset StartedAtUtc { get; set; }
+
+        public int CompletedPages { get; set; }
+
+        public int BindingCount { get; set; }
+
+        public string Cursor { get; set; } = string.Empty;
+
+        public List<AwardsSourceRecord> Records { get; set; } = new();
+    }
+
     public sealed record AwardsSourceSnapshot(IReadOnlyList<AwardsSourceRecord> Records);
 
     public interface IAwardsSourceClient

@@ -88,6 +88,54 @@ public sealed class AwardsIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task StartupDiskLoad_CannotOverwriteFreshPublication()
+    {
+        var path = Path.Combine(_root, "startup-race.json");
+        var oldRecord = new AwardsSourceRecord(
+            "Q42", AwardsMediaKind.Movie, "tmdb", "123", "Old Award", 2023, AwardOutcome.Win);
+        var newRecord = oldRecord with { AwardName = "Fresh Award", Year = 2024 };
+        var seed = new AwardsIndexService(
+            new SequenceSource(new AwardsSourceSnapshot([oldRecord])),
+            NullLogger<AwardsIndexService>.Instance,
+            path);
+        Assert.True(await seed.RefreshAsync(CancellationToken.None));
+
+        using var diskLoadEntered = new ManualResetEventSlim();
+        using var releaseDiskLoad = new ManualResetEventSlim();
+        using var publicationReady = new ManualResetEventSlim();
+        var refreshSource = new ControlledSource();
+        var service = new AwardsIndexService(
+            refreshSource,
+            NullLogger<AwardsIndexService>.Instance,
+            path,
+            afterIndexStreamOpened: () =>
+            {
+                diskLoadEntered.Set();
+                releaseDiskLoad.Wait(TimeSpan.FromSeconds(10));
+            },
+            beforeMemoryPublication: publicationReady.Set);
+
+        var startupLookup = Task.Run(() => service.Lookup(
+            AwardsMediaKind.Movie,
+            new Dictionary<string, string> { ["Tmdb"] = "123" }));
+        Assert.True(diskLoadEntered.Wait(TimeSpan.FromSeconds(10)));
+
+        var refresh = service.RefreshAsync(CancellationToken.None);
+        refreshSource.Release([newRecord]);
+        Assert.True(publicationReady.Wait(TimeSpan.FromSeconds(10)));
+        Assert.False(refresh.IsCompleted);
+        releaseDiskLoad.Set();
+
+        Assert.Equal("Old Award", Assert.Single((await startupLookup).Wins).Name);
+        Assert.True(await refresh);
+        Assert.Equal(
+            "Fresh Award",
+            Assert.Single(service.Lookup(
+                AwardsMediaKind.Movie,
+                new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins).Name);
+    }
+
+    [Fact]
     public void Lookup_IgnoresUnknownDiskVersion()
     {
         Directory.CreateDirectory(_root);

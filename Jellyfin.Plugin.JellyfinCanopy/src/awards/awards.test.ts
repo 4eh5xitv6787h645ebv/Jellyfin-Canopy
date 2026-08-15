@@ -19,7 +19,11 @@ function featureScope(controller = new AbortController()): FeatureScope {
     };
 }
 
-function context(itemId: string, current: () => boolean = () => true): DetailsIntegrationContext {
+function context(
+    itemId: string,
+    current: () => boolean = () => true,
+    identity: IdentityContext = JC.identity.capture() as IdentityContext,
+): DetailsIntegrationContext {
     const page = document.createElement('div');
     const secondary = document.createElement('div');
     secondary.className = 'detailPageSecondaryContainer';
@@ -28,7 +32,7 @@ function context(itemId: string, current: () => boolean = () => true): DetailsIn
     page.append(metadataContainer, secondary);
     document.body.appendChild(page);
     return {
-        identity: JC.identity.capture() as IdentityContext,
+        identity,
         itemId,
         itemType: 'Movie',
         page,
@@ -133,6 +137,97 @@ describe('awards details integration', () => {
 
         await vi.waitFor(() => expect(targetB.page.textContent).toContain('Current'));
         expect(targetA.page.querySelector('.jc-awards-section')).toBeNull();
+    });
+
+    it('isolates no-reload account transitions, stale results, and teardown', async () => {
+        const deferred = new Map<string, {
+            promise: Promise<unknown>;
+            resolve: (value: unknown) => void;
+        }>();
+        const responseFor = (userId: string) => {
+            let resolve!: (value: unknown) => void;
+            const promise = new Promise<unknown>((accept) => { resolve = accept; });
+            deferred.set(userId, { promise, resolve });
+            return promise;
+        };
+        let activeUser = 'account-a';
+        const identities = new Map<string, IdentityContext>();
+        for (const userId of ['account-a', 'account-b', 'account-c', 'account-d']) {
+            JC.identity.transition('awards-server', userId, 'awards-account-test');
+            identities.set(userId, JC.identity.capture() as IdentityContext);
+        }
+        const identityFor = (userId: string): IdentityContext => {
+            const identity = identities.get(userId);
+            if (!identity) throw new Error(`Missing test identity ${userId}`);
+            return identity;
+        };
+        const plugin = vi.fn((
+            _path: string,
+            _options?: { signal?: AbortSignal },
+        ) => responseFor(activeUser));
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const integration = createAwardsIntegration(featureScope());
+
+        activeUser = 'account-a';
+        const accountA = context(
+            'shared-item',
+            () => activeUser === 'account-a',
+            identityFor('account-a'),
+        );
+        integration.render(accountA);
+        deferred.get('account-a')?.resolve({
+            wins: [{ name: 'Account A Award', year: 2021 }],
+            nominations: [],
+        });
+        await vi.waitFor(() => expect(accountA.page.textContent).toContain('Account A Award'));
+
+        activeUser = 'account-b';
+        const accountB = context(
+            'shared-item',
+            () => activeUser === 'account-b',
+            identityFor('account-b'),
+        );
+        integration.render(accountB);
+        expect(document.body.textContent).not.toContain('Account A Award');
+        const accountBSignal = plugin.mock.calls[1][1]?.signal as AbortSignal;
+
+        activeUser = 'account-c';
+        const accountC = context(
+            'shared-item',
+            () => activeUser === 'account-c',
+            identityFor('account-c'),
+        );
+        integration.render(accountC);
+        expect(accountBSignal.aborted).toBe(true);
+        deferred.get('account-b')?.resolve({
+            wins: [{ name: 'Stale Account B Award', year: 2022 }],
+            nominations: [],
+        });
+        deferred.get('account-c')?.resolve({
+            wins: [{ name: 'Account C Award', year: 2024 }],
+            nominations: [],
+        });
+        await vi.waitFor(() => expect(accountC.page.textContent).toContain('Account C Award'));
+        expect(document.body.textContent).not.toContain('Stale Account B Award');
+        expect(plugin).toHaveBeenCalledTimes(3);
+
+        activeUser = 'account-d';
+        const accountD = context(
+            'shared-item',
+            () => activeUser === 'account-d',
+            identityFor('account-d'),
+        );
+        integration.render(accountD);
+        const accountDSignal = plugin.mock.calls[3][1]?.signal as AbortSignal;
+        integration.reset();
+        expect(accountDSignal.aborted).toBe(true);
+        expect(document.querySelector('.jc-awards-section')).toBeNull();
+        deferred.get('account-d')?.resolve({
+            wins: [{ name: 'Post-teardown Award', year: 2025 }],
+            nominations: [],
+        });
+        await Promise.resolve();
+        expect(document.body.textContent).not.toContain('Post-teardown Award');
     });
 
     it('retries transient failures only within the fixed budget and cancels retry on teardown', async () => {

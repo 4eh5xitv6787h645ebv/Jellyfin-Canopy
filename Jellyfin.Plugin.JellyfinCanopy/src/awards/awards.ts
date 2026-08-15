@@ -227,7 +227,10 @@ export function createAwardsIntegration(scope: FeatureScope): DetailsIntegration
                 key = nextKey;
                 response = null;
                 settled = false;
-                removeAwardsNodes(context.page);
+                // Identity and route changes can replace the details owner before
+                // the old page is detached. Remove every prior awards surface so
+                // account-scoped text cannot survive a no-reload transition.
+                removeAwardsNodes();
                 void load(nextKey, generation, 0);
                 return;
             }

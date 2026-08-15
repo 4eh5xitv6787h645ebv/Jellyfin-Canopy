@@ -452,21 +452,35 @@ Canopy follows Wikimedia's [API etiquette](https://www.mediawiki.org/wiki/API:Et
 and [User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy/en):
 one descriptive Canopy-specific User-Agent with a contact URL, GET requests,
 strictly serial pages, a minimum one-second page interval, and `Retry-After` /
-bounded exponential backoff for throttling. Each page has a 30-second timeout
-and 8 MiB decoded response limit; a refresh accepts at most eight 5,000-row
-pages, three attempts per page, 40,000 source rows, 64 MiB total response data,
-and 20 minutes. Reaching any bound is an incomplete refresh and leaves the last
-complete atomic index untouched. The [Action API `maxlag` parameter](https://www.mediawiki.org/wiki/Manual:Maxlag_parameter)
+bounded exponential backoff for throttling. Pages use a strict keyset cursor,
+not an increasingly expensive or mutation-sensitive offset. Each page has a
+50-second timeout, three attempts, and an 8 MiB decoded response limit. One task
+execution reads at most sixteen 5,000-binding pages (128 MiB of responses) and
+runs for at most 20 minutes.
+
+If all sixteen pages are full, Canopy atomically saves a private, versioned
+continuation checkpoint instead of publishing partial data. Run the task again
+to resume strictly after the last validated row. A traversal accepts at most 40
+pages / 200,000 source bindings, 600,000 provider-expanded records, a 128 MiB
+checkpoint, a 64 MiB final index, and 30 days between its first and final page.
+Duplicate rows across continuation boundaries collapse deterministically. Only
+a short terminal page proves completeness; then Canopy atomically publishes the
+new index and removes the checkpoint. A malformed, expired, over-limit, failed,
+or still-in-progress traversal never replaces the last complete index. The
+[Action API `maxlag` parameter](https://www.mediawiki.org/wiki/Manual:Maxlag_parameter)
 does not apply to the Wikidata Query Service endpoint used here; Canopy does not
 call `api.php` for this feature.
 
 The weekly local index is the cache: repeat detail views generate no Wikimedia
 traffic. At the deliberately pessimistic fleet model of 100,000 servers all
 opting in and evenly assigned across the 10,080 minutes of a week, successful
-refreshes average at most about 1.32 WDQS requests/second globally (eight calls
-per server per week); the hard all-retry envelope is about 3.97 requests/second.
-Actual traffic should be far below that because the feature is opt-in, short
-datasets stop early, and backoff stretches throttled work.
+scheduled executions average at most about 2.65 WDQS requests/second globally
+(sixteen calls per server per week); the hard all-retry envelope is about 7.94
+requests/second. Actual traffic should be far below that because the feature is
+opt-in, short datasets stop early, requests are serial, and backoff stretches
+throttled work. User-started continuation runs are also process-coalesced and
+serial; administrators should wait for a task to finish before starting the
+next continuation.
 
 ### Bookmarks
 

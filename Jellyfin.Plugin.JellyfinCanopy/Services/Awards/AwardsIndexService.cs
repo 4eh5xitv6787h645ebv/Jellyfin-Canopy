@@ -29,6 +29,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         private readonly ILogger<AwardsIndexService> _logger;
         private readonly string _indexPath;
         private readonly TimeSpan _refreshTimeout;
+        private readonly Action? _afterIndexStreamOpened;
+        private readonly Action? _beforeMemoryPublication;
         private readonly object _refreshGate = new();
         private readonly object _loadGate = new();
         private Task<bool>? _refreshFlight;
@@ -47,12 +49,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             IAwardsSourceClient sourceClient,
             ILogger<AwardsIndexService> logger,
             string indexPath,
-            TimeSpan? refreshTimeout = null)
+            TimeSpan? refreshTimeout = null,
+            Action? afterIndexStreamOpened = null,
+            Action? beforeMemoryPublication = null)
         {
             _sourceClient = sourceClient;
             _logger = logger;
             _indexPath = indexPath;
             _refreshTimeout = refreshTimeout ?? RefreshTimeout;
+            _afterIndexStreamOpened = afterIndexStreamOpened;
+            _beforeMemoryPublication = beforeMemoryPublication;
         }
 
         public Task<bool> RefreshAsync(CancellationToken cancellationToken)
@@ -162,12 +168,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 }
 
                 Directory.CreateDirectory(directory);
-                AtomicFile.WriteAllText(_indexPath, json);
+                _beforeMemoryPublication?.Invoke();
                 lock (_loadGate)
                 {
-                    // Serialize publication with the one-time disk loader. Without
-                    // this lock around both fields, a lookup already reading the
-                    // prior file could overwrite this freshly published snapshot.
+                    // Serialize the atomic disk replacement and publication with
+                    // the one-time disk loader. This both avoids replacing a file
+                    // that a Windows reader still has open and prevents an old
+                    // startup read from overwriting the fresh memory snapshot.
+                    AtomicFile.WriteAllText(_indexPath, json);
                     Volatile.Write(ref _entries, entries);
                     _loaded = true;
                 }
@@ -217,6 +225,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                         }
 
                         using var stream = new FileStream(_indexPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        _afterIndexStreamOpened?.Invoke();
                         var document = JsonSerializer.Deserialize<AwardsIndexDocument>(stream, JsonOptions)
                             ?? throw new InvalidDataException("Awards index file was empty.");
                         Volatile.Write(ref _entries, ValidateDocument(document));
