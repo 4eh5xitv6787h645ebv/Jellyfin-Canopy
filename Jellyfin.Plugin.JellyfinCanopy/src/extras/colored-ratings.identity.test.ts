@@ -222,6 +222,30 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.dataset.jcColoredRating).toBeUndefined();
     });
 
+    it('captures last-moment host state before immediate detached identity teardown', () => {
+        const rating = addRating('DE-12');
+        rating.setAttribute('rating', 'host-rating-12');
+        rating.setAttribute('aria-label', 'Host DE-12 label');
+        rating.setAttribute('title', 'Host DE-12 title');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        // Model React repopulating a retained node and identity teardown in the
+        // same task, before either MutationObserver callback can run.
+        rating.firstChild!.nodeValue = 'DE-16';
+        rating.setAttribute('rating', 'host-rating-16');
+        rating.setAttribute('aria-label', 'Host DE-16 label');
+        rating.setAttribute('title', 'Host DE-16 title');
+        rating.remove();
+        switchIdentity('ratings-server-b', 'ratings-user-b');
+
+        expect(rating.textContent).toBe('DE-16');
+        expect(rating.getAttribute('rating')).toBe('host-rating-16');
+        expect(rating.getAttribute('aria-label')).toBe('Host DE-16 label');
+        expect(rating.getAttribute('title')).toBe('Host DE-16 title');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
     it('preserves host metadata for unsupported FSK-prefixed values', () => {
         const rating = addRating('FSK-21');
         rating.setAttribute('aria-label', 'Host unknown FSK label');

@@ -100,8 +100,7 @@ function pruneRatingTextObservers(liveElements: Set<HTMLElement>): void {
         ratingTextObservers.delete(element);
         const state = elementStates.get(element);
         if (state) {
-            captureHostChanges(element, state);
-            restoreRatingElement(element, state);
+            restoreLatestHostState(element, state);
             elementStates.delete(element);
         }
     });
@@ -143,6 +142,14 @@ function captureHostChanges(element: HTMLElement, state: RatingElementState): bo
         state.ownsTitle = false;
     }
     return true;
+}
+
+function restoreLatestHostState(element: HTMLElement, state: RatingElementState): void {
+    // MutationObserver callbacks are asynchronous. Inspect the DOM at the
+    // ownership boundary so a host update made immediately before removal or
+    // identity/config teardown cannot be overwritten by an older snapshot.
+    captureHostChanges(element, state);
+    restoreRatingElement(element, state);
 }
 
 
@@ -364,7 +371,7 @@ export function resetColoredRatings(): void {
     cleanup();
     // The state map is deliberately enumerable so teardown can restore a
     // host-cached element even while it is detached from document.
-    elementStates.forEach((state, element) => restoreRatingElement(element, state));
+    elementStates.forEach((state, element) => restoreLatestHostState(element, state));
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
         // Defensive cleanup for annotations left by an interrupted/older
         // activation that has no entry in this module instance's state map.
