@@ -1084,6 +1084,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 AutoResumeEnabled = defaultConfig.AutoResumeEnabled,
                 AutoPipEnabled = defaultConfig.AutoPipEnabled,
                 LongPress2xEnabled = defaultConfig.LongPress2xEnabled,
+                DoubleTapSeekEnabled = defaultConfig.DoubleTapSeekEnabled,
                 PauseScreenEnabled = defaultConfig.PauseScreenEnabled,
                 PauseScreenDelaySeconds = defaultConfig.PauseScreenDelaySeconds,
                 AutoSkipIntro = defaultConfig.AutoSkipIntro,

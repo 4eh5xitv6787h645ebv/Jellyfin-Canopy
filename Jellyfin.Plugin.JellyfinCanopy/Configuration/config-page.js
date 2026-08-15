@@ -4705,6 +4705,7 @@
             // Playback
             feat('Custom Pause Screen', bool('pauseScreenEnabled'), 'playback', 'Enabled');
             feat('Long press for 2x speed', bool('longPress2xEnabled'), 'playback', 'Enabled (touch devices)');
+            feat('Double-tap seek', bool('doubleTapSeekEnabled'), 'playback', 'Enabled (mobile web, 10 seconds)');
             var autoSkip = bool('autoSkipIntro') || bool('autoSkipOutro');
             var autoSkipWarn = autoSkip && hasIntroSkipper !== true;
             feat('Auto-skip Intro/Outro', autoSkip, 'playback',

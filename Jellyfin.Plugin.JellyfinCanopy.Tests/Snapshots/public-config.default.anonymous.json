@@ -50,6 +50,7 @@
   "DisableAllShortcuts": false,
   "DisableCustomSubtitleStyles": false,
   "DisableTagsOnSearchPage": false,
+  "DoubleTapSeekEnabled": false,
   "DiscoveryEnabled": true,
   "DiscoveryGenreRows": true,
   "DiscoveryLibraryTab": true,

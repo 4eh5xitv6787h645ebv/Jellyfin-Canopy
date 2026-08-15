@@ -71,6 +71,7 @@
     "e2e/maintainerr.spec.ts › Maintainerr integration › regular-user item status is upstream-silent by default and exactly two booleans when opted in",
     "e2e/maintainerr.spec.ts › Maintainerr integration › setup Test, Service Status, and Re-test all treat Maintainerr as a real connection",
     "e2e/maintenance-banner-responsive.spec.ts › maintenance banner responsive offsets (#466 finding 10) › modern: offsets follow wide, narrow, landscape, and wide-back banner heights",
+    "e2e/mobile-double-tap.spec.ts › mobile double-tap seek › real touch input preserves host taps, blocks chrome, and cancels a sequential second finger",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › Hidden Content page: heading clears the header, no horizontal scroll",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › collection Missing-from cards are native-grid-sized (≈3 across)",
     "e2e/mobile-fits.spec.ts › mobile viewport fits › disabled Calendar and Downloads stay unavailable without leaking configuration",

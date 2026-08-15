@@ -223,6 +223,7 @@ Smart playback is a handful of small conveniences that make the player feel awar
 - **Auto Picture-in-Picture** — enters PiP mode when you switch tabs, so the video keeps playing in a floating window.
 - **Playback speed control** — adjust speed with the keyboard shortcuts (`+`, `-`, and `R` to reset).
 - **Long press / hold for 2× speed** (beta, touch devices only) — long-press anywhere on the player to temporarily play at 2× speed; release to return to normal. A per-user toggle in Canopy User Settings with a matching admin default.
+- **Double-tap seek** (mobile web only, disabled by default) — double-tap the left half of the video to go back 10 seconds or the right half to go forward 10 seconds. A single tap remains Jellyfin's immediate show/hide-OSD action. Movement, multi-touch, controls, dialogs, pause state, navigation, and the long-press gesture cancel the pending tap; native integrated clients are excluded. A per-user toggle has a matching admin default.
 
 Enable or disable these in Canopy User Settings → **Settings** tab. Auto-skip intros and outros are part of the same smart-playback family — see [Auto-skip intros and outros](#auto-skip-intros-and-outros).
 

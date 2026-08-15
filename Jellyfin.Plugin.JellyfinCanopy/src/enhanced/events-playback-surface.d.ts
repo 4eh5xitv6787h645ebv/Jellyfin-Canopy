@@ -9,6 +9,7 @@ declare module '../types/jc' {
         initializeCanopyScript?: () => void;
 
         // enhanced/playback
+        isPlaybackControlsReady?: () => boolean;
         openSettings?: (cb: () => void) => void;
         adjustPlaybackSpeed?: (direction: 'increase' | 'decrease') => void;
         resetPlaybackSpeed?: () => void;

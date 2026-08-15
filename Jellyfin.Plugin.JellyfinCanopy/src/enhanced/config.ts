@@ -836,7 +836,7 @@ JC.loadSettings = (): UserSettings => {
         displayLanguage: '',
         calendarDisplayMode: 'list',
         calendarDefaultViewMode: 'agenda',
-        disableAllShortcuts: false, longPress2xEnabled: false, lastOpenedTab: 'shortcuts',
+        disableAllShortcuts: false, longPress2xEnabled: false, doubleTapSeekEnabled: false, lastOpenedTab: 'shortcuts',
         isAdmin: undefined
     };
 

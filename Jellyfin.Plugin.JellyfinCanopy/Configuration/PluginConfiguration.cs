@@ -77,6 +77,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             AutoSkipIntro = false;
             AutoSkipOutro = false;
             LongPress2xEnabled = false;
+            DoubleTapSeekEnabled = false;
             RandomButtonEnabled = true;
             RandomIncludeMovies = true;
             RandomIncludeShows = true;
@@ -472,6 +473,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool AutoSkipIntro { get; set; }
         public bool AutoSkipOutro { get; set; }
         public bool LongPress2xEnabled { get; set; }
+        public bool DoubleTapSeekEnabled { get; set; }
         public bool RandomButtonEnabled { get; set; }
         public bool RandomIncludeMovies { get; set; }
         public bool RandomIncludeShows { get; set; }
