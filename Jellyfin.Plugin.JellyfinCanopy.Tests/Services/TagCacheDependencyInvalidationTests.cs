@@ -34,7 +34,7 @@ public sealed class TagCacheDependencyInvalidationTests
             TagCacheFieldDependency.OwnItem | TagCacheFieldDependency.FirstEpisode,
             TagCacheDependencyGraph.FieldDependencies[nameof(TagCacheEntry.StreamData)]);
         Assert.Equal(
-            TagCacheFieldDependency.OwnItem | TagCacheFieldDependency.FirstEpisode,
+            TagCacheFieldDependency.OwnItem | TagCacheFieldDependency.ParentSeries,
             TagCacheDependencyGraph.FieldDependencies[nameof(TagCacheEntry.OriginalLanguage)]);
         Assert.Equal(
             TagCacheFieldDependency.OwnItem
@@ -66,6 +66,7 @@ public sealed class TagCacheDependencyInvalidationTests
             Id = Guid.NewGuid(),
             CommunityRating = 9,
             CriticRating = 90,
+            OriginalLanguage = "pt-BR",
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Tmdb"] = "new-parent" },
         };
         var episode = new StubEpisode { Id = Guid.NewGuid(), SeriesId = series.Id };
@@ -107,7 +108,7 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal(existing.EpisodeNumber, refreshed.EpisodeNumber);
         Assert.Same(existing.Genres, refreshed.Genres);
         Assert.Same(existing.AudioLanguages, refreshed.AudioLanguages);
-        Assert.Equal(existing.OriginalLanguage, refreshed.OriginalLanguage);
+        Assert.Equal("pt-BR", refreshed.OriginalLanguage);
         Assert.Same(streamData, refreshed.StreamData);
         Assert.Equal(existing.SeriesId, refreshed.SeriesId);
         Assert.Equal(existing.SeasonId, refreshed.SeasonId);
@@ -1600,6 +1601,190 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Same(ownSeasonEntry, service.GetEntryForTest(Key(ownSeasonId)));
         Assert.Same(criticZeroEpisodeEntry, service.GetEntryForTest(Key(criticZeroEpisodeId)));
         Assert.Same(criticSevenSeasonEntry, service.GetEntryForTest(Key(criticSevenSeasonId)));
+    }
+
+    [Theory]
+    [InlineData("pt-BR")]
+    [InlineData(null)]
+    public void SeriesOriginalLanguageOnlyChange_RefreshesInheritingEpisodeAndSeason(
+        string? replacementLanguage)
+    {
+        var seriesId = Guid.NewGuid();
+        var seasonId = Guid.NewGuid();
+        var episodeId = Guid.NewGuid();
+        var series = new StubSeries
+        {
+            Id = seriesId,
+            OriginalLanguage = replacementLanguage,
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = new[] { "Stable" },
+            ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Tmdb"] = "stable" },
+            DateLastSaved = SavedAt.AddMinutes(1),
+        };
+        var season = new StubSeason
+        {
+            Id = seasonId,
+            SeriesId = seriesId,
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = new[] { "Stable" },
+            DateLastSaved = SavedAt,
+        };
+        var episode = new StubEpisode
+        {
+            Id = episodeId,
+            SeriesId = seriesId,
+            SeasonId = seasonId,
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = new[] { "Own" },
+            DateLastSaved = SavedAt,
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdHook = id => id == seriesId ? series : id == seasonId ? season : id == episodeId ? episode : null,
+            GetItemListHook = query => query.AncestorIds?.Contains(seriesId) == true
+                ? new BaseItem[] { season, episode }
+                : query.ParentId == seriesId || query.ParentId == seasonId
+                    ? new BaseItem[] { episode }
+                    : Array.Empty<BaseItem>(),
+        };
+        using var service = NewService(library);
+        service.SeedEntryForTest(Key(seriesId), new TagCacheEntry
+        {
+            Type = "Series",
+            TmdbId = "stable",
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = new[] { "Stable" },
+            OriginalLanguage = "ja",
+        });
+        var seasonGenres = new[] { "Stable" };
+        var episodeGenres = new[] { "Own" };
+        var episodeLanguages = new[] { "ja", "pt-br" };
+        var seasonStream = new TagStreamData { ItemName = "season sentinel" };
+        var episodeStream = new TagStreamData { ItemName = "episode sentinel" };
+        service.SeedEntryForTest(Key(seasonId), new TagCacheEntry
+        {
+            Type = "Season",
+            SeriesId = Key(seriesId),
+            SeriesTmdbId = "stable",
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = seasonGenres,
+            OriginalLanguage = "ja",
+            StreamData = seasonStream,
+            SourceRevision = SavedAt.Ticks,
+        });
+        service.SeedEntryForTest(Key(episodeId), new TagCacheEntry
+        {
+            Type = "Episode",
+            SeriesId = Key(seriesId),
+            SeasonId = Key(seasonId),
+            SeriesTmdbId = "stable",
+            CommunityRating = 8,
+            CriticRating = 80,
+            Genres = episodeGenres,
+            AudioLanguages = episodeLanguages,
+            OriginalLanguage = "ja",
+            StreamData = episodeStream,
+            SourceRevision = SavedAt.Ticks,
+        });
+        using var monitor = new TagCacheMonitor(library, service, NullLogger<TagCacheMonitor>.Instance);
+        monitor.Initialize();
+
+        library.RaiseItemUpdated(series);
+        service.FlushPendingForTest();
+
+        var refreshedSeason = service.GetEntryForTest(Key(seasonId))!;
+        var refreshedEpisode = service.GetEntryForTest(Key(episodeId))!;
+        Assert.Equal(replacementLanguage, refreshedSeason.OriginalLanguage);
+        Assert.Equal(replacementLanguage, refreshedEpisode.OriginalLanguage);
+        Assert.Same(seasonGenres, refreshedSeason.Genres);
+        Assert.Same(episodeGenres, refreshedEpisode.Genres);
+        Assert.Same(episodeLanguages, refreshedEpisode.AudioLanguages);
+        Assert.Same(seasonStream, refreshedSeason.StreamData);
+        Assert.Same(episodeStream, refreshedEpisode.StreamData);
+        Assert.Equal(SavedAt.Ticks, refreshedSeason.SourceRevision);
+        Assert.Equal(SavedAt.Ticks, refreshedEpisode.SourceRevision);
+
+        var accessible = new Dictionary<string, TagCacheEntry>(StringComparer.Ordinal)
+        {
+            [Key(seriesId)] = service.GetEntryForTest(Key(seriesId))!,
+            [Key(seasonId)] = refreshedSeason,
+            [Key(episodeId)] = refreshedEpisode,
+        };
+        var coverage = new TagLanguageCoverageProjector(
+                library,
+                service,
+                NullLogger.Instance)
+            .ProjectAccessibleSnapshot(accessible, CancellationToken.None);
+        var expectedOriginals = replacementLanguage == null
+            ? Array.Empty<string>()
+            : new[] { replacementLanguage };
+        Assert.Equal(expectedOriginals, coverage[Key(seriesId)].OriginalLanguages);
+        Assert.Equal(expectedOriginals, coverage[Key(seasonId)].OriginalLanguages);
+    }
+
+    [Fact]
+    public void SeriesOriginalLanguageOnlyChange_PreservesExplicitDescendantOverrides()
+    {
+        var seriesId = Guid.NewGuid();
+        var season = new StubSeason
+        {
+            Id = Guid.NewGuid(), SeriesId = seriesId, OriginalLanguage = "fr", CommunityRating = 8,
+            CriticRating = 80, Genres = new[] { "Stable" }, DateLastSaved = SavedAt,
+        };
+        var episode = new StubEpisode
+        {
+            Id = Guid.NewGuid(), SeriesId = seriesId, SeasonId = season.Id, OriginalLanguage = "de",
+            CommunityRating = 8, CriticRating = 80, Genres = new[] { "Own" }, DateLastSaved = SavedAt,
+        };
+        var series = new StubSeries
+        {
+            Id = seriesId, OriginalLanguage = "pt-BR", CommunityRating = 8, CriticRating = 80,
+            Genres = new[] { "Stable" }, DateLastSaved = SavedAt.AddMinutes(1),
+            ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Tmdb"] = "stable" },
+        };
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdHook = id => id == seriesId ? series : null,
+            GetItemListHook = query => query.AncestorIds?.Contains(seriesId) == true
+                ? new BaseItem[] { season, episode }
+                : query.ParentId == seriesId || query.ParentId == season.Id
+                    ? new BaseItem[] { episode }
+                    : Array.Empty<BaseItem>(),
+        };
+        using var service = NewService(library);
+        service.SeedEntryForTest(Key(seriesId), new TagCacheEntry
+        {
+            Type = "Series", TmdbId = "stable", CommunityRating = 8, CriticRating = 80,
+            Genres = new[] { "Stable" }, OriginalLanguage = "ja",
+        });
+        var seasonEntry = new TagCacheEntry
+        {
+            Type = "Season", SeriesId = Key(seriesId), SeriesTmdbId = "stable", CommunityRating = 8,
+            CriticRating = 80, Genres = new[] { "Stable" }, OriginalLanguage = "fr", SourceRevision = SavedAt.Ticks,
+        };
+        var episodeEntry = new TagCacheEntry
+        {
+            Type = "Episode", SeriesId = Key(seriesId), SeasonId = Key(season.Id), SeriesTmdbId = "stable",
+            CommunityRating = 8, CriticRating = 80, Genres = new[] { "Own" }, OriginalLanguage = "de",
+            SourceRevision = SavedAt.Ticks,
+        };
+        service.SeedEntryForTest(Key(season.Id), seasonEntry);
+        service.SeedEntryForTest(Key(episode.Id), episodeEntry);
+        using var monitor = new TagCacheMonitor(library, service, NullLogger<TagCacheMonitor>.Instance);
+        monitor.Initialize();
+
+        library.RaiseItemUpdated(series);
+        service.FlushPendingForTest();
+
+        Assert.Same(seasonEntry, service.GetEntryForTest(Key(season.Id)));
+        Assert.Same(episodeEntry, service.GetEntryForTest(Key(episode.Id)));
+        Assert.Equal("fr", seasonEntry.OriginalLanguage);
+        Assert.Equal("de", episodeEntry.OriginalLanguage);
     }
 
     [Fact]

@@ -38,9 +38,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         // while invalidation also needs the cached OLD Season after a reparent.
         public string? SeasonId { get; set; }
 
-        // ID in N format of the item that supplied StreamData/AudioLanguages/OriginalLanguage. For a
+        // ID in N format of the item that supplied StreamData/AudioLanguages. For a
         // Series or Season this is its selected first Episode; for an ordinary item it
-        // is the item itself. Probe-failure fallback may retain last-good media only
+        // is the item itself. OriginalLanguage is authoritative owning-item metadata
+        // with Jellyfin's Episode/Season -> Series inheritance. Probe-failure fallback may retain last-good media only
         // when this identity is unchanged, never across first-Episode replacement.
         public string? StreamSourceId { get; set; }
 

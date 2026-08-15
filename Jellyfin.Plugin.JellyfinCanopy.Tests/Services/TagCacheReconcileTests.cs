@@ -465,14 +465,90 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Assert.Null(seasonEntry!.CommunityRating);
                 Assert.Equal(7, seasonEntry.CriticRating);
                 Assert.Equal(new[] { "Drama" }, seasonEntry.Genres);
-                Assert.Equal("pt-BR", seasonEntry.OriginalLanguage);
+                Assert.Equal("ja", seasonEntry.OriginalLanguage);
 
                 var episodeEntry = svc.GetEntryForTest(Key(episodeId));
                 Assert.NotNull(episodeEntry);
                 Assert.Null(episodeEntry!.CommunityRating);
                 Assert.Equal(0, episodeEntry.CriticRating);
                 Assert.Equal("pt-BR", episodeEntry.OriginalLanguage);
-                Assert.Equal("pt-BR", svc.GetEntryForTest(Key(seriesId))!.OriginalLanguage);
+                Assert.Equal("ja", svc.GetEntryForTest(Key(seriesId))!.OriginalLanguage);
+            }
+            finally { TryDelete(dir); }
+        }
+
+        [Fact]
+        public void Reconcile_SeriesOriginalLanguageChangeRefreshesUnchangedEpisodeAndSeason()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var seriesId = Guid.NewGuid();
+                var seasonId = Guid.NewGuid();
+                var episodeId = Guid.NewGuid();
+                var series = new StubSeries
+                {
+                    Id = seriesId,
+                    Name = "Series",
+                    DateLastSaved = T0,
+                    OriginalLanguage = "ja",
+                    Genres = new[] { "Drama" },
+                };
+                var season = new StubSeason
+                {
+                    Id = seasonId,
+                    Name = "Season",
+                    DateLastSaved = T0,
+                    SeriesId = seriesId,
+                    Genres = new[] { "Drama" },
+                };
+                var episode = new StubEpisode
+                {
+                    Id = episodeId,
+                    Name = "Episode",
+                    DateLastSaved = T0,
+                    SeriesId = seriesId,
+                    SeasonId = seasonId,
+                    Genres = new[] { "Own" },
+                };
+                var scan = new BaseItem[] { series, season, episode };
+                var lib = new CountingLibraryManager
+                {
+                    GetItemListHook = query => query.ParentId == Guid.Empty
+                        ? scan
+                        : query.ParentId == seriesId || query.ParentId == seasonId
+                            ? new BaseItem[] { episode }
+                            : Array.Empty<BaseItem>(),
+                    GetItemByIdHook = id => id == seriesId ? series : id == seasonId ? season : id == episodeId ? episode : null,
+                };
+                using var svc = NewSvc(lib, dir);
+
+                svc.BuildFullCache(null, CT);
+                var firstEpisode = svc.GetEntryForTest(Key(episodeId))!;
+                Assert.Equal("ja", firstEpisode.OriginalLanguage);
+                Assert.Equal("ja", svc.GetEntryForTest(Key(seasonId))!.OriginalLanguage);
+                var episodeStream = firstEpisode.StreamData;
+                var episodeGenres = firstEpisode.Genres;
+                var episodeRevision = firstEpisode.SourceRevision;
+
+                series.OriginalLanguage = "pt-BR";
+                series.DateLastSaved = T0.AddHours(1);
+                svc.BuildFullCache(null, CT);
+
+                var changedEpisode = svc.GetEntryForTest(Key(episodeId))!;
+                Assert.Equal("pt-BR", changedEpisode.OriginalLanguage);
+                Assert.Equal("pt-BR", svc.GetEntryForTest(Key(seasonId))!.OriginalLanguage);
+                Assert.Same(episodeStream, changedEpisode.StreamData);
+                Assert.Same(episodeGenres, changedEpisode.Genres);
+                Assert.Equal(episodeRevision, changedEpisode.SourceRevision);
+
+                series.OriginalLanguage = null;
+                series.DateLastSaved = T0.AddHours(2);
+                svc.BuildFullCache(null, CT);
+
+                Assert.Null(svc.GetEntryForTest(Key(seriesId))!.OriginalLanguage);
+                Assert.Null(svc.GetEntryForTest(Key(seasonId))!.OriginalLanguage);
+                Assert.Null(svc.GetEntryForTest(Key(episodeId))!.OriginalLanguage);
             }
             finally { TryDelete(dir); }
         }

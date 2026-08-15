@@ -58,7 +58,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 [nameof(TagCacheEntry.AudioLanguages)] = TagCacheFieldDependency.OwnItem
                     | TagCacheFieldDependency.FirstEpisode,
                 [nameof(TagCacheEntry.OriginalLanguage)] = TagCacheFieldDependency.OwnItem
-                    | TagCacheFieldDependency.FirstEpisode,
+                    | TagCacheFieldDependency.ParentSeries,
                 [nameof(TagCacheEntry.StreamData)] = TagCacheFieldDependency.OwnItem
                     | TagCacheFieldDependency.FirstEpisode,
                 [nameof(TagCacheEntry.LastUpdated)] = TagCacheFieldDependency.OwnItem,
@@ -81,6 +81,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 [nameof(TagCacheEntry.Genres)] = new[] { BaseItemKind.Season },
                 [nameof(TagCacheEntry.CommunityRating)] = new[] { BaseItemKind.Episode, BaseItemKind.Season },
                 [nameof(TagCacheEntry.CriticRating)] = new[] { BaseItemKind.Episode, BaseItemKind.Season },
+                [nameof(TagCacheEntry.OriginalLanguage)] = new[] { BaseItemKind.Episode, BaseItemKind.Season },
             };
 
         /// <summary>
@@ -252,6 +253,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             => previous.CommunityRating != current.CommunityRating
                 || previous.CriticRating != current.CriticRating
                 || !string.Equals(previous.TmdbId, current.TmdbId, StringComparison.Ordinal)
+                || !string.Equals(previous.OriginalLanguage, current.OriginalLanguage, StringComparison.Ordinal)
                 || !(previous.Genres ?? Array.Empty<string>())
                     .SequenceEqual(current.Genres ?? Array.Empty<string>());
 
@@ -277,7 +279,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 existing.SeriesTmdbId,
                 series.TmdbId,
                 StringComparison.Ordinal);
-            if (!ratingChanged && !tmdbChanged)
+            var originalLanguageChanged = !TagCacheService.HasExplicitOriginalLanguage(episode)
+                && !string.Equals(
+                    existing.OriginalLanguage,
+                    series.OriginalLanguage,
+                    StringComparison.Ordinal);
+            if (!ratingChanged && !tmdbChanged && !originalLanguageChanged)
             {
                 refreshed = null;
                 return false;
@@ -289,6 +296,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 refreshed.CommunityRating = series.CommunityRating;
                 refreshed.CriticRating = series.CriticRating;
+            }
+
+            if (!TagCacheService.HasExplicitOriginalLanguage(episode))
+            {
+                refreshed.OriginalLanguage = series.OriginalLanguage;
             }
 
             refreshed.LastUpdated = lastUpdated;
@@ -313,6 +325,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 refreshed.CommunityRating = series?.CommunityRating;
                 refreshed.CriticRating = series?.CriticRating;
             }
+
+            refreshed.OriginalLanguage = TagCacheService.HasExplicitOriginalLanguage(episode)
+                ? TagCacheService.ReadOriginalLanguage(episode)
+                : series?.OriginalLanguage;
 
             refreshed.LastUpdated = lastUpdated;
             return refreshed;
@@ -362,9 +378,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     case nameof(TagCacheEntry.Genres) when inheritsGenres:
                         refreshed.Genres = series.Genres;
                         break;
+                    case nameof(TagCacheEntry.OriginalLanguage) when !TagCacheService.HasExplicitOriginalLanguage(descendant):
+                        refreshed.OriginalLanguage = TagCacheService.ReadOriginalLanguage(series);
+                        break;
                     case nameof(TagCacheEntry.CommunityRating):
                     case nameof(TagCacheEntry.CriticRating):
                     case nameof(TagCacheEntry.Genres):
+                    case nameof(TagCacheEntry.OriginalLanguage):
                         break;
                     default:
                         throw new InvalidOperationException($"Unhandled parent-Series dependency field: {dependency.Key}");
@@ -395,6 +415,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 refreshed.CommunityRating = series?.CommunityRating;
                 refreshed.CriticRating = series?.CriticRating;
             }
+
+            refreshed.OriginalLanguage = TagCacheService.ReadOriginalLanguage(episode, series);
 
             refreshed.LastUpdated = lastUpdated;
             return refreshed;
@@ -452,6 +474,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     && (firstEpisode(season)?.Genres?.Length ?? 0) == 0
                     && !(existing.Genres ?? Array.Empty<string>())
                         .SequenceEqual(series.Genres ?? Array.Empty<string>()),
+                nameof(TagCacheEntry.OriginalLanguage) => !TagCacheService.HasExplicitOriginalLanguage(descendant)
+                    && !string.Equals(
+                        existing.OriginalLanguage,
+                        TagCacheService.ReadOriginalLanguage(series),
+                        StringComparison.Ordinal),
                 _ => throw new InvalidOperationException($"Unhandled parent-Series dependency field: {field}"),
             };
     }

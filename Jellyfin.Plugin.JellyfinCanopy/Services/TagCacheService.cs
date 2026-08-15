@@ -221,7 +221,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // complete, validated BoxSet forward-membership snapshot plus explicit
         // over-cap/unavailable sentinels; its derived reverse map lets Movie
         // removal/move invalidation survive restart after live old edges disappear.
-        private const int CurrentCacheSchemaVersion = 8;
+        // v8 introduced OriginalLanguage, but container rows sourced it from the
+        // selected first Episode and therefore could not model Jellyfin's direct
+        // Episode/Season -> Series inheritance. v9 rebuilds those rows under the
+        // authoritative owning-item/parent-Series dependency contract.
+        private const int CurrentCacheSchemaVersion = 9;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -3415,13 +3419,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     SourceRevision = item.DateLastSaved.Ticks,
                 };
 
+                entry.OriginalLanguage = (kind == BaseItemKind.Episode || kind == BaseItemKind.Season)
+                    && !HasExplicitOriginalLanguage(item)
+                    ? ReadOriginalLanguage(item, ResolveParentSeriesOnce())
+                    : ReadOriginalLanguage(item);
+
                 if (isContainer)
                 {
                     var firstEp = GetFirstEpisode(item);
                     if (firstEp != null)
                     {
                         entry.StreamSourceId = firstEp.Id.ToString("N");
-                        entry.OriginalLanguage = ReadOriginalLanguage(firstEp);
                         if (entry.Genres == null || entry.Genres.Length == 0)
                         {
                             entry.Genres = firstEp.Genres;
@@ -3482,7 +3490,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 else
                 {
                     entry.StreamSourceId = item.Id.ToString("N");
-                    entry.OriginalLanguage = ReadOriginalLanguage(item);
                     var media = ExtractMediaData(item);
                     if (media == null)
                     {
@@ -3561,6 +3568,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 // not turn an otherwise usable cache entry into a total miss.
                 return null;
             }
+        }
+
+        internal static bool HasExplicitOriginalLanguage(BaseItem item)
+            => !string.IsNullOrWhiteSpace(item.OriginalLanguage);
+
+        internal static string? ReadOriginalLanguage(BaseItem item, BaseItem? parentSeries)
+        {
+            if (HasExplicitOriginalLanguage(item))
+            {
+                return ReadOriginalLanguage(item);
+            }
+
+            return parentSeries == null ? ReadOriginalLanguage(item) : ReadOriginalLanguage(parentSeries);
         }
 
         // Returns null when the media probe itself FAILED (GetMediaSources threw), distinct from a
