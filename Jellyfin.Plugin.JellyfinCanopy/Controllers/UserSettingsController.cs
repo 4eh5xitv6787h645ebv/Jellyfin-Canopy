@@ -138,6 +138,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userConfig = read.Value;
             if (read.WasCreated)
             {
+                HiddenContentResponseFilter.InvalidateUserSettings(authorizedUserId);
                 if (!LogCrossUserFileMutationIfNeeded(
                         authorizedUserId,
                         "settings.json",
@@ -506,6 +507,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 if (result.Status == UserFileCommitStatus.Success)
                 {
+                    if (string.Equals(fileName, "settings.json", StringComparison.Ordinal))
+                    {
+                        HiddenContentResponseFilter.InvalidateUserSettings(authorizedUserId);
+                    }
+
                     if (!LogCrossUserFileMutationIfNeeded(
                             authorizedUserId,
                             fileName,
@@ -2195,6 +2201,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         StampServerManagedFields(userId, replacement);
                         _userConfigurationManager.SaveUserConfiguration(userId, "settings.json", replacement);
                     }
+                    HiddenContentResponseFilter.InvalidateUserSettings(userId);
                     userCount++;
                 }
                 catch (Exception ex)

@@ -131,6 +131,53 @@ describe('home Continue-Watching filtering independent of Filter Library (ENH-2)
         expect(card('CW1').dataset.jcHiddenScopeSignature).toBe('home:1:resume');
     });
 
+    it('filters video, audio, and book resume rows without over-hiding an ordinary audio row', async () => {
+        ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({
+            CustomPrefs: {
+                homesection1: 'resume',
+                homesection2: 'resumeaudio',
+                homesection3: 'resumebook',
+                homesection4: 'latestmedia',
+            },
+        });
+        setHiddenContent(
+            { filterLibrary: false, filterContinueWatching: true, filterNextUp: false },
+            {
+                VIDEO: { itemId: 'VIDEO', hideScope: 'continuewatching' },
+                AUDIO: { itemId: 'AUDIO', hideScope: 'continuewatching' },
+                BOOK: { itemId: 'BOOK', hideScope: 'continuewatching' },
+                ORDINARY: { itemId: 'ORDINARY', hideScope: 'continuewatching' },
+            },
+        );
+        const container = document.createElement('div');
+        container.className = 'homeSectionsContainer';
+        for (const [index, id, type] of [
+            [1, 'VIDEO', 'Video'],
+            [2, 'AUDIO', 'Audio'],
+            [3, 'BOOK', 'Book'],
+            [4, 'ORDINARY', 'Audio'],
+        ] as const) {
+            const section = document.createElement('div');
+            section.className = `verticalSection section${index}`;
+            section.innerHTML = `<div class="card" data-id="${id}" data-type="${type}"></div>`;
+            container.appendChild(section);
+        }
+        document.body.appendChild(container);
+
+        setupNativeObserver();
+        filterAllNativeCards();
+
+        await vi.waitFor(() => {
+            expect(card('VIDEO').classList.contains('jc-hidden')).toBe(true);
+            expect(card('AUDIO').classList.contains('jc-hidden')).toBe(true);
+            expect(card('BOOK').classList.contains('jc-hidden')).toBe(true);
+        });
+        expect(card('ORDINARY').classList.contains('jc-hidden')).toBe(false);
+        expect(card('AUDIO').dataset.jcHiddenScopeSignature).toBe('home:2:resumeaudio');
+        expect(card('BOOK').dataset.jcHiddenScopeSignature).toBe('home:3:resumebook');
+        expect(card('ORDINARY').dataset.jcHiddenScopeSignature).toBe('home:4:latestmedia');
+    });
+
     it('rechecks a processed card moved from Continue Watching into Next Up', async () => {
         ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({ CustomPrefs: {} });
         setHiddenContent(

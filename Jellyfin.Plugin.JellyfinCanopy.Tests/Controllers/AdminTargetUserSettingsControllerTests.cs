@@ -46,6 +46,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
 
     public void Dispose()
     {
+        HiddenContentResponseFilter.InvalidateUserSettings(ActorId);
+        HiddenContentResponseFilter.InvalidateUserSettings(TargetId);
         try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
     }
 
@@ -148,6 +150,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             IsAdmin = true
         };
         candidate.ExtensionData["FutureSetting"] = extensionDocument.RootElement.Clone();
+        HiddenContentResponseFilter.SeedRemovePolicyCacheForTest(ActorId, enabled: true);
+        HiddenContentResponseFilter.SeedRemovePolicyCacheForTest(TargetId, enabled: false);
 
         var saveController = Controller(ifMatch: 3);
         var committed = AssertResponse<UserSettings>(
@@ -158,6 +162,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         Assert.Equal("time", committed.Data!.WatchProgressMode);
         Assert.False(committed.Data.IsAdmin);
         Assert.Equal("\"4\"", saveController.Response.Headers.ETag.ToString());
+        Assert.True(HiddenContentResponseFilter.IsRemovePolicyCachedForTest(ActorId));
+        Assert.False(HiddenContentResponseFilter.IsRemovePolicyCachedForTest(TargetId));
 
         var targetStored = _manager.GetUserConfigurationStrict<UserSettings>(
             TargetId,

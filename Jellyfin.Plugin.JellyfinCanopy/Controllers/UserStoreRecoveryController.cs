@@ -73,6 +73,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 {
                     HiddenContentResponseFilter.InvalidateUser(canonicalUserId);
                 }
+                else if (string.Equals(fileName, "settings.json", StringComparison.Ordinal))
+                {
+                    HiddenContentResponseFilter.InvalidateUserSettings(canonicalUserId);
+                }
                 else if (string.Equals(fileName, "spoilerblur.json", StringComparison.Ordinal))
                 {
                     SpoilerUserResolver.InvalidateUser(canonicalUserId);

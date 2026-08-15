@@ -257,9 +257,9 @@
                                 <div class="fieldDescription">List the audio language flags available for each title on its detail page.</div>
                             </div>
 
-                            <div class="checkboxContainer"><label><input id="removeContinueWatchingEnabled" data-config-key="RemoveContinueWatchingEnabled" is="emby-checkbox" type="checkbox"/><span>Enable "Remove from Continue Watching"</span></label></div>
+                            <div class="checkboxContainer"><label><input id="removeContinueWatchingEnabled" data-config-key="RemoveContinueWatchingEnabled" is="emby-checkbox" type="checkbox"/><span>Default: enable "Remove from Continue Watching &amp; Next Up"</span></label></div>
                             <div class="jc-setting-description" data-desc-for="removeContinueWatchingEnabled">
-                                <div class="fieldDescription">Adds a "Remove from Continue Watching" option to the right-click / long-press context menu. Hides items non-destructively, so playback position is preserved and entries appear in Hidden Content's management page (look for "Add back to Continue Watching" on each entry). Items also unhide automatically when you resume playback.</div>
+                                <div class="fieldDescription">Sets the starting value for new users. Each user's Canopy setting then controls both the menu actions and enforcement of that user's saved home-row removals when full Hidden Content is off; other users are unaffected, and Hidden Content keeps its independent filtering policy. Continue Watching includes Jellyfin's video, audio, and book resume rows. Removal is non-destructive: playback position is preserved, entries can be added back from Hidden Content, and resuming an item unhides it automatically.</div>
                             </div>
 
                             <div class="checkboxContainer"><label><input id="hideFavoritesTab" data-config-key="HideFavoritesTab" is="emby-checkbox" type="checkbox"/><span>Hide the Home "Favorites" tab</span></label></div>

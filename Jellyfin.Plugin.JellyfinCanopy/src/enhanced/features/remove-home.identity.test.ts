@@ -324,4 +324,41 @@ describe('Continue Watching removal identity ownership', () => {
         });
         expect(JC.state.removeContext).toBeNull();
     });
+
+    it('offers Continue Watching actions for video, audio, and book resume rows only', async () => {
+        disposeFeature?.();
+        disposeFeature = null;
+        ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({
+            CustomPrefs: {
+                homesection1: 'resume',
+                homesection2: 'resumeaudio',
+                homesection3: 'resumebook',
+                homesection4: 'latestmedia',
+            },
+        });
+        disposeFeature = installRemoveHome();
+
+        const container = document.createElement('div');
+        container.className = 'homeSectionsContainer';
+        for (const [index, type] of [
+            [1, 'Video'],
+            [2, 'Audio'],
+            [3, 'Book'],
+            [4, 'Audio'],
+        ] as const) {
+            const section = document.createElement('div');
+            section.className = `verticalSection section${index}`;
+            section.innerHTML = `<div class="card" data-id="item-${index}" data-type="${type}"></div>`;
+            container.appendChild(section);
+        }
+        document.body.appendChild(container);
+        const cards = container.querySelectorAll<HTMLElement>('.card');
+
+        await vi.waitFor(() => {
+            expect(detectCardSurface(cards[0])).toBe('continuewatching');
+            expect(detectCardSurface(cards[1])).toBe('continuewatching');
+            expect(detectCardSurface(cards[2])).toBe('continuewatching');
+        });
+        expect(detectCardSurface(cards[3])).toBeNull();
+    });
 });
