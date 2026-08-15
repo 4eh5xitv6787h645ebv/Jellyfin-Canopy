@@ -176,6 +176,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 configManager: null!,
                 NullLogger<HiddenContentResponseFilter>.Instance,
                 new FakePluginConfigProvider(new PluginConfiguration()),
+                new RemoveFromHomePolicyService(
+                    null!,
+                    NullLogger<RemoveFromHomePolicyService>.Instance),
                 hierarchy);
         }
 
@@ -214,6 +217,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 configManager: null!,
                 NullLogger<HiddenContentResponseFilter>.Instance,
                 new FakePluginConfigProvider(config),
+                new RemoveFromHomePolicyService(
+                    null!,
+                    NullLogger<RemoveFromHomePolicyService>.Instance),
                 new HiddenContentHierarchyResolver(library, new StubUserManager(Array.Empty<User>())));
 
             var executed = new ActionExecutedContext(actionContext, filters, controller)

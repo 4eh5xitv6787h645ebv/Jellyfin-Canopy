@@ -27,6 +27,7 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
     private readonly User _target;
     private readonly StubUserManager _userManager;
     private readonly FakePluginConfigProvider _provider;
+    private readonly RemoveFromHomePolicyService _removePolicy;
 
     public AdminTargetUserSettingsControllerTests()
     {
@@ -42,12 +43,15 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         _target = new User("Target <User> & Co", "Provider", "PasswordProvider");
         _userManager = new StubUserManager(_actor, _target);
         _provider = new FakePluginConfigProvider(new PluginConfiguration());
+        _removePolicy = new RemoveFromHomePolicyService(
+            _manager,
+            NullLogger<RemoveFromHomePolicyService>.Instance);
     }
 
     public void Dispose()
     {
-        HiddenContentResponseFilter.InvalidateUserSettings(ActorId);
-        HiddenContentResponseFilter.InvalidateUserSettings(TargetId);
+        _removePolicy.Invalidate(ActorId);
+        _removePolicy.Invalidate(TargetId);
         try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
     }
 
@@ -150,8 +154,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             IsAdmin = true
         };
         candidate.ExtensionData["FutureSetting"] = extensionDocument.RootElement.Clone();
-        HiddenContentResponseFilter.SeedRemovePolicyCacheForTest(ActorId, enabled: true);
-        HiddenContentResponseFilter.SeedRemovePolicyCacheForTest(TargetId, enabled: false);
+        _removePolicy.SeedCacheForTest(ActorId, enabled: true);
+        _removePolicy.SeedCacheForTest(TargetId, enabled: false);
 
         var saveController = Controller(ifMatch: 3);
         var committed = AssertResponse<UserSettings>(
@@ -162,8 +166,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
         Assert.Equal("time", committed.Data!.WatchProgressMode);
         Assert.False(committed.Data.IsAdmin);
         Assert.Equal("\"4\"", saveController.Response.Headers.ETag.ToString());
-        Assert.True(HiddenContentResponseFilter.IsRemovePolicyCachedForTest(ActorId));
-        Assert.False(HiddenContentResponseFilter.IsRemovePolicyCachedForTest(TargetId));
+        Assert.True(_removePolicy.IsCachedForTest(ActorId));
+        Assert.False(_removePolicy.IsCachedForTest(TargetId));
 
         var targetStored = _manager.GetUserConfigurationStrict<UserSettings>(
             TargetId,
@@ -893,7 +897,8 @@ public sealed class AdminTargetUserSettingsControllerTests : IDisposable
             new SeerrCache(_provider),
             _provider,
             _manager,
-            new CountingLibraryManager());
+            new CountingLibraryManager(),
+            _removePolicy);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

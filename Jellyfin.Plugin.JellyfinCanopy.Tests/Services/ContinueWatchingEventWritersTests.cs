@@ -69,7 +69,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Assert.True(HiddenContentResponseFilter.IsCachedForTest(userIdN));
 
                 var provider = new FakePluginConfigProvider(new PluginConfiguration { RemoveContinueWatchingEnabled = true });
-                var consumer = new ContinueWatchingPlaybackConsumer(ucm, NullLogger<ContinueWatchingPlaybackConsumer>.Instance, provider);
+                var consumer = new ContinueWatchingPlaybackConsumer(
+                    ucm,
+                    NullLogger<ContinueWatchingPlaybackConsumer>.Instance,
+                    provider,
+                    new RemoveFromHomePolicyService(
+                        ucm,
+                        NullLogger<RemoveFromHomePolicyService>.Instance));
 
                 var args = new PlaybackStartEventArgs
                 {
@@ -114,7 +120,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
 
                 var logger = new CollectingLogger<ContinueWatchingPlaybackConsumer>();
                 var provider = new FakePluginConfigProvider(new PluginConfiguration { RemoveContinueWatchingEnabled = true });
-                var consumer = new ContinueWatchingPlaybackConsumer(ucm, logger, provider);
+                var consumer = new ContinueWatchingPlaybackConsumer(
+                    ucm,
+                    logger,
+                    provider,
+                    new RemoveFromHomePolicyService(
+                        ucm,
+                        NullLogger<RemoveFromHomePolicyService>.Instance));
                 var args = new PlaybackStartEventArgs
                 {
                     Item = new Movie { Id = Guid.NewGuid() },
@@ -131,6 +143,202 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
+
+        [Theory]
+        [InlineData(false, false, true, false)]
+        [InlineData(false, true, false, true)]
+        [InlineData(true, false, false, false)]
+        [InlineData(false, false, null, true)]
+        [InlineData(false, true, null, false)]
+        public async Task Consumer_UsesExactSessionUsersEffectivePolicy(
+            bool hiddenContentEnabled,
+            bool administratorDefault,
+            bool? userOverride,
+            bool entryRemains)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-policy-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var manager = new UserConfigurationManager(
+                    new StubAppPaths(tempDir),
+                    NullLogger<UserConfigurationManager>.Instance);
+                var policy = new RemoveFromHomePolicyService(
+                    manager,
+                    NullLogger<RemoveFromHomePolicyService>.Instance);
+                var userId = Guid.NewGuid();
+                var itemId = Guid.NewGuid();
+                SavePlaybackEntry(manager, userId, itemId);
+                if (userOverride.HasValue)
+                {
+                    manager.SaveUserConfiguration(
+                        userId.ToString("N"),
+                        "settings.json",
+                        new UserSettings { RemoveContinueWatchingEnabled = userOverride.Value });
+                }
+
+                var consumer = Consumer(
+                    manager,
+                    policy,
+                    hiddenContentEnabled,
+                    administratorDefault);
+                await consumer.OnEvent(Playback(userId, itemId));
+
+                var stored = manager.GetUserConfigurationStrict<UserHiddenContent>(
+                    userId.ToString("N"),
+                    "hidden-content.json");
+                Assert.Equal(entryRemains, stored.Items.ContainsKey("entry"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task Consumer_TwoSessions_DoNotSharePolicyOrMutateTheOtherUsersStore()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-two-user-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var manager = new UserConfigurationManager(
+                    new StubAppPaths(tempDir),
+                    NullLogger<UserConfigurationManager>.Instance);
+                var policy = new RemoveFromHomePolicyService(
+                    manager,
+                    NullLogger<RemoveFromHomePolicyService>.Instance);
+                var enabledUser = Guid.NewGuid();
+                var disabledUser = Guid.NewGuid();
+                var sharedItem = Guid.NewGuid();
+                SavePlaybackEntry(manager, enabledUser, sharedItem);
+                SavePlaybackEntry(manager, disabledUser, sharedItem);
+                manager.SaveUserConfiguration(
+                    enabledUser.ToString("N"),
+                    "settings.json",
+                    new UserSettings { RemoveContinueWatchingEnabled = true });
+                manager.SaveUserConfiguration(
+                    disabledUser.ToString("N"),
+                    "settings.json",
+                    new UserSettings { RemoveContinueWatchingEnabled = false });
+                var consumer = Consumer(
+                    manager,
+                    policy,
+                    hiddenContentEnabled: false,
+                    administratorDefault: false);
+
+                await Task.WhenAll(
+                    consumer.OnEvent(Playback(enabledUser, sharedItem)),
+                    consumer.OnEvent(Playback(disabledUser, sharedItem)));
+
+                Assert.Empty(manager.GetUserConfigurationStrict<UserHiddenContent>(
+                    enabledUser.ToString("N"),
+                    "hidden-content.json").Items);
+                Assert.True(manager.GetUserConfigurationStrict<UserHiddenContent>(
+                    disabledUser.ToString("N"),
+                    "hidden-content.json").Items.ContainsKey("entry"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task Consumer_CorruptPolicy_ColdFailsClosed_AndExpiredCacheRetainsLastKnownGood()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "jc-cw-policy-fault-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var manager = new UserConfigurationManager(
+                    new StubAppPaths(tempDir),
+                    NullLogger<UserConfigurationManager>.Instance);
+                var policy = new RemoveFromHomePolicyService(
+                    manager,
+                    NullLogger<RemoveFromHomePolicyService>.Instance);
+                var coldUser = Guid.NewGuid();
+                var coldItem = Guid.NewGuid();
+                SavePlaybackEntry(manager, coldUser, coldItem);
+                File.WriteAllText(UserFile(tempDir, coldUser, "settings.json"), "{ corrupt ]");
+
+                var consumer = Consumer(manager, policy, false, false);
+                await consumer.OnEvent(Playback(coldUser, coldItem));
+                Assert.Empty(manager.GetUserConfigurationStrict<UserHiddenContent>(
+                    coldUser.ToString("N"),
+                    "hidden-content.json").Items);
+
+                var retainedUser = Guid.NewGuid();
+                var retainedItem = Guid.NewGuid();
+                SavePlaybackEntry(manager, retainedUser, retainedItem);
+                manager.SaveUserConfiguration(
+                    retainedUser.ToString("N"),
+                    "settings.json",
+                    new UserSettings { RemoveContinueWatchingEnabled = false });
+                Assert.False(policy.ShouldApply(
+                    retainedUser,
+                    hiddenContentEnabled: false,
+                    administratorDefault: true));
+                File.WriteAllText(UserFile(tempDir, retainedUser, "settings.json"), "{ corrupt ]");
+                policy.ExpireCacheForTest(retainedUser.ToString("N"));
+
+                await consumer.OnEvent(Playback(retainedUser, retainedItem));
+                Assert.True(manager.GetUserConfigurationStrict<UserHiddenContent>(
+                    retainedUser.ToString("N"),
+                    "hidden-content.json").Items.ContainsKey("entry"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private static ContinueWatchingPlaybackConsumer Consumer(
+            UserConfigurationManager manager,
+            RemoveFromHomePolicyService policy,
+            bool hiddenContentEnabled,
+            bool administratorDefault)
+            => new(
+                manager,
+                NullLogger<ContinueWatchingPlaybackConsumer>.Instance,
+                new FakePluginConfigProvider(new PluginConfiguration
+                {
+                    HiddenContentEnabled = hiddenContentEnabled,
+                    RemoveContinueWatchingEnabled = administratorDefault,
+                }),
+                policy);
+
+        private static PlaybackStartEventArgs Playback(Guid userId, Guid itemId)
+            => new()
+            {
+                Item = new Movie { Id = itemId },
+                Session = new SessionInfo(null!, NullLogger.Instance) { UserId = userId },
+            };
+
+        private static void SavePlaybackEntry(
+            UserConfigurationManager manager,
+            Guid userId,
+            Guid itemId)
+        {
+            var hidden = new UserHiddenContent();
+            hidden.Items["entry"] = new HiddenContentItem
+            {
+                ItemId = itemId.ToString("N"),
+                HideScope = "continuewatching",
+            };
+            manager.SaveUserConfiguration(userId.ToString("N"), "hidden-content.json", hidden);
+        }
+
+        private static string UserFile(
+            string baseDir,
+            Guid userId,
+            string fileName)
+            => Path.Combine(
+                baseDir,
+                "configurations",
+                "Jellyfin.Plugin.JellyfinCanopy",
+                userId.ToString("N"),
+                fileName);
 
         [Fact]
         public void LibraryHook_BulkRemoval_DrainsOncePerUser()

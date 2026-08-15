@@ -22,13 +22,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly UserConfigurationManager _manager;
         private readonly ILogger<UserStoreRecoveryController> _logger;
+        private readonly RemoveFromHomePolicyService _removeFromHomePolicy;
 
         public UserStoreRecoveryController(
             UserConfigurationManager manager,
-            ILogger<UserStoreRecoveryController> logger)
+            ILogger<UserStoreRecoveryController> logger,
+            RemoveFromHomePolicyService removeFromHomePolicy)
         {
             _manager = manager;
             _logger = logger;
+            _removeFromHomePolicy = removeFromHomePolicy;
         }
 
         [HttpGet]
@@ -75,7 +78,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                 }
                 else if (string.Equals(fileName, "settings.json", StringComparison.Ordinal))
                 {
-                    HiddenContentResponseFilter.InvalidateUserSettings(canonicalUserId);
+                    _removeFromHomePolicy.Invalidate(canonicalUserId);
                 }
                 else if (string.Equals(fileName, "spoilerblur.json", StringComparison.Ordinal))
                 {

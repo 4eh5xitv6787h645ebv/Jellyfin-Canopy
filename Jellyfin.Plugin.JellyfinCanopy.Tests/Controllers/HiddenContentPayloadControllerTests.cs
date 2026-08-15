@@ -13,16 +13,27 @@ using Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.AspNetCore.Routing;
 using Xunit;
+using AudioItem = MediaBrowser.Controller.Entities.Audio.Audio;
 
 namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers;
 
 public sealed class HiddenContentPayloadControllerTests : IDisposable
 {
+    private sealed class Book : MediaBrowser.Controller.Entities.BaseItem
+    {
+    }
+
     private readonly string _baseDir;
     private readonly UserConfigurationManager _manager;
     private readonly User _user;
@@ -153,6 +164,139 @@ public sealed class HiddenContentPayloadControllerTests : IDisposable
             System.Text.Json.JsonSerializer.Serialize(scopedHide.Value),
             StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(HiddenPath));
+    }
+
+    [Fact]
+    public async Task SuccessfulScopedPost_IsVisibleToAFreshResponseFilterThroughRealInvalidation()
+    {
+        var itemId = Guid.NewGuid();
+        _provider.Current = new PluginConfiguration
+        {
+            HiddenContentEnabled = false,
+            RemoveContinueWatchingEnabled = false,
+        };
+        _manager.SaveUserConfiguration(
+            UserId,
+            "settings.json",
+            new UserSettings { RemoveContinueWatchingEnabled = true });
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, scopedUser) =>
+                id == itemId && scopedUser?.Id == _user.Id
+                    ? new Movie { Id = itemId, Name = "Caller-authorized resume item" }
+                    : null
+        };
+        var policy = new RemoveFromHomePolicyService(
+            _manager,
+            NullLogger<RemoveFromHomePolicyService>.Instance);
+
+        // Prime the real hidden-context cache with an empty pre-mutation view.
+        Assert.False(await FilterResumeItem(itemId, library, policy));
+        Assert.True(HiddenContentResponseFilter.IsCachedForTest(UserId));
+
+        var posted = Controller(
+                NullLogger<HiddenContentController>.Instance,
+                library)
+            .HideFromContinueWatching(itemId.ToString("D"));
+        Assert.IsType<OkObjectResult>(posted);
+        Assert.False(HiddenContentResponseFilter.IsCachedForTest(UserId));
+
+        // A distinct filter instance represents the next native Resume request.
+        Assert.True(await FilterResumeItem(itemId, library, policy));
+    }
+
+    [Fact]
+    public void AccessibleAudioAndBookResumeItems_UseTheRealCallerScopedEndpoint()
+    {
+        MediaBrowser.Controller.Entities.BaseItem[] items =
+        {
+            new AudioItem { Id = Guid.NewGuid(), Name = "Authorized audio resume" },
+            new Book { Id = Guid.NewGuid(), Name = "Authorized book resume" },
+        };
+        var byId = items.ToDictionary(item => item.Id);
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdUserHook = (id, scopedUser) =>
+                scopedUser?.Id == _user.Id && byId.TryGetValue(id, out var item)
+                    ? item
+                    : null
+        };
+        var controller = Controller(
+            NullLogger<HiddenContentController>.Instance,
+            library);
+
+        foreach (var item in items)
+        {
+            Assert.IsType<OkObjectResult>(
+                controller.HideFromContinueWatching(item.Id.ToString("N")));
+        }
+
+        var stored = _manager.GetUserConfigurationStrict<UserHiddenContent>(
+            UserId,
+            "hidden-content.json");
+        Assert.Equal(2, stored.Items.Count);
+        Assert.Collection(
+            stored.Items.Values.OrderBy(item => item.Type),
+            audio =>
+            {
+                Assert.Equal("Audio", audio.Type);
+                Assert.Equal("continuewatching", audio.HideScope);
+            },
+            book =>
+            {
+                Assert.Equal("Book", book.Type);
+                Assert.Equal("continuewatching", book.HideScope);
+            });
+    }
+
+    private async Task<bool> FilterResumeItem(
+        Guid itemId,
+        CountingLibraryManager library,
+        RemoveFromHomePolicyService policy)
+    {
+        var httpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim("Jellyfin-UserId", _user.Id.ToString()) },
+                "TestAuth")),
+        };
+        var routeData = new RouteData();
+        routeData.Values["controller"] = "Items";
+        routeData.Values["action"] = "GetResumeItems";
+        var actionContext = new ActionContext(
+            httpContext,
+            routeData,
+            new ActionDescriptor(),
+            new ModelStateDictionary());
+        var filters = new List<IFilterMetadata>();
+        var controller = new object();
+        var executing = new ActionExecutingContext(
+            actionContext,
+            filters,
+            new Dictionary<string, object?>(),
+            controller);
+        var executed = new ActionExecutedContext(actionContext, filters, controller)
+        {
+            Result = new ObjectResult(new QueryResult<BaseItemDto>(
+                0,
+                1,
+                new List<BaseItemDto> { new() { Id = itemId } })),
+        };
+        var filter = new HiddenContentResponseFilter(
+            _manager,
+            NullLogger<HiddenContentResponseFilter>.Instance,
+            _provider,
+            policy,
+            new HiddenContentHierarchyResolver(
+                library,
+                new StubUserManager(_user)));
+
+        await filter.OnActionExecutionAsync(
+            executing,
+            () => Task.FromResult(executed));
+
+        var result = Assert.IsType<ObjectResult>(executed.Result);
+        return Assert.IsType<QueryResult<BaseItemDto>>(result.Value).Items.Count == 0;
     }
 
     [Fact]

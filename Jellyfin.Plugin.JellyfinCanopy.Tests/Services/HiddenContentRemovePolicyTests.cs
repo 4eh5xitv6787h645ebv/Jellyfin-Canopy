@@ -24,6 +24,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
     {
         private readonly string _baseDir;
         private readonly UserConfigurationManager _manager;
+        private readonly RemoveFromHomePolicyService _policy;
         private readonly HashSet<string> _userIds = new(StringComparer.Ordinal);
 
         public HiddenContentRemovePolicyTests()
@@ -35,6 +36,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             _manager = new UserConfigurationManager(
                 new StubAppPaths(_baseDir),
                 NullLogger<UserConfigurationManager>.Instance);
+            _policy = new RemoveFromHomePolicyService(
+                _manager,
+                NullLogger<RemoveFromHomePolicyService>.Instance);
         }
 
         public void Dispose()
@@ -42,7 +46,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             foreach (var userId in _userIds)
             {
                 HiddenContentResponseFilter.InvalidateUser(userId);
-                HiddenContentResponseFilter.InvalidateUserSettings(userId);
+                _policy.Invalidate(userId);
             }
             try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
         }
@@ -193,7 +197,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             var coldItem = Guid.NewGuid();
             SaveHiddenItem(coldUser, coldItem);
             File.WriteAllText(PathFor(coldUser, "settings.json"), "{ not valid json ]");
-            HiddenContentResponseFilter.InvalidateUserSettings(coldUser.ToString("N"));
+            _policy.Invalidate(coldUser.ToString("N"));
 
             Assert.True(await RunFilter(
                 coldUser,
@@ -217,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 new PluginConfiguration { HiddenContentEnabled = false }));
 
             File.WriteAllText(PathFor(retainedUser, "settings.json"), "{ not valid json ]");
-            HiddenContentResponseFilter.ExpireRemovePolicyCacheForTest(retainedUser.ToString("N"));
+            _policy.ExpireCacheForTest(retainedUser.ToString("N"));
             Assert.False(await RunFilter(
                 retainedUser,
                 retainedItem,
@@ -229,7 +233,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 retainedUser.ToString("N"),
                 "settings.json",
                 new UserSettings { RemoveContinueWatchingEnabled = true });
-            HiddenContentResponseFilter.InvalidateUserSettings(retainedUser.ToString("N"));
+            _policy.Invalidate(retainedUser.ToString("N"));
             Assert.True(await RunFilter(
                 retainedUser,
                 retainedItem,
@@ -289,19 +293,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         [Fact]
         public void EffectivePolicyCache_IsHardBounded()
         {
-            Assert.Equal(2_048, HiddenContentResponseFilter.RemovePolicyCacheMaximumEntriesForTest);
-            Assert.Equal(2_048, HiddenContentResponseFilter.RemovePolicyCacheMaximumWeightForTest);
+            Assert.Equal(2_048, _policy.MaximumEntriesForTest);
+            Assert.Equal(2_048, _policy.MaximumWeightForTest);
         }
 
         [Fact]
         public void EffectivePolicyInvalidation_CanonicalizesDashedUserIds()
         {
             var userId = Guid.NewGuid();
-            HiddenContentResponseFilter.SeedRemovePolicyCacheForTest(userId.ToString("N"), enabled: true);
+            _policy.SeedCacheForTest(userId.ToString("N"), enabled: true);
 
-            HiddenContentResponseFilter.InvalidateUserSettings(userId.ToString("D"));
+            _policy.Invalidate(userId.ToString("D"));
 
-            Assert.False(HiddenContentResponseFilter.IsRemovePolicyCachedForTest(userId.ToString("N")));
+            Assert.False(_policy.IsCachedForTest(userId.ToString("N")));
         }
 
         private void SaveHiddenItem(Guid userId, Guid itemId)
@@ -316,7 +320,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
             };
             _manager.SaveUserConfiguration(userId.ToString("N"), "hidden-content.json", policy);
             HiddenContentResponseFilter.InvalidateUser(userId.ToString("N"));
-            HiddenContentResponseFilter.InvalidateUserSettings(userId.ToString("N"));
+            _policy.Invalidate(userId.ToString("N"));
         }
 
         private string PathFor(Guid userId, string fileName)
@@ -372,6 +376,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 _manager,
                 NullLogger<HiddenContentResponseFilter>.Instance,
                 new FakePluginConfigProvider(configuration),
+                _policy,
                 hierarchy);
 
             await filter.OnActionExecutionAsync(executing, () => Task.FromResult(executed));

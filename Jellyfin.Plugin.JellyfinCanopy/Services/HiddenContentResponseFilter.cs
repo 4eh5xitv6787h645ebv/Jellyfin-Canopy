@@ -20,9 +20,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
     public sealed class HiddenContentResponseFilter : IAsyncActionFilter
     {
         private const string FileName = "hidden-content.json";
-        private const string SettingsFileName = "settings.json";
         private const string CacheKey = "__JE_HC_FILTER_CACHE";
-        private const string RemovePolicyCacheKey = "__JE_REMOVE_HOME_POLICY_CACHE";
 
         // Cross-request in-memory cache keyed by userId (N-format string).
         // Eliminates per-request disk reads for hidden-content.json.
@@ -36,17 +34,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             comparer: StringComparer.OrdinalIgnoreCase,
             defaultTtl: () => _hcCacheTtl);
 
-        // Effective Remove-from-home policy is user-owned once settings.json exists.
-        // Keep a short refresh window but retain bounded last-known-good state long
-        // enough for a transient/corrupt read to preserve the user's privacy choice.
-        private static readonly TimeSpan _removePolicyRefreshInterval = TimeSpan.FromSeconds(30);
-        private static readonly TimeSpan _removePolicyRetention = TimeSpan.FromDays(7);
-        private static readonly BoundedTtlCache<string, RemovePolicyCacheEntry> _removePolicyCache = new(
-            maximumEntries: 2_048,
-            maximumWeight: 2_048,
-            comparer: StringComparer.OrdinalIgnoreCase,
-            defaultTtl: () => _removePolicyRetention);
-
         /// <summary>
         /// Removes the cached hidden-content context for the given user so the next
         /// request re-reads from disk. Call this immediately after any write to
@@ -56,22 +43,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         {
             if (!string.IsNullOrEmpty(userId))
                 _hcCache.TryRemove(userId, out _);
-        }
-
-        /// <summary>
-        /// Removes the cached effective Remove-from-home policy for one user.
-        /// Every successful settings.json mutation calls this after persistence.
-        /// </summary>
-        public static void InvalidateUserSettings(string userId)
-        {
-            if (string.IsNullOrEmpty(userId)) return;
-            var cacheKey = userId;
-            if (Guid.TryParse(userId, out var userIdGuid))
-            {
-                cacheKey = userIdGuid.ToString("N");
-                _warnedRemovePolicyFailure.TryRemove(userIdGuid, out _);
-            }
-            _removePolicyCache.TryRemove(cacheKey, out _);
         }
 
         // Test seam: seed an (empty) cache entry for a user so a test can prove a writer invalidated
@@ -94,36 +65,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // Test seam: whether a cache entry currently exists for a user.
         internal static bool IsCachedForTest(string userIdN)
             => !string.IsNullOrEmpty(userIdN) && _hcCache.ContainsKey(userIdN);
-
-        internal static void SeedRemovePolicyCacheForTest(string userIdN, bool enabled)
-        {
-            if (!string.IsNullOrEmpty(userIdN))
-            {
-                _removePolicyCache[userIdN] = new RemovePolicyCacheEntry(
-                    enabled,
-                    InheritsAdministratorDefault: false,
-                    LoadedAt: DateTime.UtcNow);
-            }
-        }
-
-        internal static bool IsRemovePolicyCachedForTest(string userIdN)
-            => !string.IsNullOrEmpty(userIdN) && _removePolicyCache.ContainsKey(userIdN);
-
-        internal static int RemovePolicyCacheMaximumEntriesForTest => _removePolicyCache.MaximumEntries;
-
-        internal static long RemovePolicyCacheMaximumWeightForTest => _removePolicyCache.MaximumWeight;
-
-        internal static void ExpireRemovePolicyCacheForTest(string userIdN)
-        {
-            if (!string.IsNullOrEmpty(userIdN)
-                && _removePolicyCache.TryGetValue(userIdN, out var entry))
-            {
-                _removePolicyCache[userIdN] = entry with { LoadedAt = DateTime.MinValue };
-            }
-        }
-
-        internal bool RemovePolicyEnabledForTest(Guid userId, bool administratorDefault)
-            => LoadRemovePolicy(new DefaultHttpContext(), userId, administratorDefault);
 
         // Test seam: force a user's cache entry to appear stale (TTL elapsed) WITHOUT
         // removing it, so the next read re-reads disk while the entry is still present
@@ -170,11 +111,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             Guid userId,
             CancellationToken cancellationToken);
 
-        private readonly record struct RemovePolicyCacheEntry(
-            bool Enabled,
-            bool InheritsAdministratorDefault,
-            DateTime LoadedAt);
-
         // Re-warn at most once per hour so a real Jellyfin upgrade isn't permanently invisible after the first warn.
         private static readonly TimeSpan ShapeMismatchReWarnInterval = TimeSpan.FromHours(1);
         private static readonly BoundedTtlCache<string, DateTime> _warnedShapeMismatchAt = new(
@@ -184,10 +120,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             comparer: StringComparer.Ordinal,
             defaultTtl: () => ShapeMismatchReWarnInterval);
         private static readonly BoundedTtlCache<Guid, byte> _warnedReadFailure = new(
-            maximumEntries: 2_048,
-            maximumWeight: 2_048,
-            defaultTtl: static () => TimeSpan.FromDays(7));
-        private static readonly BoundedTtlCache<Guid, byte> _warnedRemovePolicyFailure = new(
             maximumEntries: 2_048,
             maximumWeight: 2_048,
             defaultTtl: static () => TimeSpan.FromDays(7));
@@ -214,17 +146,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _configManager;
         private readonly ILogger<HiddenContentResponseFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly RemoveFromHomePolicyService _removeFromHomePolicy;
         private readonly HiddenContentHierarchyResolver _hierarchyResolver;
 
         public HiddenContentResponseFilter(
             UserConfigurationManager configManager,
             ILogger<HiddenContentResponseFilter> logger,
             IPluginConfigProvider configProvider,
+            RemoveFromHomePolicyService removeFromHomePolicy,
             HiddenContentHierarchyResolver hierarchyResolver)
         {
             _configManager = configManager;
             _logger = logger;
             _configProvider = configProvider;
+            _removeFromHomePolicy = removeFromHomePolicy;
             _hierarchyResolver = hierarchyResolver;
         }
 
@@ -258,12 +193,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             // Hidden Content remains an independent master switch on every route.
             var isRemoveSurface = string.Equals(surface, "continuewatching", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(surface, "nextup", StringComparison.OrdinalIgnoreCase);
-            if (!hcEnabled
-                && (!isRemoveSurface
-                    || !LoadRemovePolicy(
-                        context.HttpContext,
-                        userId,
-                        pluginConfiguration?.RemoveContinueWatchingEnabled == true)))
+            if (isRemoveSurface
+                ? !_removeFromHomePolicy.ShouldApply(
+                    userId,
+                    hcEnabled,
+                    pluginConfiguration?.RemoveContinueWatchingEnabled == true)
+                : !hcEnabled)
             {
                 await next().ConfigureAwait(false);
                 return;
@@ -298,99 +233,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             catch (Exception ex)
             {
                 _logger.LogError($"HC response filter handler failed for surface '{route.Surface}' — entries will pass through unfiltered for this request: {ex.Message}");
-            }
-        }
-
-        private bool LoadRemovePolicy(HttpContext httpContext, Guid userId, bool administratorDefault)
-        {
-            if (httpContext.Items.TryGetValue(RemovePolicyCacheKey, out var requestValue)
-                && requestValue is bool requestPolicy)
-            {
-                return requestPolicy;
-            }
-
-            var userIdN = userId.ToString("N");
-            var now = DateTime.UtcNow;
-            if (_removePolicyCache.TryGetValue(userIdN, out var cached)
-                && (now - cached.LoadedAt) < _removePolicyRefreshInterval)
-            {
-                var effective = cached.InheritsAdministratorDefault
-                    ? administratorDefault
-                    : cached.Enabled;
-                httpContext.Items[RemovePolicyCacheKey] = effective;
-                return effective;
-            }
-
-            // Serialize this read with settings.json RMWs. The resolved cache entry
-            // is published while the file lock is held, so a subsequent successful
-            // writer invalidation cannot race behind a stale post-write insertion.
-            lock (_configManager.GetUserFileLock(userIdN, SettingsFileName))
-            {
-                now = DateTime.UtcNow;
-                if (_removePolicyCache.TryGetValue(userIdN, out cached)
-                    && (now - cached.LoadedAt) < _removePolicyRefreshInterval)
-                {
-                    var effective = cached.InheritsAdministratorDefault
-                        ? administratorDefault
-                        : cached.Enabled;
-                    httpContext.Items[RemovePolicyCacheKey] = effective;
-                    return effective;
-                }
-
-                var read = _configManager.ReadUserConfiguration<UserSettings>(userIdN, SettingsFileName);
-                if (read.HasUsableValue
-                    && read.Value != null
-                    && !PersistedPayloadPolicy.Validate(read.Value).IsValid)
-                {
-                    read = new UserConfigReadResult<UserSettings>(
-                        UserConfigReadStatus.Corrupt,
-                        null,
-                        "invalid-policy-shape");
-                }
-
-                var hasLastKnownGood = _removePolicyCache.TryGetValue(userIdN, out cached);
-                var lastKnownGood = cached.InheritsAdministratorDefault
-                    ? administratorDefault
-                    : cached.Enabled;
-                var inheritsAdministratorDefault = read.Status == UserConfigReadStatus.Missing;
-                var enabled = read.Status switch
-                {
-                    UserConfigReadStatus.Valid when read.Value != null
-                        => read.Value.RemoveContinueWatchingEnabled,
-                    UserConfigReadStatus.Missing => administratorDefault,
-                    _ when hasLastKnownGood => lastKnownGood,
-                    // A settings-store fault cannot silently disclose a row the
-                    // user may have removed. Cold-start faults therefore engage
-                    // only the Remove surfaces, while Hidden Content keeps its own policy.
-                    _ => true,
-                };
-
-                if (read.IsFault)
-                {
-                    if (_warnedRemovePolicyFailure.TryAdd(userId, 0))
-                    {
-                        var posture = hasLastKnownGood
-                            ? "retaining last-known-good Remove-from-home policy"
-                            : "no last-known-good — failing CLOSED on Remove surfaces";
-                        _logger.LogError(
-                            $"HC response filter: {read.Status} settings.json for user {userId} "
-                            + $"({read.FaultDetail}) — {posture} until repaired.");
-                    }
-                }
-                else
-                {
-                    _warnedRemovePolicyFailure.TryRemove(userId, out _);
-                }
-
-                _removePolicyCache.Set(
-                    userIdN,
-                    new RemovePolicyCacheEntry(
-                        enabled,
-                        InheritsAdministratorDefault: inheritsAdministratorDefault,
-                        LoadedAt: now),
-                    _removePolicyRetention);
-                httpContext.Items[RemovePolicyCacheKey] = enabled;
-                return enabled;
             }
         }
 
