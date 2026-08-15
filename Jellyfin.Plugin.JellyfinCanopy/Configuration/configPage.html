@@ -2167,6 +2167,16 @@
                     </fieldset>
 
                     <fieldset>
+                        <legend class="sectionTitle">Awards and Nominations</legend>
+                        <div class="configSection">
+                            <div class="checkboxContainer jc-main-feature"><label><input id="awardsEnabled" data-config-key="AwardsEnabled" is="emby-checkbox" type="checkbox"/><span>Show cached awards and nominations</span></label></div>
+                            <div class="jc-setting-description" data-desc-for="awardsEnabled">
+                                <div class="fieldDescription jc-field-desc-sm-font-lg">Optional and disabled by default. When enabled, the weekly <strong>Refresh Awards Index</strong> scheduled task downloads a bounded public dataset from Wikidata into an atomic local cache. Run the task manually after enabling it to populate the first index. Failed or incomplete refreshes retain the previous complete index.</div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
                         <legend class="sectionTitle">User Reviews</legend>
                         <div class="configSection">
                             <div class="jc-info-banner-inline jc-banner-managed">

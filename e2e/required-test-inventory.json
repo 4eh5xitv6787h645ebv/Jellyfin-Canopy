@@ -19,6 +19,7 @@
     "e2e/arr-requests-parental.spec.ts › requests page parental filter › the requests list and page respect the caller parental limit",
     "e2e/arr-search.spec.ts › arr Search — action-sheet items › admin sees Search / Interactive / Manage, and Manage opens its modal",
     "e2e/arr-search.spec.ts › arr Search — action-sheet items › non-admin sees none of the arr Search items",
+    "e2e/awards.spec.ts › cached awards index (#717) › real details route is safe, navigation-fenced, wipe-resilient, and removed on live disable",
     "e2e/auto-skip.spec.ts › Auto-Skip v2 (native media segments) › resolves the clean-seed item, seeks to exact end once, and ignores direct seek-back",
     "e2e/bookmark-revisions.spec.ts › bookmark revision data integrity › stale replacement conflicts and same-revision tabs converge without lost bookmarks",
     "e2e/bookmark-revisions.spec.ts › bookmark revision data integrity › server cleanup deletes only a globally absent item and is idempotent",

@@ -3,7 +3,7 @@
   "limits": {
     "maxOutputCount": 187,
     "maxEsmEntryCount": 39,
-    "maxEsmOutputCount": 90,
+    "maxEsmOutputCount": 91,
     "maxIndividualEsmRawBytes": 262144,
     "maxBootRequests": 17,
     "maxBootRawBytes": 524288,

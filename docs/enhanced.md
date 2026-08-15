@@ -422,6 +422,7 @@ There's also an admin-only chip for release dates:
 | Setting | Scope | Default | What it does |
 | --- | --- | --- | --- |
 | **Show Release/Air Date** (`ShowReleaseDates`) | Admin only | — | Adds a chip on Movie, Series, Season, and Episode detail pages showing the cinema/digital/physical release date (movies) or next/last episode air date (series/seasons/episodes), sourced from TMDB. Set it in the **Release Dates** section of the config page. No per-user override. |
+| **Show cached awards and nominations** (`AwardsEnabled`) | Admin only | **off** | Shows deterministic win and nomination groups on authorized Movie and Series detail pages from Canopy's server-local Wikidata index. Set it in **Awards and Nominations**. No per-user override. |
 
 !!! note "Show Release/Air Date needs TMDB"
 
@@ -430,6 +431,42 @@ There's also an admin-only chip for release dates:
     admin **Default Region** when they choose **Use server default**) to choose which country's
     release dates to prefer (falling back to US, then any region TMDB has for that
     release type). Both are covered in [Discover & Request](discover.md).
+
+#### Awards index
+
+Awards are deliberately optional and disabled by default. Enabling the setting
+does not make a network request during Jellyfin startup. Run **Dashboard** →
+**Scheduled Tasks** → **Jellyfin Canopy** → **Refresh Awards Index** once after
+enabling it; after that, the task has one stable per-server time spread across
+the week. A manual run and the scheduled run share one physical refresh.
+
+The refresh queries only the public Wikidata Query Service. It sends no Jellyfin
+item IDs, library names, file paths, user identities, or provider IDs from your
+server. The browser never contacts Wikimedia: it asks Canopy for the current
+authorized item, and receives only award names and optional years. Movie and
+Series provider identifiers occupy separate validated namespaces so the same
+numeric ID cannot join the two media types. Controller and browser validation
+cap each win or nomination group at 250 facts and reject malformed responses.
+
+Canopy follows Wikimedia's [API etiquette](https://www.mediawiki.org/wiki/API:Etiquette)
+and [User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy/en):
+one descriptive Canopy-specific User-Agent with a contact URL, GET requests,
+strictly serial pages, a minimum one-second page interval, and `Retry-After` /
+bounded exponential backoff for throttling. Each page has a 30-second timeout
+and 8 MiB decoded response limit; a refresh accepts at most eight 5,000-row
+pages, three attempts per page, 40,000 source rows, 64 MiB total response data,
+and 20 minutes. Reaching any bound is an incomplete refresh and leaves the last
+complete atomic index untouched. The [Action API `maxlag` parameter](https://www.mediawiki.org/wiki/Manual:Maxlag_parameter)
+does not apply to the Wikidata Query Service endpoint used here; Canopy does not
+call `api.php` for this feature.
+
+The weekly local index is the cache: repeat detail views generate no Wikimedia
+traffic. At the deliberately pessimistic fleet model of 100,000 servers all
+opting in and evenly assigned across the 10,080 minutes of a week, successful
+refreshes average at most about 1.32 WDQS requests/second globally (eight calls
+per server per week); the hard all-retry envelope is about 3.97 requests/second.
+Actual traffic should be far below that because the feature is opt-in, short
+datasets stop early, and backoff stretches throttled work.
 
 ### Bookmarks
 

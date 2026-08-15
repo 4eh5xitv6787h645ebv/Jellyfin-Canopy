@@ -21,6 +21,8 @@ import type { JellyfinCanopyPublicApi } from '../facade';
  * (+ private-config for admins). PascalCase keys, exactly as serialized.
  */
 export interface PluginConfig {
+    /** Optional server-local Wikidata awards index and details surface. */
+    AwardsEnabled?: boolean;
     DisableTagsOnSearchPage?: boolean;
     /** Administrator's fixed-enum schema-v1 rating-tag deny policy. */
     RatingTagScopePolicy?: unknown;

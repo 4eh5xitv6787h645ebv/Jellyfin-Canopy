@@ -96,6 +96,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
             HideReviewsFromHiddenUsers = true;
             HideReviewsFromDisabledUsers = true;
             ShowReleaseDates = false;
+            AwardsEnabled = false;
             ShowUserRatingOnPosters = false;
             ShowUserRatingDash = true;
             PauseScreenEnabled = true;
@@ -508,6 +509,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
         public bool HideReviewsFromHiddenUsers { get; set; } = true;
         public bool HideReviewsFromDisabledUsers { get; set; } = true;
         public bool ShowReleaseDates { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the optional Wikidata-backed,
+        /// server-local awards index and details-page surface are enabled.
+        /// </summary>
+        public bool AwardsEnabled { get; set; }
         public bool ShowUserRatingOnPosters { get; set; } = false;
         /// <summary>
         /// When true (default), shows a "—" on poster cards for items the user hasn't rated yet.
