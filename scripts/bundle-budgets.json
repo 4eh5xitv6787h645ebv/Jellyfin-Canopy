@@ -14,7 +14,7 @@
     "maxFeatureRequests": 20,
     "maxFeatureRawBytes": 524288,
     "maxFeatureGzipBytes": 196608,
-    "maxFeatureExpandedRequests": 22,
+    "maxFeatureExpandedRequests": 23,
     "maxFeatureExpandedRawBytes": 786432,
     "maxFeatureExpandedGzipBytes": 262144,
     "maxSourceMapRawBytes": 6000000,
