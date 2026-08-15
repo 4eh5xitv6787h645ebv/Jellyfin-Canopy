@@ -806,8 +806,8 @@ interface TrackPressOwnership {
     readonly session: Promise<TrackSessionIdentity | null>;
     /** Item id derivable synchronously at the keypress, when available. */
     readonly itemHint: string | null;
-    /** True when the id came from a press-time probe (id-less source). */
-    readonly idless: boolean;
+    /** Exact element/source ownership is required when the URL cannot identify both item and media source. */
+    readonly exactSurfaceRequired: boolean;
     /** Element/source snapshot at the keypress. */
     readonly video: HTMLVideoElement | null;
     readonly src: string;
@@ -839,9 +839,10 @@ function currentSurfaceStillMatchesPress(press: TrackPressOwnership): boolean {
     if (press.itemHint !== null && itemNow !== press.itemHint) return false;
     const mediaSourceNow = getActiveMediaSourceId(getVideo());
     if (press.mediaSourceId !== null && mediaSourceNow !== press.mediaSourceId) return false;
-    // An id-less source has no independent client marker, so its exact
-    // element/source pair remains part of the ownership proof.
-    return !press.idless || pressSurfaceUnchanged(press);
+    // A blob or otherwise incomplete source URL has no independent, complete
+    // client marker. A stable route id alone cannot prove that the media
+    // surface did not change while /Sessions still lagged.
+    return !press.exactSurfaceRequired || pressSurfaceUnchanged(press);
 }
 
 function pressSurfaceUnchanged(
@@ -1002,21 +1003,24 @@ function cycleTrack(kind: TrackSheetKind): void {
     // authoritative own-session probe at the keypress itself, accepted only
     // if the element/source surface is still the keypress surface when it
     // resolves — otherwise ownership stays unproven.
-    const pressItemHint = currentTrackPressItemHint();
     const pressVideo = getVideo();
+    const pressSrc = pressVideo?.currentSrc || pressVideo?.src || '';
+    const sourceItemId = normalizeTrackItemId(parseItemIdFromVideosSrc(pressSrc));
+    const pressItemHint = sourceItemId ?? normalizeTrackItemId(getCurrentVideoItemId());
+    const pressMediaSourceId = getActiveMediaSourceId(pressVideo);
     const pressSurface: Omit<TrackPressOwnership, 'session'> = {
-        idless: !pressItemHint,
+        exactSurfaceRequired: sourceItemId === null || pressMediaSourceId === null,
         itemHint: pressItemHint,
         video: pressVideo,
-        src: pressVideo?.currentSrc || pressVideo?.src || '',
-        mediaSourceId: getActiveMediaSourceId(pressVideo),
+        src: pressSrc,
+        mediaSourceId: pressMediaSourceId,
     };
     const capturedSession = probeOwnSession(context).then((session) => {
         const identity = trackSessionIdentity(session);
         if (!identity) return null;
         if (pressSurface.itemHint !== null && identity.itemId !== pressSurface.itemHint) return null;
         if (pressSurface.mediaSourceId !== null && identity.mediaSourceId !== pressSurface.mediaSourceId) return null;
-        if (pressSurface.idless && !pressSurfaceUnchanged(pressSurface)) return null;
+        if (pressSurface.exactSurfaceRequired && !pressSurfaceUnchanged(pressSurface)) return null;
         return identity;
     }).catch(() => null);
     const press: TrackPressOwnership = { ...pressSurface, session: capturedSession };
@@ -1119,6 +1123,9 @@ const cycleAspect = (): void => {
 const PLAYBACK_INFO_REFRESH_MS = 1_000;
 let _playbackInfoOverlay: HTMLElement | null = null;
 let _playbackInfoTimer: number | null = null;
+let _playbackInfoVisibilityListener: (() => void) | null = null;
+let _playbackInfoRefreshEpoch = 0;
+let _playbackInfoInFlightEpoch: number | null = null;
 
 interface PlaybackInfoSurface {
     readonly video: HTMLVideoElement;
@@ -1162,9 +1169,10 @@ function playbackInfoSurfaceStillOwned(
     const establishedItem = playbackInfoSurfaceItem(established);
     const currentItem = playbackInfoSurfaceItem(current);
     if (establishedItem !== null && currentItem !== establishedItem) return false;
-    // With no independently provable item/source identity, only the exact
-    // element/source pair can keep ownership across refresh ticks.
-    if (establishedItem === null && established.mediaSourceId === null) {
+    // A page route id is item context, not source ownership. Unless the media
+    // URL itself identifies both item and source, only the exact element/source
+    // pair can keep ownership across refresh ticks.
+    if (established.sourceItemId === null || established.mediaSourceId === null) {
         return current.video === established.video && current.src === established.src;
     }
     return true;
@@ -1186,8 +1194,14 @@ function samePlaybackInfoSample(a: PlaybackInfoSurface, b: PlaybackInfoSurface):
 }
 
 function destroyPlaybackInfoOverlay(): void {
+    _playbackInfoRefreshEpoch += 1;
     cancelPlaybackTimer(_playbackInfoTimer);
     _playbackInfoTimer = null;
+    if (_playbackInfoVisibilityListener) {
+        document.removeEventListener('visibilitychange', _playbackInfoVisibilityListener);
+        _playbackInfoVisibilityListener = null;
+    }
+    _playbackInfoInFlightEpoch = null;
     _playbackInfoOverlay?.remove();
     _playbackInfoOverlay = null;
     _playbackInfoSurface = null;
@@ -1281,18 +1295,48 @@ function renderPlaybackInfo(video: HTMLVideoElement, session: OwnSession | null)
     _playbackInfoOverlay.replaceChildren(fragment);
 }
 
-function schedulePlaybackInfoRefresh(context: IdentityContext, overlay: HTMLElement): void {
-    _playbackInfoTimer = schedulePlaybackTimer(context, () => {
-        _playbackInfoTimer = null;
-        void refreshPlaybackInfo(context, overlay);
-    }, PLAYBACK_INFO_REFRESH_MS);
+function playbackInfoIsHidden(): boolean {
+    return document.visibilityState === 'hidden';
 }
 
-async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElement): Promise<void> {
+function playbackInfoRefreshIsCurrent(overlay: HTMLElement, epoch: number): boolean {
+    return _playbackInfoOverlay === overlay
+        && _playbackInfoRefreshEpoch === epoch
+        && !playbackInfoIsHidden();
+}
+
+function beginPlaybackInfoRefresh(context: IdentityContext, overlay: HTMLElement): void {
+    const epoch = _playbackInfoRefreshEpoch;
+    if (!playbackInfoRefreshIsCurrent(overlay, epoch)
+        || _playbackInfoInFlightEpoch === epoch) return;
+    _playbackInfoInFlightEpoch = epoch;
+    void refreshPlaybackInfo(context, overlay, epoch).finally(() => {
+        if (_playbackInfoInFlightEpoch === epoch) _playbackInfoInFlightEpoch = null;
+    });
+}
+
+function schedulePlaybackInfoRefresh(
+    context: IdentityContext,
+    overlay: HTMLElement,
+    epoch: number,
+): void {
+    if (!playbackInfoRefreshIsCurrent(overlay, epoch) || _playbackInfoTimer !== null) return;
+    const timer = schedulePlaybackTimer(context, () => {
+        if (_playbackInfoTimer === timer) _playbackInfoTimer = null;
+        beginPlaybackInfoRefresh(context, overlay);
+    }, PLAYBACK_INFO_REFRESH_MS);
+    _playbackInfoTimer = timer;
+}
+
+async function refreshPlaybackInfo(
+    context: IdentityContext,
+    overlay: HTMLElement,
+    epoch: number,
+): Promise<void> {
     // `overlay` identity-guards the loop: a toggle-off/on while a probe is in
     // flight must not let the stale refresh adopt the new overlay and fork a
     // second timer chain.
-    if (_playbackInfoOverlay !== overlay) return;
+    if (!playbackInfoRefreshIsCurrent(overlay, epoch)) return;
     if (!JC.identity.isCurrent(context) || JC.isVideoPage?.() !== true) {
         destroyPlaybackInfoOverlay();
         return;
@@ -1309,7 +1353,7 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
         return;
     }
     const session = await probeOwnSession(context);
-    if (_playbackInfoOverlay !== overlay || !JC.identity.isCurrent(context)) return;
+    if (!playbackInfoRefreshIsCurrent(overlay, epoch) || !JC.identity.isCurrent(context)) return;
     const currentVideo = getVideo();
     if (!currentVideo) {
         destroyPlaybackInfoOverlay();
@@ -1325,7 +1369,7 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
     if (!session) {
         // A transient/ambiguous refresh must not erase the last coherent
         // session details. Keep the overlay and retry on the owned timer.
-        schedulePlaybackInfoRefresh(context, overlay);
+        schedulePlaybackInfoRefresh(context, overlay, epoch);
         return;
     }
     const sessionIdentity = trackSessionIdentity(session);
@@ -1342,7 +1386,7 @@ async function refreshPlaybackInfo(context: IdentityContext, overlay: HTMLElemen
     _playbackInfoSurface = currentSurface;
     _playbackInfoSession = sessionIdentity;
     renderPlaybackInfo(currentVideo, session);
-    schedulePlaybackInfoRefresh(context, overlay);
+    schedulePlaybackInfoRefresh(context, overlay, epoch);
 }
 
 /** Toggles the Canopy playback-info overlay (no native menus involved). */
@@ -1370,11 +1414,24 @@ const togglePlaybackInfo = (): void => {
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     `;
     _playbackInfoOverlay = overlay;
+    _playbackInfoRefreshEpoch += 1;
     _playbackInfoSurface = capturePlaybackInfoSurface(video);
     _playbackInfoSession = null;
     renderPlaybackInfo(video, null); // immediate local stats; session data lands on first refresh
     document.body.appendChild(overlay);
-    void refreshPlaybackInfo(context, overlay);
+    const visibilityListener = (): void => {
+        if (_playbackInfoOverlay !== overlay) return;
+        if (playbackInfoIsHidden()) {
+            _playbackInfoRefreshEpoch += 1;
+            cancelPlaybackTimer(_playbackInfoTimer);
+            _playbackInfoTimer = null;
+            return;
+        }
+        if (_playbackInfoTimer === null) beginPlaybackInfoRefresh(context, overlay);
+    };
+    _playbackInfoVisibilityListener = visibilityListener;
+    document.addEventListener('visibilitychange', visibilityListener);
+    beginPlaybackInfoRefresh(context, overlay);
 };
 
 // --- Auto-Skip v2 (data-driven, honours native Media Segment boundaries) ---
