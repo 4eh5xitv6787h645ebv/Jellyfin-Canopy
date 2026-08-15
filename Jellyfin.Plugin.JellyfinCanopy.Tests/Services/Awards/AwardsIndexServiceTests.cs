@@ -183,16 +183,98 @@ public sealed class AwardsIndexServiceTests : IDisposable
         var disable = service.NotifyConfigurationChangedAsync();
         await stale.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
         config.Current = new PluginConfiguration { AwardsEnabled = true };
-        await service.NotifyConfigurationChangedAsync();
+        var enable = service.NotifyConfigurationChangedAsync();
         var newRefresh = service.RefreshAsync(CancellationToken.None);
+        Assert.False(enable.IsCompleted);
+        Assert.False(newRefresh.IsCompleted);
+        Assert.False(fresh.Started.IsCompleted);
+
+        stale.Release(FreshRecord() with { AwardName = "Stale Award", Year = 2025 });
+        await disable;
+        await enable;
         await fresh.Started.WaitAsync(TimeSpan.FromSeconds(10));
         fresh.Release(FreshRecord());
 
         Assert.True(await newRefresh);
-        stale.Release(FreshRecord() with { AwardName = "Stale Award", Year = 2025 });
-        await disable;
         Assert.False(await oldRefresh);
         Assert.Equal(2, source.Calls);
+        Assert.Equal(
+            "Fresh Award",
+            Assert.Single(service.Lookup(
+                AwardsMediaKind.Movie,
+                new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins).Name);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ReplacementWaitsForRetiredSharedCheckpointCommit(
+        bool disableThenReenable,
+        bool staleDelete)
+    {
+        Directory.CreateDirectory(_root);
+        var checkpointPath = Path.Combine(
+            _root,
+            $"shared-checkpoint-{disableThenReenable}-{staleDelete}.json");
+        File.WriteAllText(checkpointPath, "initial");
+        var source = new SharedCheckpointCommitSource(checkpointPath, staleDelete);
+        var config = new FakePluginConfigProvider(
+            new PluginConfiguration { AwardsEnabled = true });
+        using var service = new AwardsIndexService(
+            source,
+            NullLogger<AwardsIndexService>.Instance,
+            Path.Combine(_root, $"shared-index-{disableThenReenable}-{staleDelete}.json"),
+            configProvider: config);
+        using var cancellation = new CancellationTokenSource();
+        var oldRefresh = service.RefreshAsync(
+            disableThenReenable ? CancellationToken.None : cancellation.Token);
+        await source.OldCommitEntered.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Task? disable = null;
+        Task? enable = null;
+        if (disableThenReenable)
+        {
+            config.Current = new PluginConfiguration { AwardsEnabled = false };
+            disable = service.NotifyConfigurationChangedAsync();
+            await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+            config.Current = new PluginConfiguration { AwardsEnabled = true };
+            enable = service.NotifyConfigurationChangedAsync();
+        }
+        else
+        {
+            cancellation.Cancel();
+            await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        var freshRefresh = service.RefreshAsync(CancellationToken.None);
+        Assert.False(freshRefresh.IsCompleted);
+        Assert.False(source.FreshStarted.IsCompleted);
+        Assert.Equal(1, source.Calls);
+        Assert.Equal(1, source.MaximumConcurrentCalls);
+        if (enable is not null)
+        {
+            Assert.False(enable.IsCompleted);
+        }
+
+        source.ReleaseOldCommit();
+        if (disable is not null)
+        {
+            await disable;
+            await enable!;
+            Assert.False(await oldRefresh);
+        }
+        else
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => oldRefresh);
+        }
+
+        await source.FreshStarted.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(await freshRefresh);
+        Assert.Equal(2, source.Calls);
+        Assert.Equal(1, source.MaximumConcurrentCalls);
+        Assert.Equal("fresh-generation", File.ReadAllText(checkpointPath));
         Assert.Equal(
             "Fresh Award",
             Assert.Single(service.Lookup(
@@ -469,6 +551,87 @@ public sealed class AwardsIndexServiceTests : IDisposable
         {
             Calls++;
             return _sources.Dequeue().FetchCompleteAsync(cancellationToken);
+        }
+    }
+
+    private sealed class SharedCheckpointCommitSource(
+        string checkpointPath,
+        bool staleDelete) : IAwardsSourceClient
+    {
+        private readonly TaskCompletionSource _oldCommitEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _cancellationObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseOldCommit =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _freshStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _calls;
+        private int _concurrentCalls;
+        private int _maximumConcurrentCalls;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public int MaximumConcurrentCalls => Volatile.Read(ref _maximumConcurrentCalls);
+
+        public Task OldCommitEntered => _oldCommitEntered.Task;
+
+        public Task CancellationObserved => _cancellationObserved.Task;
+
+        public Task FreshStarted => _freshStarted.Task;
+
+        public async Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+        {
+            var call = Interlocked.Increment(ref _calls);
+            var concurrent = Interlocked.Increment(ref _concurrentCalls);
+            UpdateMaximum(ref _maximumConcurrentCalls, concurrent);
+            try
+            {
+                if (call == 1)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    using var registration = cancellationToken.Register(
+                        () => _cancellationObserved.TrySetResult());
+                    _oldCommitEntered.TrySetResult();
+                    await _releaseOldCommit.Task.ConfigureAwait(false);
+                    if (staleDelete)
+                    {
+                        File.Delete(checkpointPath);
+                    }
+                    else
+                    {
+                        File.WriteAllText(checkpointPath, "stale-generation");
+                    }
+
+                    return new AwardsSourceSnapshot(
+                        [FreshRecord() with { AwardName = "Stale Award" }]);
+                }
+
+                _freshStarted.TrySetResult();
+                File.WriteAllText(checkpointPath, "fresh-generation");
+                return new AwardsSourceSnapshot([FreshRecord()]);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _concurrentCalls);
+            }
+        }
+
+        public void ReleaseOldCommit() => _releaseOldCommit.TrySetResult();
+
+        private static void UpdateMaximum(ref int target, int value)
+        {
+            var observed = Volatile.Read(ref target);
+            while (observed < value)
+            {
+                var replaced = Interlocked.CompareExchange(ref target, value, observed);
+                if (replaced == observed)
+                {
+                    return;
+                }
+
+                observed = replaced;
+            }
         }
     }
 

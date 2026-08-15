@@ -80,35 +80,58 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
         public async Task<bool> RefreshAsync(CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            RefreshFlight flight;
-            lock (_refreshGate)
+            while (true)
             {
-                if (!_acceptingRefreshes || !IsAwardsEnabled())
+                cancellationToken.ThrowIfCancellationRequested();
+                RefreshFlight? flight = null;
+                Task? retiredJoin = null;
+                lock (_refreshGate)
                 {
-                    return false;
+                    if (!_acceptingRefreshes || !IsAwardsEnabled())
+                    {
+                        return false;
+                    }
+
+                    if (_refreshFlight is not null && !_refreshFlight.Task.IsCompleted)
+                    {
+                        flight = _refreshFlight;
+                        flight.ActiveWaiters++;
+                    }
+                    else if (_retiredRefreshJoins.Count > 0)
+                    {
+                        // A retired provider generation can still be inside the
+                        // synchronous checkpoint commit that followed its last
+                        // cancellation check. Never overlap a replacement against
+                        // that shared path. Capture only under the owner lock and
+                        // perform the mandatory join outside it.
+                        retiredJoin = Task.WhenAll(_retiredRefreshJoins);
+                    }
+                    else
+                    {
+                        var ownerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                            _lifetimeCancellation.Token);
+                        var created = new RefreshFlight(ownerCancellation);
+                        created.Task = RefreshCoreAsync(created);
+                        created.ActiveWaiters++;
+                        _refreshFlight = created;
+                        flight = created;
+                    }
                 }
 
-                if (_refreshFlight is null || _refreshFlight.Task.IsCompleted)
+                if (retiredJoin is not null)
                 {
-                    var ownerCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                        _lifetimeCancellation.Token);
-                    var created = new RefreshFlight(ownerCancellation);
-                    created.Task = RefreshCoreAsync(created);
-                    _refreshFlight = created;
+                    await retiredJoin.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
 
-                flight = _refreshFlight;
-                flight.ActiveWaiters++;
-            }
-
-            try
-            {
-                return await flight.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                await ReleaseWaiterAsync(flight).ConfigureAwait(false);
+                try
+                {
+                    return await flight!.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await ReleaseWaiterAsync(flight!).ConfigureAwait(false);
+                }
             }
         }
 
@@ -117,7 +140,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         public Task StopAsync(CancellationToken cancellationToken) => StopCoreAsync();
 
         internal Task NotifyConfigurationChangedAsync()
-            => IsAwardsEnabled() ? Task.CompletedTask : AbortActiveRefreshAsync();
+            => IsAwardsEnabled() ? AwaitRetiredRefreshesAsync() : AbortActiveRefreshAsync();
 
         public void Dispose()
         {
@@ -304,6 +327,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             }
 
             await Task.WhenAll(joins).ConfigureAwait(false);
+        }
+
+        private async Task AwaitRetiredRefreshesAsync()
+        {
+            while (true)
+            {
+                Task[] joins;
+                lock (_refreshGate)
+                {
+                    joins = _retiredRefreshJoins.ToArray();
+                }
+
+                if (joins.Length == 0)
+                {
+                    return;
+                }
+
+                await Task.WhenAll(joins).ConfigureAwait(false);
+            }
         }
 
         private async Task StopCoreAsync()
