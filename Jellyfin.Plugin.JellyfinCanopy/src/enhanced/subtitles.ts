@@ -8,7 +8,13 @@ import { onBodyMutation } from '../core/dom-observer';
 import { cssColorOr } from '../core/css-safe';
 import { createStableMethodFacade } from '../core/feature-loader';
 import type { BodySubscriberHandle, IdentityContext } from '../types/jc';
-import { fontFamilyPresets, fontSizePresets, publishSubtitlePresets } from './subtitle-presets';
+import { publishSubtitlePresets } from './subtitle-presets';
+import {
+    clampSubtitleHorizontal,
+    clampSubtitleVertical,
+    isFullyTransparentColor,
+    resolveSubtitleStyle,
+} from './subtitle-style-contract';
 
 interface SubtitleStyle {
     textColor?: string;
@@ -28,10 +34,12 @@ type StyleSnapshot = ReadonlyMap<string, StylePropertySnapshot>;
 const subtitleStyleProperties = [
     'background-color', 'color', 'font-size', 'font-family', 'text-shadow',
     'border-radius', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'font-weight', 'font-style', 'font-variant',
+    'font-weight', 'font-style', 'font-variant', 'position', 'left', 'right', 'top',
+    'bottom', 'transform', 'width', 'max-width', 'box-sizing', 'margin-top',
+    'margin-right', 'margin-bottom', 'margin-left',
 ] as const;
 const containerStyleProperties = [
-    'position', 'left', 'top', 'bottom', 'transform', 'width', 'max-width', 'text-align',
+    'position', 'left', 'right', 'top', 'bottom', 'transform', 'width', 'max-width', 'text-align',
 ] as const;
 const subtitleStyleSnapshots = new WeakMap<HTMLElement, StyleSnapshot>();
 const containerStyleSnapshots = new WeakMap<HTMLElement, StyleSnapshot>();
@@ -72,18 +80,26 @@ function restoreStyles(
     owned.delete(element);
 }
 
-function clampPercentage(value: unknown, fallback: number): number {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : fallback;
+function hasVisibleBackground(value: string | undefined): boolean {
+    return Boolean(value) && !isFullyTransparentColor(value);
 }
 
-function hasVisibleBackground(value: string | undefined): boolean {
-    const normalized = value?.replace(/\s+/g, '').toLowerCase();
-    return Boolean(normalized
-        && normalized !== 'transparent'
-        && normalized !== '#00000000'
-        && normalized !== 'rgba(0,0,0,0)'
-        && normalized !== 'hsla(0,0%,0%,0)');
+function applyCueGeometry(element: HTMLElement, xPct: number): void {
+    const edgeDistance = Math.min(xPct, 100 - xPct);
+    const maxCueWidth = Math.min(70, edgeDistance * 2);
+    element.style.setProperty('position', 'relative', 'important');
+    element.style.setProperty('left', `${xPct - 50}%`, 'important');
+    element.style.setProperty('right', 'auto', 'important');
+    element.style.setProperty('top', 'auto', 'important');
+    element.style.setProperty('bottom', 'auto', 'important');
+    element.style.setProperty('transform', 'none', 'important');
+    element.style.setProperty('width', 'auto', 'important');
+    element.style.setProperty('max-width', `${maxCueWidth}%`, 'important');
+    element.style.setProperty('box-sizing', 'border-box', 'important');
+    element.style.setProperty('margin-top', '0', 'important');
+    element.style.setProperty('margin-right', '0', 'important');
+    element.style.setProperty('margin-bottom', '0', 'important');
+    element.style.setProperty('margin-left', '0', 'important');
 }
 
 function restoreOwnedTree(node: Node): void {
@@ -123,16 +139,26 @@ function applySubtitlePosition(context: IdentityContext | null = activeSubtitleC
     containers.forEach(container => {
         if (disabled) {
             restoreStyles(container, containerStyleSnapshots, positionedSubtitleContainers);
+            container.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach((element) => {
+                restoreStyles(element, subtitleStyleSnapshots, styledSubtitleElements);
+            });
         } else {
-            const xPct = clampPercentage(JC.currentSettings?.subtitleHorizontalPosition, 50);
-            const yPct = clampPercentage(JC.currentSettings?.subtitleVerticalPosition, 85);
+            const xPct = clampSubtitleHorizontal(JC.currentSettings?.subtitleHorizontalPosition);
+            const yPct = clampSubtitleVertical(JC.currentSettings?.subtitleVerticalPosition);
             rememberStyles(container, containerStyleProperties, containerStyleSnapshots, positionedSubtitleContainers);
             container.style.setProperty('position', 'absolute', 'important');
-            container.style.setProperty('left', `${xPct}%`, 'important');
+            container.style.setProperty('left', '0', 'important');
+            container.style.setProperty('right', 'auto', 'important');
             container.style.setProperty('top', `${yPct}%`, 'important');
             container.style.setProperty('bottom', 'auto', 'important');
-            container.style.setProperty('transform', 'translate(-50%, -100%)', 'important');
+            container.style.setProperty('transform', 'translateY(-100%)', 'important');
+            container.style.setProperty('width', '100%', 'important');
+            container.style.setProperty('max-width', 'none', 'important');
             container.style.setProperty('text-align', 'center', 'important');
+            container.querySelectorAll<HTMLElement>('.videoSubtitlesInner').forEach((element) => {
+                rememberStyles(element, subtitleStyleProperties, subtitleStyleSnapshots, styledSubtitleElements);
+                applyCueGeometry(element, xPct);
+            });
         }
     });
 }
@@ -170,6 +196,7 @@ function forceApplyInlineStyles(
         || JC.currentSettings?.disableCustomSubtitleStyles) return;
 
     rememberStyles(element, subtitleStyleProperties, subtitleStyleSnapshots, styledSubtitleElements);
+    applyCueGeometry(element, clampSubtitleHorizontal(JC.currentSettings?.subtitleHorizontalPosition));
 
     // Apply all custom styles directly to videoSubtitlesInner
     element.style.setProperty('background-color', currentSubtitleStyle.bgColor!, 'important');
@@ -343,24 +370,14 @@ function applySavedStylesWhenReady(): void {
         return;
     }
 
-    const textColor = (JC.currentSettings?.customSubtitleTextColor as string | undefined) || '#FFFFFFFF';
-    const bgColor = (JC.currentSettings?.customSubtitleBgColor as string | undefined) || '#00000000';
-    const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
-        ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
-        : 'none';
-
-    const fontSizePreset = fontSizePresets[(JC.currentSettings?.selectedFontSizePresetIndex as number | undefined) ?? 2];
-    const fontFamilyPreset = fontFamilyPresets[(JC.currentSettings?.selectedFontFamilyPresetIndex as number | undefined) ?? 0];
-
-    if (fontSizePreset && fontFamilyPreset) {
-        applySubtitleStyles(
-            textColor,
-            bgColor,
-            fontSizePreset.size,
-            fontFamilyPreset.family,
-            textShadow
-        );
-    }
+    const style = resolveSubtitleStyle(JC.currentSettings || {});
+    applySubtitleStyles(
+        style.textColor,
+        style.backgroundColor,
+        style.fontSizeVw,
+        style.fontFamily,
+        style.textShadow
+    );
 }
 
 function resetSubtitleIdentity(): void {

@@ -119,15 +119,24 @@ describe('subtitles ::cue insertRule injection', () => {
         disposeSubtitles = subtitles.installSubtitles();
         JC.applySubtitleStyles?.('#FFFFFFFF', '#000000CC', 2, 'Arial', 'none');
 
-        expect(container.style.getPropertyValue('left')).toBe('100%');
-        expect(container.style.getPropertyValue('top')).toBe('0%');
-        expect(container.style.getPropertyValue('transform')).toBe('translate(-50%, -100%)');
+        expect(container.style.getPropertyValue('left')).toBe('0px');
+        expect(container.style.getPropertyValue('right')).toBe('auto');
+        expect(container.style.getPropertyValue('top')).toBe('2%');
+        expect(container.style.getPropertyValue('width')).toBe('100%');
+        expect(container.style.getPropertyValue('max-width')).toBe('none');
+        expect(container.style.getPropertyValue('transform')).toBe('translateY(-100%)');
+        expect(inner.style.getPropertyValue('left')).toBe('40%');
+        expect(inner.style.getPropertyValue('max-width')).toBe('20%');
+        expect(inner.style.getPropertyValue('margin-bottom')).toBe('0px');
         expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em');
         expect(inner.style.getPropertyValue('border-radius')).toBe('0.15em');
 
-        JC.applySubtitleStyles?.('#FFFFFFFF', '#00000000', 2, 'Arial', 'none');
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#FF000000', 2, 'Arial', 'none');
         expect(inner.style.getPropertyValue('padding')).toBe('0px');
         expect(inner.style.getPropertyValue('border-radius')).toBe('');
+        JC.applySubtitleStyles?.('#FFFFFFFF', '#FF000001', 2, 'Arial', 'none');
+        expect(inner.style.getPropertyValue('padding')).toBe('0.08em 0.2em');
+        expect(inner.style.getPropertyValue('border-radius')).toBe('0.15em');
         const cueRule = (document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement)
             .sheet?.cssRules[0]?.cssText || '';
         expect(cueRule).not.toMatch(/(?:^|[;{])\s*(?:top|left|bottom|transform)\s*:/i);
@@ -142,12 +151,16 @@ describe('subtitles ::cue insertRule injection', () => {
         container.className = 'videoSubtitles';
         container.style.setProperty('position', 'fixed');
         container.style.setProperty('left', '10px');
+        container.style.setProperty('right', '20px');
+        container.style.setProperty('width', '60%');
         container.style.setProperty('transform', 'scale(1)');
         const inner = document.createElement('div');
         inner.className = 'videoSubtitlesInner';
         inner.style.setProperty('background-color', 'rgb(1, 2, 3)');
         inner.style.setProperty('padding', '1em');
         inner.style.setProperty('border-radius', '9px');
+        inner.style.setProperty('margin-bottom', '2.7em');
+        inner.style.setProperty('max-width', '70%');
         container.appendChild(inner);
         document.body.appendChild(container);
         const clientSheet = document.createElement('style');
@@ -165,10 +178,14 @@ describe('subtitles ::cue insertRule injection', () => {
 
         expect(container.style.getPropertyValue('position')).toBe('fixed');
         expect(container.style.getPropertyValue('left')).toBe('10px');
+        expect(container.style.getPropertyValue('right')).toBe('20px');
+        expect(container.style.getPropertyValue('width')).toBe('60%');
         expect(container.style.getPropertyValue('transform')).toBe('scale(1)');
         expect(inner.style.getPropertyValue('background-color')).toBe('rgb(1, 2, 3)');
         expect(inner.style.getPropertyValue('padding')).toBe('1em');
         expect(inner.style.getPropertyValue('border-radius')).toBe('9px');
+        expect(inner.style.getPropertyValue('margin-bottom')).toBe('2.7em');
+        expect(inner.style.getPropertyValue('max-width')).toBe('70%');
         expect(document.getElementById('jc-html-videoplayer-cuestyle')).toBeNull();
     });
 

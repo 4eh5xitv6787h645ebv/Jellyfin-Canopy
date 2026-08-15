@@ -287,6 +287,30 @@ describe('admin target pane isolation', () => {
         expect(host.querySelectorAll('.modified-indicator')).toHaveLength(1);
     });
 
+    it('renders the initial subtitle position preview from the validated target style', () => {
+        const editor = targetEditor();
+        Object.assign(editor.settings, {
+            customSubtitleTextColor: '#FFFF00FF',
+            customSubtitleBgColor: '#000000B2',
+            selectedFontSizePresetIndex: 5,
+            selectedFontFamilyPresetIndex: 3,
+            subtitleHorizontalPosition: 140,
+            subtitleVerticalPosition: -20,
+        });
+        const host = document.createElement('div');
+        host.innerHTML = buildPanelHtml(context(editor, document.createElement('div')));
+        const preview = host.querySelector<HTMLElement>('#subtitlePositionPreview')!;
+
+        expect(preview.style.color).toBe('rgb(255, 255, 0)');
+        expect(preview.style.backgroundColor).toContain('rgba(0, 0, 0');
+        expect(preview.style.fontSize).toBe('18px');
+        expect(preview.style.fontFamily).toContain('Courier New');
+        expect(preview.style.padding).toBe('0.08em 0.2em');
+        expect(preview.style.transform).toBe('translate(-50%,-100%)');
+        expect(preview.style.left).toBe('90%');
+        expect(preview.style.top).toBe('2%');
+    });
+
     it('persists target toggles without applying any actor DOM/runtime side effect', async () => {
         settingsDom();
         const editor = targetEditor();

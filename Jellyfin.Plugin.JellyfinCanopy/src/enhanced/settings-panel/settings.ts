@@ -9,6 +9,12 @@ import { JC } from '../../globals';
 import { escapeHtml, toast } from '../../core/ui-kit';
 import { canonicalizeAudioLanguagePreference } from '../../tags/audio-track-selection';
 import {
+    applySubtitlePreviewStyle,
+    clampSubtitleHorizontal,
+    clampSubtitleVertical,
+    resolveSubtitleStyle,
+} from '../subtitle-style-contract';
+import {
     RATING_TAG_ITEM_TYPES,
     RATING_TAG_SCOPE_SCHEMA_VERSION,
     RATING_TAG_SURFACES,
@@ -597,8 +603,18 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     const customTextAlpha = document.getElementById('customSubtitleTextAlpha') as HTMLInputElement | null;
     const customBgColorPicker = document.getElementById('customSubtitleBgColorPicker') as HTMLInputElement | null;
     const customBgAlpha = document.getElementById('customSubtitleBgAlpha') as HTMLInputElement | null;
+    const posGrid = document.getElementById('subtitlePositionGrid');
+    const posPreview = document.getElementById('subtitlePositionPreview');
+    const posResetBtn = document.getElementById('subtitlePositionReset');
+
+    const syncPositionPreview = () => {
+        if (!editor.isCurrent() || !posPreview?.isConnected) return;
+        applySubtitlePreviewStyle(posPreview, settings);
+    };
+    syncPositionPreview();
 
     const updateCustomSubtitleColors = () => {
+        if (!editor.isCurrent()) return;
         const textColor = customTextColorPicker!.value + parseInt(customTextAlpha!.value).toString(16).padStart(2, '0').toUpperCase();
         const bgColor = customBgColorPicker!.value + parseInt(customBgAlpha!.value).toString(16).padStart(2, '0').toUpperCase();
 
@@ -620,6 +636,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             preview.style.color = textColor;
             preview.style.backgroundColor = bgColor;
         }
+        syncPositionPreview();
 
         void persistSettings();
         if (appliesToActor) (JC as any).applySavedStylesWhenReady();
@@ -632,21 +649,12 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     if (customBgAlpha) customBgAlpha.addEventListener('input', updateCustomSubtitleColors);
 
     // --- Subtitle position drag grid ---
-    const posGrid = document.getElementById('subtitlePositionGrid');
-    const posPreview = document.getElementById('subtitlePositionPreview');
-    const posResetBtn = document.getElementById('subtitlePositionReset');
-
     if (posGrid) {
         const updatePosition = (xPct: number, yPct: number) => {
             if (!editor.isCurrent()) return;
-            xPct = Math.max(2, Math.min(98, xPct));
-            yPct = Math.max(2, Math.min(98, yPct));
-            if (posPreview) {
-                posPreview.style.left = `${xPct}%`;
-                posPreview.style.top = `${yPct}%`;
-            }
-            settings.subtitleHorizontalPosition = Math.round(xPct);
-            settings.subtitleVerticalPosition = Math.round(yPct);
+            settings.subtitleHorizontalPosition = Math.round(clampSubtitleHorizontal(xPct));
+            settings.subtitleVerticalPosition = Math.round(clampSubtitleVertical(yPct));
+            syncPositionPreview();
             if (appliesToActor && typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
         };
 
@@ -725,7 +733,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         posResetBtn.addEventListener('click', () => {
             settings.subtitleHorizontalPosition = 50;
             settings.subtitleVerticalPosition = 85;
-            if (posPreview) { posPreview.style.left = '50%'; posPreview.style.top = '85%'; }
+            syncPositionPreview();
             if (appliesToActor && typeof (JC as any).applySubtitlePosition === 'function') (JC as any).applySubtitlePosition();
             void persistSettings();
             resetAutoCloseTimer();
@@ -744,6 +752,12 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
     const settings = editor.settings as Record<string, any>;
     const appliesToActor = editor.appliesToActor;
     const persistSettings = () => persistEditorSettings(ctx, editor);
+    const subtitlePositionPreview = document.getElementById('subtitlePositionPreview');
+    const syncPositionPreview = () => {
+        if (!editor.isCurrent() || !subtitlePositionPreview?.isConnected) return;
+        applySubtitlePreviewStyle(subtitlePositionPreview, settings);
+    };
+    syncPositionPreview();
 
     const wireRandomType = (id: string, otherId: string, settingKey: string, label: string) => {
         document.getElementById(id)!.addEventListener('change', (e) => {
@@ -827,6 +841,7 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
         if (!container) return;
 
         container.addEventListener('click', (e) => {
+            if (!editor.isCurrent()) return;
             const presetBox = (e.target as HTMLElement).closest<HTMLElement>(`.${type}-preset`);
             if (!presetBox) return;
 
@@ -860,40 +875,40 @@ export function wireMiscSettingsControls(ctx: PanelContext): void {
                         preview.style.color = selectedPreset.textColor;
                         preview.style.backgroundColor = selectedPreset.bgColor;
                     }
+                    syncPositionPreview();
 
-                    const fontSizeIndex = settings.selectedFontSizePresetIndex ?? 2;
-                    const fontFamilyIndex = settings.selectedFontFamilyPresetIndex ?? 0;
-                    const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
-                    const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
-                    if (appliesToActor) (JC as any).applySubtitleStyles(selectedPreset.textColor, selectedPreset.bgColor, fontSize, fontFamily, selectedPreset.textShadow);
+                    const resolved = resolveSubtitleStyle(settings);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(
+                        resolved.textColor,
+                        resolved.backgroundColor,
+                        resolved.fontSizeVw,
+                        resolved.fontFamily,
+                        resolved.textShadow,
+                    );
                     successMessage = JC.t!('toast_subtitle_style', { style: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-size') {
                     settings.selectedFontSizePresetIndex = presetIndex;
-                    const fontFamilyIndex = settings.selectedFontFamilyPresetIndex ?? 0;
-                    const fontFamily = (JC as any).fontFamilyPresets[fontFamilyIndex].family;
-
-                    // Use saved custom colors
-                    const textColor = settings.customSubtitleTextColor || '#FFFFFFFF';
-                    const bgColor = settings.customSubtitleBgColor || '#00000000';
-                    const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
-                        ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
-                        : 'none';
-
-                    if (appliesToActor) (JC as any).applySubtitleStyles(textColor, bgColor, selectedPreset.size, fontFamily, textShadow);
+                    const resolved = resolveSubtitleStyle(settings);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(
+                        resolved.textColor,
+                        resolved.backgroundColor,
+                        resolved.fontSizeVw,
+                        resolved.fontFamily,
+                        resolved.textShadow,
+                    );
+                    syncPositionPreview();
                     successMessage = JC.t!('toast_subtitle_size', { size: escapeHtml(selectedPreset.name) });
                 } else if (type === 'font-family') {
                     settings.selectedFontFamilyPresetIndex = presetIndex;
-                    const fontSizeIndex = settings.selectedFontSizePresetIndex ?? 2;
-                    const fontSize = (JC as any).fontSizePresets[fontSizeIndex].size;
-
-                    // Use saved custom colors
-                    const textColor = settings.customSubtitleTextColor || '#FFFFFFFF';
-                    const bgColor = settings.customSubtitleBgColor || '#00000000';
-                    const textShadow = bgColor === 'transparent' || bgColor === '#00000000'
-                        ? '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000'
-                        : 'none';
-
-                    if (appliesToActor) (JC as any).applySubtitleStyles(textColor, bgColor, fontSize, selectedPreset.family, textShadow);
+                    const resolved = resolveSubtitleStyle(settings);
+                    if (appliesToActor) (JC as any).applySubtitleStyles(
+                        resolved.textColor,
+                        resolved.backgroundColor,
+                        resolved.fontSizeVw,
+                        resolved.fontFamily,
+                        resolved.textShadow,
+                    );
+                    syncPositionPreview();
                     successMessage = JC.t!('toast_subtitle_font', { font: escapeHtml(selectedPreset.name) });
                 }
 
