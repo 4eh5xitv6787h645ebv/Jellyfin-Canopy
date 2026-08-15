@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45734,
+        "coveredLines": 45740,
         "totalLines": 55635
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 45730,
-        "maximumCoveredLines": 45734
+        "maximumCoveredLines": 45740
       },
       "tolerance": {
-        "missingCoveredLines": 4,
-        "rationale": "Issue #715 adds bounded, read-only qBittorrent telemetry, caller-scoped authorization, secret-safe administration, deterministic path ownership, and the associated transport, lifecycle, security, and architecture tests on top of the issue #711 and #716 mainline. The terminal review fixes retain the SID from a legacy HTTP 200 login before any bounded body read can fail so every owned session is logged out with the same cookie, and add exact malformed, oversized, and throwing-body regressions. Three clean canonical local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on this exact 55,635-line source and 4,373-test scope passed every test and measured 45,734/55,635 (82.203649%), 45,733/55,635 (82.201851%), and 45,730/55,635 (82.196459%). The reviewed observed high-water is therefore 45,734/55,635 and the exact observed floor is 45,730/55,635; the four-line instrumentation spread is 0.007190 percentage points, within the 0.15-point policy maximum. A pre-test invocation with an unsupported Node toolchain and two runs that passed only 4,372/4,373 tests were excluded, as was the separate clean coverage-enabled TRX diagnostic because it was not one of the canonical envelope runs. The prior issue #715 observations remain evidence for the earlier 55,622-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 10,
+        "rationale": "Issue #715 adds bounded, read-only qBittorrent telemetry, caller-scoped authorization, secret-safe administration, deterministic path ownership, and the associated transport, lifecycle, security, and architecture tests on top of the issue #711 and #716 mainline. The terminal review fixes retain the SID from a legacy HTTP 200 login before any bounded body read can fail so every owned session is logged out with the same cookie, and add exact malformed, oversized, and throwing-body regressions. Three clean canonical local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on this exact 55,635-line source and 4,373-test scope passed every test and measured 45,734/55,635 (82.203649%), 45,733/55,635 (82.201851%), and 45,730/55,635 (82.196459%). GitHub Actions run 31898946053, Unit job 95046467875, then passed the same 4,373/4,373 tests at exact head a6faa6faa35b140049bd276468d4114b67db2fa3 and measured 45,740/55,635 (82.214433%); its sole failure was the expected stale-baseline rejection above 45,734. The reviewed observed high-water is therefore 45,740/55,635 and the exact observed floor remains 45,730/55,635; the ten-line instrumentation spread is 0.017974 percentage points, within the 0.15-point policy maximum. A pre-test invocation with an unsupported Node toolchain and two runs that passed only 4,372/4,373 tests were excluded, as was the separate clean coverage-enabled TRX diagnostic because it was not one of the canonical envelope runs. The prior issue #715 observations remain evidence for the earlier 55,622-line scope and are not mixed into this changed-scope envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
