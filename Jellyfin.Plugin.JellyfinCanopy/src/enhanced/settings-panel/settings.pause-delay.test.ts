@@ -63,6 +63,7 @@ describe('pause-screen delay persistence (ENH-1)', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         JC.currentSettings = {};
+        JC._pauseScreenInstance = undefined;
     });
 
     afterEach(() => {
@@ -70,6 +71,7 @@ describe('pause-screen delay persistence (ENH-1)', () => {
         JC.saveUserSettings = realSaveUserSettings;
         JC.showEnhancedPanel = realShowEnhancedPanel;
         JC.applyHideFavoritesTab = realApplyHideFavoritesTab;
+        JC._pauseScreenInstance = undefined;
     });
 
     it('POSTs settings.json with the new delay when the delay input changes', () => {
@@ -87,6 +89,103 @@ describe('pause-screen delay persistence (ENH-1)', () => {
             'settings.json',
             expect.objectContaining({ pauseScreenDelaySeconds: 12 }),
         );
+    });
+
+    it('applies the delay to the active viewer instance and contains host key shortcuts', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = {
+            destroy: vi.fn(),
+            setDelaySeconds: applyDelay,
+        };
+        JC.saveUserSettings = vi.fn(() => Promise.resolve({} as UserSettingsSaveResult));
+        const documentKeydown = vi.fn();
+        document.addEventListener('keydown', documentKeydown);
+
+        wireSettingsListeners(makeCtx());
+        delayInput.dispatchEvent(new KeyboardEvent('keydown', { key: '7', bubbles: true }));
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(JC.saveUserSettings).toHaveBeenCalledTimes(1));
+        expect(documentKeydown).not.toHaveBeenCalled();
+        expect(applyDelay).toHaveBeenCalledTimes(1);
+        expect(applyDelay).toHaveBeenCalledWith(12);
+        document.removeEventListener('keydown', documentKeydown);
+    });
+
+    it('restores the acknowledged runtime delay after the latest save fails', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = {
+            destroy: vi.fn(),
+            setDelaySeconds: applyDelay,
+        };
+        JC.currentSettings = { pauseScreenDelaySeconds: 5 };
+        JC.saveUserSettings = vi.fn(() => Promise.resolve().then(() => {
+            JC.currentSettings!.pauseScreenDelaySeconds = 5;
+            throw new Error('rejected');
+        }));
+
+        wireSettingsListeners(makeCtx());
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(applyDelay).toHaveBeenCalledTimes(2));
+        expect(applyDelay.mock.calls).toEqual([[12], [5]]);
+    });
+
+    it('does not let a superseded failed save roll back the latest runtime intent', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = {
+            destroy: vi.fn(),
+            setDelaySeconds: applyDelay,
+        };
+        let rejectFirst!: (reason?: unknown) => void;
+        let resolveSecond!: (value: UserSettingsSaveResult) => void;
+        JC.saveUserSettings = vi.fn()
+            .mockReturnValueOnce(new Promise<UserSettingsSaveResult>((_resolve, reject) => { rejectFirst = reject; }))
+            .mockReturnValueOnce(new Promise<UserSettingsSaveResult>((resolve) => { resolveSecond = resolve; }));
+
+        wireSettingsListeners(makeCtx());
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+        delayInput.value = '18';
+        delayInput.dispatchEvent(new Event('change'));
+        resolveSecond({} as UserSettingsSaveResult);
+        rejectFirst(new Error('superseded'));
+
+        await vi.waitFor(() => expect(JC.saveUserSettings).toHaveBeenCalledTimes(2));
+        await Promise.resolve();
+        expect(applyDelay.mock.calls).toEqual([[12], [18]]);
+    });
+
+    it('never applies target-user delay edits to the active viewer instance', async () => {
+        const delayInput = buildSettingsDom();
+        const applyDelay = vi.fn();
+        JC._pauseScreenInstance = {
+            destroy: vi.fn(),
+            setDelaySeconds: applyDelay,
+        };
+        const actor = JC.identity.capture()!;
+        const saveTargetSettings = vi.fn(() => Promise.resolve({} as UserSettingsSaveResult));
+        const targetEditor = {
+            mode: 'admin-target', actor, targetUserId: 'target-user', targetDisplayName: 'Target',
+            appliesToActor: false,
+            settings: { pauseScreenDelaySeconds: 5 },
+            shortcuts: {}, activeShortcuts: {},
+            isCurrent: () => true,
+            saveSettings: saveTargetSettings,
+            saveShortcuts: vi.fn(() => Promise.resolve({} as UserSettingsSaveResult)),
+        } as PanelEditorContext;
+
+        wireSettingsListeners(makeCtx(targetEditor));
+        delayInput.value = '12';
+        delayInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(saveTargetSettings).toHaveBeenCalledTimes(1));
+        expect(applyDelay).not.toHaveBeenCalled();
     });
 
     it('coalesces failed-write reconciliation and rebuilds the open panel from rollback state', async () => {

@@ -76,6 +76,21 @@ describe('pause-screen singleton + teardown', () => {
         expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function), { capture: true });
     });
 
+    it('applies a live delay to the retained instance and clamps its public boundary', () => {
+        initPauseScreen();
+        const instance = jc()._pauseScreenInstance as {
+            pauseScreenDelayMs: number;
+            setDelaySeconds: (seconds: number) => void;
+        };
+
+        instance.setDelaySeconds(12.9);
+        expect(instance.pauseScreenDelayMs).toBe(12_000);
+        instance.setDelaySeconds(0);
+        expect(instance.pauseScreenDelayMs).toBe(1_000);
+        instance.setDelaySeconds(90);
+        expect(instance.pauseScreenDelayMs).toBe(60_000);
+    });
+
     it('releases a held stale overlay when prior teardown throws during re-init', () => {
         initPauseScreen();
         const stale = jc()._pauseScreenInstance as {

@@ -569,6 +569,19 @@ function initializePauseScreen(): void {
         this.schedulePauseOverlayDelay();
       }
 
+      /**
+       * Applies a saved settings-panel delay without rebuilding the feature.
+       * The current pause keeps its original idle origin, so shortening the
+       * delay can show the overlay promptly while lengthening it pushes the
+       * existing deadline out.
+       */
+      setDelaySeconds(seconds: number) {
+        if (this.disposed || !Number.isFinite(seconds)) return;
+        const normalized = Math.max(1, Math.min(60, Math.trunc(seconds)));
+        this.pauseScreenDelayMs = normalized * 1000;
+        this.schedulePauseOverlayDelay();
+      }
+
       schedulePauseOverlayDelay() {
         if (this.pauseScreenTimer) {
           clearTimeout(this.pauseScreenTimer);
@@ -602,7 +615,11 @@ function initializePauseScreen(): void {
           this.pauseScreenTimer = window.setTimeout(tryShowWhenIdle, remainingDelay);
         };
 
-        this.pauseScreenTimer = window.setTimeout(tryShowWhenIdle, this.pauseScreenDelayMs);
+        const idleFor = Math.max(0, Date.now() - this.lastUserInteractionAt);
+        this.pauseScreenTimer = window.setTimeout(
+          tryShowWhenIdle,
+          Math.max(0, this.pauseScreenDelayMs - idleFor)
+        );
       }
 
       setupInteractionListeners() {

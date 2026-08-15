@@ -846,7 +846,11 @@ export interface JEGlobal extends JellyfinCanopyPublicApi {
      * down via destroy() before constructing a new one — instead of stacking a
      * duplicate overlay + capturing keydown listener each time.
      */
-    _pauseScreenInstance?: { destroy(): void };
+    _pauseScreenInstance?: {
+        destroy(): void;
+        /** Apply a validated per-user delay to the active playback lifecycle. */
+        setDelaySeconds(seconds: number): void;
+    };
     /**
      * PERF(R7): in-flight tag-cache GET started by js/plugin.js as soon as
      * public config lands (boot Stage 1), so the tag pipeline's init awaits an

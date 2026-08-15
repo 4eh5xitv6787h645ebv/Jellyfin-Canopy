@@ -128,6 +128,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     };
     let pendingAudioGeneration: AudioGeneration | null = null;
     let ratingScopeIntent = 0;
+    let pauseDelayIntent = 0;
     let acknowledgedRatingScopeGeneration = 0;
     let acknowledgedRatingScope: unknown = settings.ratingTagScopeOverrides;
     type RatingScopeGeneration = {
@@ -560,11 +561,28 @@ export function wireSettingsListeners(ctx: PanelContext): void {
 
     const pauseScreenDelayInput = document.getElementById('pauseScreenDelayInput') as HTMLInputElement | null;
     if (pauseScreenDelayInput) {
+        // Jellyfin owns document-level digit shortcuts too. Returning early in
+        // Canopy's dispatcher is insufficient: contain editing keys at the
+        // control so the host player cannot interpret them as percentage seeks.
+        pauseScreenDelayInput.addEventListener('keydown', (event) => event.stopPropagation());
         pauseScreenDelayInput.addEventListener('change', () => {
             const val = Math.max(1, Math.min(60, parseInt(pauseScreenDelayInput.value, 10) || 5));
             pauseScreenDelayInput.value = String(val);
             settings.pauseScreenDelaySeconds = val;
-            void persistSettings();
+            const intent = ++pauseDelayIntent;
+            const applyToActor = (seconds: number) => {
+                if (appliesToActor && editor.isCurrent() && JC.identity.isCurrent(editor.actor)) {
+                    JC._pauseScreenInstance?.setDelaySeconds(seconds);
+                }
+            };
+            applyToActor(val);
+            void persistSettings().then((saved) => {
+                if (saved || intent !== pauseDelayIntent || !editor.isCurrent()) return;
+                const acknowledged = appliesToActor && JC.identity.isCurrent(editor.actor)
+                    ? JC.currentSettings?.pauseScreenDelaySeconds
+                    : settings.pauseScreenDelaySeconds;
+                applyToActor(Number(acknowledged ?? 5));
+            });
         });
     }
     addSettingToggleListener('languageTagsToggle', 'languageTagsEnabled', 'feature_language_tags', true);
