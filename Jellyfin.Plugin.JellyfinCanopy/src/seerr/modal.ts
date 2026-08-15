@@ -54,7 +54,7 @@ const modal = {} as SeerrModalApi;
 type ManagedModal = SeerrModalHandle & { destroy: () => void };
 type IdentityCleanupElement = HTMLElement & {
     _jcIdentityCleanups?: Set<() => void>;
-    _jcModalActive?: boolean;
+    _jcModalIsCurrent?: () => boolean;
 };
 type UnknownRecord = Record<string, unknown>;
 
@@ -1752,13 +1752,13 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     }) | null = null;
     const cleanups = new Set<() => void>();
     modalElement._jcIdentityCleanups = cleanups;
-    // Connected is not synonymous with live: animated close deliberately
-    // retains the element for 300 ms after its controls have been retired.
-    modalElement._jcModalActive = true;
     const isCurrent = () => !!identity
         && JC.identity.isCurrent(identity)
         && !isClosing
         && !historyBackRequested;
+    // Connected is not synonymous with live: owned close becomes inert before
+    // its deferred Back, and animated removal retains the element for 300 ms.
+    modalElement._jcModalIsCurrent = isCurrent;
 
     const show = () => {
         if (installLeases <= 0 || JC.seerrModal !== modal) {
@@ -1839,7 +1839,6 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
     const closeInternal = (immediate: boolean, restoreFocus = true) => {
         if (isClosing) return;
         isClosing = true;
-        modalElement._jcModalActive = false;
         const owner = getHistoryOwner();
         if (historyToken !== null) {
             owner.records.delete(historyToken);
@@ -2084,19 +2083,21 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
 modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVariant) {
     const managedModalElement = modalElement as IdentityCleanupElement;
     const identity = JC.identity.ownerOf(modalElement) || JC.identity.capture();
-    let active = managedModalElement._jcModalActive !== false;
+    let active = true;
     let interval: ReturnType<typeof setInterval> | null = null;
     let applyVariantDefault: (() => void) | null = null;
-    const isCurrent = () => !!identity
+    const hasCurrentOwner = () => !!identity
         && active
-        && managedModalElement._jcModalActive !== false
         && JC.identity.isCurrent(identity)
         && document.body.contains(modalElement);
+    const isCurrent = () => hasCurrentOwner()
+        && (managedModalElement._jcModalIsCurrent?.() ?? true);
     let variant = initialVariant;
     const handle: SeerrAdvancedOptionsHandle = {
         setVariant(nextVariant) {
+            if (!isCurrent()) return;
             variant = nextVariant;
-            if (isCurrent()) applyVariantDefault?.();
+            applyVariantDefault?.();
         },
     };
     const deactivate = () => {
@@ -2123,8 +2124,20 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVa
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds
     interval = setInterval(() => {
+        attempts++;
+        if (attempts > maxAttempts) {
+            if (interval !== null) {
+                clearInterval(interval);
+                interval = null;
+            }
+            console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
+            return;
+        }
         if (!isCurrent()) {
-            deactivate();
+            // An owned Back can fail and restore this modal. Pause during that
+            // recoverable close request; terminal close runs deactivate from
+            // the modal cleanup set, while identity/detachment cannot recover.
+            if (!hasCurrentOwner()) deactivate();
             return;
         }
         const serverSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-server`);
@@ -2212,15 +2225,6 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVa
                 () => serverSelect.removeEventListener('change', updateServerDependentOptions)
             );
 
-        } else {
-            attempts++;
-            if (attempts > maxAttempts) {
-                if (interval !== null) {
-                    clearInterval(interval);
-                    interval = null;
-                }
-                console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
-            }
         }
     }, 100);
     return handle;

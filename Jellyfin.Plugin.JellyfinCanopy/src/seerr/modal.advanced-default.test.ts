@@ -214,6 +214,63 @@ describe('Seerr advanced request server defaults', () => {
         expect(retainedServer.options).toHaveLength(0);
     });
 
+    it('makes a retained handle inert at close start and restores it after a rejected Back', async () => {
+        const closing = openAdvancedOptions([
+            {
+                id: 1,
+                name: 'Standard',
+                isDefault: true,
+                is4k: false,
+                activeProfileId: 11,
+                activeDirectory: '/standard',
+                qualityProfiles: [{ id: 11, name: 'Standard profile' }],
+                rootFolders: [{ path: '/standard' }],
+            },
+            {
+                id: 2,
+                name: '4K',
+                isDefault: true,
+                is4k: true,
+                activeProfileId: 21,
+                activeDirectory: '/four-k',
+                qualityProfiles: [{ id: 21, name: '4K profile' }],
+                rootFolders: [{ path: '/four-k' }],
+            },
+        ]);
+        await vi.advanceTimersByTimeAsync(100);
+
+        const server = closing.modal.modalElement.querySelector<HTMLSelectElement>('#movie-server')!;
+        const quality = closing.modal.modalElement.querySelector<HTMLSelectElement>('#movie-quality')!;
+        const folder = closing.modal.modalElement.querySelector<HTMLSelectElement>('#movie-folder')!;
+        const modalState = history.state as Record<string, unknown>;
+        const marker = modalState[HISTORY_STATE_KEY] as { hostState: unknown };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const back = vi.spyOn(history, 'back').mockImplementation(() => {
+            throw new DOMException('History traversal denied', 'SecurityError');
+        });
+
+        closing.modal.close();
+        closing.handle.setVariant('4k');
+
+        expect(server.value).toBe('1');
+        expect(quality.value).toBe('11');
+        expect(folder.value).toBe('/standard');
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(back).toHaveBeenCalledTimes(1);
+
+        closing.handle.setVariant('4k');
+        expect(server.value).toBe('2');
+        expect(quality.value).toBe('21');
+        expect(folder.value).toBe('/four-k');
+
+        back.mockRestore();
+        warn.mockRestore();
+        History.prototype.replaceState.call(history, marker.hostState, '', location.href);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: marker.hostState }));
+        await vi.advanceTimersByTimeAsync(300);
+    });
+
     it('makes a retained handle inert during same-identity navigation replacement', async () => {
         const stale = openAdvancedOptions([
             {
