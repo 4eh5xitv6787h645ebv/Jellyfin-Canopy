@@ -13,16 +13,19 @@ export interface LanguageTagFilterPolicy {
     failClosed?: true;
 }
 
-/** Missing means compatibility mode; malformed state is an active empty policy. */
-export function normalizeLanguageTagFilter(value: unknown): LanguageTagFilterPolicy | null {
-    if (value === null || value === undefined) return null;
-    const failed = (): LanguageTagFilterPolicy => ({
+function failedLanguageTagFilter(): LanguageTagFilterPolicy {
+    return {
         schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION,
         languages: [],
         includeOriginal: false,
         failClosed: true,
-    });
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return failed();
+    };
+}
+
+/** Missing means compatibility mode; malformed state is an active empty policy. */
+export function normalizeLanguageTagFilter(value: unknown): LanguageTagFilterPolicy | null {
+    if (value === null || value === undefined) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return failedLanguageTagFilter();
     const record = value as Record<string, unknown>;
     const schemaVersion = record.schemaVersion ?? record.SchemaVersion;
     const includeOriginal = record.includeOriginal ?? record.IncludeOriginal;
@@ -30,11 +33,13 @@ export function normalizeLanguageTagFilter(value: unknown): LanguageTagFilterPol
     if (schemaVersion !== LANGUAGE_TAG_FILTER_SCHEMA_VERSION
         || typeof includeOriginal !== 'boolean'
         || !Array.isArray(rawLanguages)
-        || rawLanguages.length > MAX_LANGUAGE_TAG_FILTER_ENTRIES) return failed();
+        || rawLanguages.length > MAX_LANGUAGE_TAG_FILTER_ENTRIES) return failedLanguageTagFilter();
     const languages: string[] = [];
     for (const raw of rawLanguages) {
         const resolved = resolveMediaLanguage(raw);
-        if (resolved.status !== 'valid' || resolved.canonicalTag !== raw || languages.includes(raw)) return failed();
+        if (resolved.status !== 'valid' || resolved.canonicalTag !== raw || languages.includes(raw)) {
+            return failedLanguageTagFilter();
+        }
         languages.push(raw);
     }
     return { schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION, languages, includeOriginal };
@@ -44,7 +49,14 @@ export function effectiveLanguageTagFilter(
     userValue: unknown,
     adminValue: unknown,
 ): LanguageTagFilterPolicy | null {
-    return normalizeLanguageTagFilter(userValue === null || userValue === undefined ? adminValue : userValue);
+    if (userValue !== null && userValue !== undefined) return normalizeLanguageTagFilter(userValue);
+    // Missing supports older servers that predate the setting. An explicit
+    // null administrator payload is not a valid v1 policy and fails closed.
+    return adminValue === undefined
+        ? null
+        : adminValue === null
+            ? failedLanguageTagFilter()
+            : normalizeLanguageTagFilter(adminValue);
 }
 
 /** Apply selection after canonicalization, preserving policy order and explicit regions. */

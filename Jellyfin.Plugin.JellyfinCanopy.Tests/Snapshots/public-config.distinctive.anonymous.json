@@ -50,7 +50,6 @@
   "DisableAllShortcuts": true,
   "DisableCustomSubtitleStyles": true,
   "DisableTagsOnSearchPage": true,
-  "DoubleTapSeekEnabled": true,
   "DiscoveryEnabled": false,
   "DiscoveryGenreRows": false,
   "DiscoveryLibraryTab": false,
@@ -59,6 +58,7 @@
   "DiscoveryRowTrending": false,
   "DiscoveryRowUpcoming": false,
   "DiscoveryRowWatchlist": true,
+  "DoubleTapSeekEnabled": true,
   "DownloadsAllowActiveForRegularUsers": false,
   "DownloadsAllowHistoryForRegularUsers": false,
   "DownloadsAllowProcessingForRegularUsers": false,
@@ -308,8 +308,13 @@
   "ShowUserReviews": true,
   "ShowVideoCodecTag": false,
   "ShowWatchProgress": true,
+<<<<<<< ours
   "SourceTagOrder": 1249,
   "SpecialFormatTagOrder": 1250,
+=======
+  "SourceTagOrder": 1243,
+  "SpecialFormatTagOrder": 1244,
+>>>>>>> theirs
   "SplashScreenImageUrl": "cfg-SplashScreenImageUrl",
   "SpoilerAdvancedMode": true,
   "SpoilerBlurEnabled": true,
@@ -325,6 +330,7 @@
   "SpoilerStripTags": false,
   "SyncSeerrWatchlist": true,
   "TagCacheServerMode": false,
+<<<<<<< ours
   "TagsCacheTtlDays": 1283,
   "TagsHideOnHover": true,
   "ThemeSelectorEnabled": true,
@@ -332,4 +338,13 @@
   "ToastDuration": 1286,
   "UseIcons": false,
   "VideoCodecTagOrder": 1289
+=======
+  "TagsCacheTtlDays": 1277,
+  "TagsHideOnHover": true,
+  "ThemeSelectorEnabled": true,
+  "TmdbEnabled": true,
+  "ToastDuration": 1280,
+  "UseIcons": false,
+  "VideoCodecTagOrder": 1283
+>>>>>>> theirs
 }

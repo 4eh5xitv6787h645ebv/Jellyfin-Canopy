@@ -63,4 +63,11 @@ describe('language tag filter policy', () => {
             effectiveLanguageTagFilter({ schemaVersion: 1, languages: [], includeOriginal: false }, admin),
         ).map((entry) => entry.canonicalTag)).toEqual(['en']);
     });
+
+    it('keeps an absent legacy admin field compatible but fails explicit null admin state closed', () => {
+        expect(effectiveLanguageTagFilter(null, undefined)).toBeNull();
+        const corrupt = effectiveLanguageTagFilter(null, null);
+        expect(corrupt?.failClosed).toBe(true);
+        expect(filterMediaLanguageIdentities(['en'], corrupt)).toEqual([]);
+    });
 });

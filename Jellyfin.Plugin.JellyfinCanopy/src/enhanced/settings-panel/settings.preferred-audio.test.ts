@@ -26,6 +26,7 @@ const TOGGLE_IDS = [
 function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
     mode: HTMLSelectElement;
     input: HTMLInputElement;
+    languageInput: HTMLInputElement;
 } {
     for (const id of TOGGLE_IDS) {
         const input = document.createElement('input');
@@ -49,6 +50,25 @@ function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
     custom.appendChild(input);
     document.body.appendChild(custom);
 
+    const languageMode = document.createElement('select');
+    languageMode.id = 'languageTagFilterMode';
+    for (const value of ['inherit', 'custom']) languageMode.add(new Option(value, value));
+    languageMode.value = 'custom';
+    document.body.appendChild(languageMode);
+    const languageCustom = document.createElement('div');
+    languageCustom.id = 'languageTagFilterCustom';
+    const languageInput = document.createElement('input');
+    languageInput.id = 'languageTagFilterLanguages';
+    languageCustom.appendChild(languageInput);
+    const languageOriginal = document.createElement('input');
+    languageOriginal.type = 'checkbox';
+    languageOriginal.id = 'languageTagFilterOriginal';
+    languageCustom.appendChild(languageOriginal);
+    const languageReset = document.createElement('button');
+    languageReset.id = 'languageTagFilterReset';
+    languageCustom.appendChild(languageReset);
+    document.body.appendChild(languageCustom);
+
     const ratingScope = document.createElement('div');
     ratingScope.id = 'ratingTagScopeOverrides';
     for (const [kind, value] of [['itemType', 'Episode'], ['surface', 'NextUp']] as const) {
@@ -61,7 +81,7 @@ function buildDom(mode: 'inherit' | 'automatic' | 'custom'): {
         ratingScope.appendChild(toggle);
     }
     document.body.appendChild(ratingScope);
-    return { mode: modeSelect, input };
+    return { mode: modeSelect, input, languageInput };
 }
 
 function makeEditor(appliesToActor: boolean): PanelEditorContext {
@@ -75,6 +95,8 @@ function makeEditor(appliesToActor: boolean): PanelEditorContext {
             disabledItemTypes: [] as string[],
             disabledSurfaces: [] as string[],
         },
+        languageTagsEnabled: true,
+        languageTagFilter: null,
     };
     if (appliesToActor) JC.currentSettings = settings;
     return {
@@ -145,6 +167,7 @@ describe('preferred audio language settings', () => {
         document.body.innerHTML = '';
         delete (JC as typeof JC & { reinitializeQualityTags?: unknown }).reinitializeQualityTags;
         delete (JC as typeof JC & { reinitializeRatingTags?: unknown }).reinitializeRatingTags;
+        delete (JC as typeof JC & { reinitializeLanguageTags?: unknown }).reinitializeLanguageTags;
         vi.restoreAllMocks();
         JC.currentSettings = {};
         JC.pluginConfig = {};
@@ -253,6 +276,60 @@ describe('preferred audio language settings', () => {
         await Promise.resolve();
         expect(editor.settings.preferredAudioLanguage).toBe('pt-BR');
         expect(reinitialize).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries a pending language filter through unrelated whole-settings saves', async () => {
+        const controls = buildDom('inherit');
+        const editor = makeEditor(true);
+        const first = deferred<typeof acknowledgement>();
+        const second = deferred<typeof acknowledgement>();
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementation(() => {
+            captured.push(structuredClone(editor.settings.languageTagFilter));
+            return captured.length === 1 ? first.promise : second.promise;
+        });
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeLanguageTags?: () => void }).reinitializeLanguageTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        controls.languageInput.value = 'pt-br, en-US';
+        controls.languageInput.dispatchEvent(new Event('change'));
+        const unrelated = document.getElementById('autoPauseToggle') as HTMLInputElement;
+        unrelated.checked = false;
+        unrelated.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledTimes(2));
+        const expected = { schemaVersion: 1, languages: ['pt-BR', 'en-US'], includeOriginal: false };
+        expect(captured).toEqual([expected, expected]);
+        expect(editor.settings.languageTagFilter).toBeNull();
+        first.resolve(acknowledgement);
+        await vi.waitFor(() => expect(editor.settings.languageTagFilter).toEqual(expected));
+        second.resolve({ ...acknowledgement, revision: 2 });
+        await Promise.resolve();
+        expect(reinitialize).toHaveBeenCalledTimes(1);
+    });
+
+    it('persists a target language filter without mutating the acting user', async () => {
+        const controls = buildDom('inherit');
+        const actorPolicy = { schemaVersion: 1, languages: ['de'], includeOriginal: false };
+        JC.currentSettings = { languageTagsEnabled: true, languageTagFilter: actorPolicy };
+        const editor = makeEditor(false);
+        const captured: unknown[] = [];
+        vi.mocked(editor.saveSettings).mockImplementation(() => {
+            captured.push(structuredClone(editor.settings.languageTagFilter));
+            return Promise.resolve(acknowledgement);
+        });
+        const reinitialize = vi.fn();
+        (JC as typeof JC & { reinitializeLanguageTags?: () => void }).reinitializeLanguageTags = reinitialize;
+        wireSettingsListeners(context(editor));
+
+        controls.languageInput.value = 'pt-BR';
+        controls.languageInput.dispatchEvent(new Event('change'));
+
+        await vi.waitFor(() => expect(editor.saveSettings).toHaveBeenCalledOnce());
+        expect(captured).toEqual([{ schemaVersion: 1, languages: ['pt-BR'], includeOriginal: false }]);
+        expect(JC.currentSettings.languageTagFilter).toBe(actorPolicy);
+        expect(reinitialize).not.toHaveBeenCalled();
     });
 
     it('publishes the preference when an unrelated carrier succeeds after the original carrier fails', async () => {

@@ -145,6 +145,15 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         succeeded: boolean;
     };
     let pendingRatingScopeGeneration: RatingScopeGeneration | null = null;
+    let acknowledgedLanguageFilterGeneration = 0;
+    let acknowledgedLanguageFilter: unknown = settings.languageTagFilter;
+    type LanguageFilterGeneration = {
+        id: number;
+        value: unknown;
+        inFlight: number;
+        succeeded: boolean;
+    };
+    let pendingLanguageFilterGeneration: LanguageFilterGeneration | null = null;
     const publishAcknowledgedAudioLanguage = (showSavedToast: boolean): void => {
         const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
             ? JC.currentSettings as Record<string, any>
@@ -213,10 +222,44 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             publishAcknowledgedRatingScope(false);
         }
     };
+    const publishAcknowledgedLanguageFilter = (): void => {
+        const liveSettings = appliesToActor && JC.identity.isCurrent(editor.actor) && JC.currentSettings
+            ? JC.currentSettings as Record<string, any>
+            : settings;
+        const changed = liveSettings.languageTagFilter !== acknowledgedLanguageFilter;
+        liveSettings.languageTagFilter = acknowledgedLanguageFilter;
+        if (liveSettings !== settings) settings.languageTagFilter = acknowledgedLanguageFilter;
+        if (changed && liveSettings.languageTagsEnabled
+            && typeof (JC as any).reinitializeLanguageTags === 'function') {
+            (JC as any).reinitializeLanguageTags();
+        }
+    };
+    const settleLanguageFilterCarrier = (generation: LanguageFilterGeneration, saved: boolean): void => {
+        generation.inFlight = Math.max(0, generation.inFlight - 1);
+        if (!editor.isCurrent() || !JC.identity.isCurrent(editor.actor)) return;
+        if (saved) {
+            generation.succeeded = true;
+            if (generation.id >= acknowledgedLanguageFilterGeneration) {
+                acknowledgedLanguageFilterGeneration = generation.id;
+                acknowledgedLanguageFilter = generation.value;
+            }
+            if (pendingLanguageFilterGeneration === generation) {
+                pendingLanguageFilterGeneration = null;
+                publishAcknowledgedLanguageFilter();
+            }
+            return;
+        }
+        if (!generation.succeeded && generation.inFlight === 0
+            && pendingLanguageFilterGeneration === generation) {
+            pendingLanguageFilterGeneration = null;
+            publishAcknowledgedLanguageFilter();
+        }
+    };
     const persistSettings = (): Promise<boolean> => {
         const audioGeneration = pendingAudioGeneration;
         const ratingGeneration = pendingRatingScopeGeneration;
-        if (!appliesToActor || (!audioGeneration && !ratingGeneration)) {
+        const languageFilterGeneration = pendingLanguageFilterGeneration;
+        if (!appliesToActor || (!audioGeneration && !ratingGeneration && !languageFilterGeneration)) {
             return persistEditorSettings(ctx, editor);
         }
         // All settings saves serialize the whole self-owned object. Overlay the
@@ -224,6 +267,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         // setting edit cannot persist the renderer's older acknowledged value.
         if (audioGeneration) settings.preferredAudioLanguage = audioGeneration.value;
         if (ratingGeneration) settings.ratingTagScopeOverrides = ratingGeneration.value;
+        if (languageFilterGeneration) settings.languageTagFilter = languageFilterGeneration.value;
         let request: Promise<boolean>;
         try {
             request = persistEditorSettings(
@@ -232,11 +276,15 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                 () => (audioGeneration !== null && pendingAudioGeneration !== null
                         && (pendingAudioGeneration !== audioGeneration || audioGeneration.inFlight > 1))
                     || (ratingGeneration !== null && pendingRatingScopeGeneration !== null
-                        && (pendingRatingScopeGeneration !== ratingGeneration || ratingGeneration.inFlight > 1)),
+                        && (pendingRatingScopeGeneration !== ratingGeneration || ratingGeneration.inFlight > 1))
+                    || (languageFilterGeneration !== null && pendingLanguageFilterGeneration !== null
+                        && (pendingLanguageFilterGeneration !== languageFilterGeneration
+                            || languageFilterGeneration.inFlight > 1)),
             );
         } finally {
             if (audioGeneration) settings.preferredAudioLanguage = acknowledgedAudioLanguage;
             if (ratingGeneration) settings.ratingTagScopeOverrides = acknowledgedRatingScope;
+            if (languageFilterGeneration) settings.languageTagFilter = acknowledgedLanguageFilter;
         }
         if (audioGeneration) {
             audioGeneration.inFlight++;
@@ -245,6 +293,10 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         if (ratingGeneration) {
             ratingGeneration.inFlight++;
             void request.then((saved) => settleRatingScopeCarrier(ratingGeneration, saved));
+        }
+        if (languageFilterGeneration) {
+            languageFilterGeneration.inFlight++;
+            void request.then((saved) => settleLanguageFilterCarrier(languageFilterGeneration, saved));
         }
         return request;
     };
@@ -485,7 +537,6 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     const languageFilterCustom = document.getElementById('languageTagFilterCustom') as HTMLElement | null;
     const commitLanguageFilter = (): void => {
         if (!languageFilterMode || !languageFilterInput || !languageFilterOriginal) return;
-        const acknowledged = settings.languageTagFilter;
         const intent = ++languageFilterIntent;
         let next: unknown;
         if (languageFilterMode.value === 'inherit') {
@@ -509,19 +560,18 @@ export function wireSettingsListeners(ctx: PanelContext): void {
             languageFilterInput.value = languages.join(', ');
             next = { schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION, languages, includeOriginal: languageFilterOriginal.checked };
         }
-        settings.languageTagFilter = next;
-        const request = persistSettings();
-        // Self settings are the live object. Keep the renderer on acknowledged
-        // state until the server commit succeeds; target editors are panel-local.
-        if (appliesToActor) settings.languageTagFilter = acknowledged;
-        void request.then((saved) => {
-            if (saved && intent === languageFilterIntent && appliesToActor
-                && editor.isCurrent() && JC.identity.isCurrent(editor.actor)) {
-                settings.languageTagFilter = next;
-                JC.currentSettings!.languageTagFilter = next;
-                (JC as any).reinitializeLanguageTags?.();
-            }
-        });
+        if (!appliesToActor) {
+            settings.languageTagFilter = next;
+            void persistSettings();
+        } else {
+            pendingLanguageFilterGeneration = {
+                id: intent,
+                value: next,
+                inFlight: 0,
+                succeeded: false,
+            };
+            void persistSettings();
+        }
         resetAutoCloseTimer();
     };
     languageFilterMode?.addEventListener('change', () => {
