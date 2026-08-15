@@ -42,6 +42,8 @@ describe('subtitle playback and preview style contract', () => {
             previewFontSizePx: 8,
             visibleBackground: false,
         });
+        expect(clampSubtitleHorizontal(null)).toBe(50);
+        expect(clampSubtitleHorizontal('')).toBe(50);
     });
 
     it('applies font, colors, compact box, position clamps, and bottom anchoring together', () => {

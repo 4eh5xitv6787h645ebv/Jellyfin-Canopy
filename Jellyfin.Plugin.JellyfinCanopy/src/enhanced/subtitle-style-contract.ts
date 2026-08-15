@@ -19,7 +19,11 @@ export interface ResolvedSubtitleStyle {
 type SubtitleSettings = Readonly<Record<string, unknown>>;
 
 function clamp(value: unknown, fallback: number, minimum: number, maximum: number): number {
-    const number = Number(value);
+    const number = typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim() !== ''
+            ? Number(value)
+            : Number.NaN;
     return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback;
 }
 
