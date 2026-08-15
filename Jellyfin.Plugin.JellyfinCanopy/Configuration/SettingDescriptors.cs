@@ -160,6 +160,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 PublicUser("AutoSkipIntro", c => c.AutoSkipIntro, nameof(UserSettings.AutoSkipIntro)),
                 PublicUser("AutoSkipOutro", c => c.AutoSkipOutro, nameof(UserSettings.AutoSkipOutro)),
                 PublicUser("LongPress2xEnabled", c => c.LongPress2xEnabled, nameof(UserSettings.LongPress2xEnabled)),
+                PublicUser("DoubleTapSeekEnabled", c => c.DoubleTapSeekEnabled, nameof(UserSettings.DoubleTapSeekEnabled)),
                 PublicUser("RandomButtonEnabled", c => c.RandomButtonEnabled, nameof(UserSettings.RandomButtonEnabled)),
                 PublicUser("RandomIncludeMovies", c => c.RandomIncludeMovies, nameof(UserSettings.RandomIncludeMovies)),
                 PublicUser("RandomIncludeShows", c => c.RandomIncludeShows, nameof(UserSettings.RandomIncludeShows)),

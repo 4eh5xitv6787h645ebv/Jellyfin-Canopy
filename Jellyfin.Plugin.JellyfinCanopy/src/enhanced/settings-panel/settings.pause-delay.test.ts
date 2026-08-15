@@ -50,7 +50,7 @@ const TOGGLE_IDS = [
     'removeContinueWatchingToggle', 'hideFavoritesTabToggle',
     'qualityTagsToggle', 'genreTagsToggle', 'pauseScreenToggle',
     'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
-    'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled',
+    'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled', 'doubleTapSeekEnabled',
 ];
 
 function buildSettingsDom(): HTMLInputElement {

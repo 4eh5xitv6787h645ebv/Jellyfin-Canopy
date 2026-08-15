@@ -73,9 +73,10 @@ describe('enhanced event process lifecycle', () => {
         expect(removeListener.mock.calls.some(([type]) => type === 'keydown')).toBe(true);
 
         const bDown = vi.fn();
+        const bCancel = vi.fn();
         surface.handleLongPressDown = bDown;
-        surface.handleLongPressCancel = vi.fn();
-        JC.currentSettings = { disableAllShortcuts: false, longPress2xEnabled: true };
+        surface.handleLongPressCancel = bCancel;
+        JC.currentSettings = { disableAllShortcuts: false, longPress2xEnabled: false, doubleTapSeekEnabled: true };
         JC.state.activeShortcuts = {};
         vi.runOnlyPendingTimers();
         expect(document.activeElement).not.toBe(search);
@@ -90,6 +91,13 @@ describe('enhanced event process lifecycle', () => {
         expect(JC.keyListener).toBe(keyListenerIdentity);
         document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
         expect(bDown).toHaveBeenCalledTimes(1);
+
+        const controls = document.createElement('div');
+        controls.className = 'osdControls';
+        document.body.appendChild(controls);
+        controls.dispatchEvent(new Event('touchstart', { bubbles: true }));
+        expect(bDown).toHaveBeenCalledTimes(1);
+        expect(bCancel).toHaveBeenCalledOnce();
         disposeB();
         addListener.mockRestore();
         removeListener.mockRestore();

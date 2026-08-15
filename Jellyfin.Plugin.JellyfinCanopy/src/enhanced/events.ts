@@ -338,6 +338,7 @@ class EnhancedEventsActivation implements EventOwner {
             } else if (this.wasVideoPage) {
                 this.wasVideoPage = false;
                 callOptional('stopAutoSkip');
+                callOptional('handleLongPressCancel');
             }
         };
 
@@ -432,9 +433,17 @@ class EnhancedEventsActivation implements EventOwner {
         this.listen(document, 'keydown', stableEvents.facade.keyListener as EventListener);
 
         const videoPageCheck = (handlerName: string) => (e: Event): void => {
-            if (!this.isCurrent() || !JC.currentSettings?.longPress2xEnabled || !isVideoPage()) return;
-            if (e.target && (e.target as Element).closest
-                && (e.target as Element).closest('.osdControls, .pause-screen-active, .jellyfin-canopy-panel')) return;
+            const gestureEnabled = JC.currentSettings?.longPress2xEnabled
+                || JC.currentSettings?.doubleTapSeekEnabled;
+            const blocked = e.target && (e.target as Element).closest
+                && (e.target as Element).closest(
+                    '.osdControls, .pause-screen-active, .jellyfin-canopy-panel, '
+                    + '.dialogContainer, dialog, [role="dialog"], .actionSheet, .actionSheetContent'
+                );
+            if (!this.isCurrent() || !gestureEnabled || !isVideoPage() || blocked) {
+                if (handlerName !== 'handleLongPressCancel') callOptional('handleLongPressCancel');
+                return;
+            }
             callOptional(handlerName, e);
         };
 

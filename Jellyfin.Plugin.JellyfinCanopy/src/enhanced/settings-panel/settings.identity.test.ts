@@ -10,7 +10,7 @@ const TOGGLE_IDS = [
     'showWatchProgressToggle', 'showFileSizesToggle', 'showFileSourceToggle', 'showAudioLanguagesToggle',
     'removeContinueWatchingToggle', 'hideFavoritesTabToggle', 'qualityTagsToggle', 'genreTagsToggle',
     'pauseScreenToggle', 'languageTagsToggle', 'ratingTagsToggle', 'peopleTagsToggle',
-    'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled'
+    'tagsHideOnHoverToggle', 'disableCustomSubtitleStyles', 'longPress2xEnabled', 'doubleTapSeekEnabled'
 ];
 
 describe('settings panel document listener identity cleanup', () => {

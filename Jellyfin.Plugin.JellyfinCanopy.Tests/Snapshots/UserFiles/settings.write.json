@@ -4,6 +4,7 @@
   "AutoResumeEnabled": false,
   "AutoPipEnabled": false,
   "LongPress2xEnabled": false,
+  "DoubleTapSeekEnabled": false,
   "PauseScreenEnabled": false,
   "PauseScreenDelaySeconds": 9,
   "AutoSkipIntro": false,

@@ -597,6 +597,7 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     }
     addSettingToggleListener('disableCustomSubtitleStyles', 'disableCustomSubtitleStyles', 'feature_disable_custom_subtitle_styles', true);
     addSettingToggleListener('longPress2xEnabled', 'longPress2xEnabled', 'feature_long_press_2x_speed');
+    addSettingToggleListener('doubleTapSeekEnabled', 'doubleTapSeekEnabled', 'feature_double_tap_seek');
 
     // Inline custom subtitle color pickers
     const customTextColorPicker = document.getElementById('customSubtitleTextColorPicker') as HTMLInputElement | null;

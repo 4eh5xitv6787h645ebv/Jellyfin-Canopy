@@ -38,6 +38,7 @@ interface LongPressEventData {
     clientX?: number;
     clientY?: number;
     touches?: ArrayLike<{ clientX: number; clientY: number }>;
+    changedTouches?: ArrayLike<{ clientX: number; clientY: number }>;
 }
 
 function longPressEventData(event: Event): LongPressEventData {
@@ -885,6 +886,35 @@ const LONG_PRESS_CONFIG = {
     MOVEMENT_THRESHOLD: 10, // pixels - ignore small movements
 };
 
+const DOUBLE_TAP_CONFIG = {
+    MAX_INTERVAL: 300,
+    MAX_DISTANCE: 64,
+    SEEK_SECONDS: 10,
+    CLICK_SUPPRESSION_MS: 750,
+};
+
+interface PlaybackGestureFence {
+    context: IdentityContext;
+    generation: number;
+    video: HTMLVideoElement;
+    itemId: string | null;
+    source: string;
+    location: string;
+}
+
+interface ActiveTouchGesture extends PlaybackGestureFence {
+    startX: number;
+    startY: number;
+    moved: boolean;
+}
+
+interface PendingTap extends PlaybackGestureFence {
+    x: number;
+    y: number;
+    side: 'left' | 'right';
+    endedAt: number;
+}
+
 let pressTimer: number | null = null;
 let isLongPress = false;
 let videoElement: HTMLVideoElement | null = null;
@@ -895,6 +925,119 @@ let speedOverlayShowTimer: number | null = null;
 let speedOverlayHideTimer: number | null = null;
 let pressStartX: number | null = null;
 let pressStartY: number | null = null;
+let pressFence: PlaybackGestureFence | null = null;
+let activeTouchGesture: ActiveTouchGesture | null = null;
+let pendingTap: PendingTap | null = null;
+let suppressClickUntil = 0;
+
+function isNativeIntegratedClient(): boolean {
+    const nativeWindow = window as Window & {
+        NativeShell?: unknown;
+        cordova?: unknown;
+        jmpInfo?: unknown;
+        ReactNativeWebView?: unknown;
+    };
+    return Boolean(
+        nativeWindow.NativeShell
+        || nativeWindow.cordova
+        || nativeWindow.jmpInfo
+        || nativeWindow.ReactNativeWebView
+    );
+}
+
+function captureGestureFence(context: IdentityContext, video: HTMLVideoElement): PlaybackGestureFence {
+    return {
+        context,
+        generation: playbackGeneration,
+        video,
+        itemId: getCurrentVideoItemId(),
+        source: video.currentSrc || video.src || '',
+        location: window.location.href,
+    };
+}
+
+function isGestureFenceCurrent(fence: PlaybackGestureFence): boolean {
+    return isPlaybackCurrent(fence.context, fence.generation)
+        && getVideo() === fence.video
+        && getCurrentVideoItemId() === fence.itemId
+        && (fence.video.currentSrc || fence.video.src || '') === fence.source
+        && window.location.href === fence.location;
+}
+
+function sameGestureFence(left: PlaybackGestureFence, right: PlaybackGestureFence): boolean {
+    return left.context.epoch === right.context.epoch
+        && left.generation === right.generation
+        && left.video === right.video
+        && left.itemId === right.itemId
+        && left.source === right.source
+        && left.location === right.location;
+}
+
+function clearTapGestureState(): void {
+    activeTouchGesture = null;
+    pendingTap = null;
+    suppressClickUntil = 0;
+}
+
+function tapSide(video: HTMLVideoElement, clientX: number, clientY: number): 'left' | 'right' | null {
+    const bounds = video.getBoundingClientRect();
+    if (!(bounds.width > 0) || !(bounds.height > 0)
+        || clientX < bounds.left || clientX > bounds.right
+        || clientY < bounds.top || clientY > bounds.bottom) return null;
+    return clientX < bounds.left + bounds.width / 2 ? 'left' : 'right';
+}
+
+function finishTouchTap(event: Event, gesture: ActiveTouchGesture): void {
+    activeTouchGesture = null;
+    if (!JC.currentSettings?.doubleTapSeekEnabled || isNativeIntegratedClient()
+        || gesture.moved || !isGestureFenceCurrent(gesture) || gesture.video.paused) {
+        pendingTap = null;
+        return;
+    }
+
+    const eventData = longPressEventData(event);
+    const touch = eventData.changedTouches?.[0];
+    if (!touch || (eventData.changedTouches?.length ?? 0) !== 1) {
+        pendingTap = null;
+        return;
+    }
+    const distanceFromStart = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+    const side = tapSide(gesture.video, touch.clientX, touch.clientY);
+    if (distanceFromStart > LONG_PRESS_CONFIG.MOVEMENT_THRESHOLD || !side) {
+        pendingTap = null;
+        return;
+    }
+
+    const now = Date.now();
+    const previous = pendingTap;
+    if (previous
+        && now - previous.endedAt <= DOUBLE_TAP_CONFIG.MAX_INTERVAL
+        && previous.side === side
+        && Math.hypot(previous.x - touch.clientX, previous.y - touch.clientY) <= DOUBLE_TAP_CONFIG.MAX_DISTANCE
+        && sameGestureFence(previous, gesture)
+        && isGestureFenceCurrent(previous)) {
+        const duration = gesture.video.duration;
+        const currentTime = gesture.video.currentTime;
+        if (Number.isFinite(duration) && duration > 0 && Number.isFinite(currentTime)) {
+            const delta = side === 'left' ? -DOUBLE_TAP_CONFIG.SEEK_SECONDS : DOUBLE_TAP_CONFIG.SEEK_SECONDS;
+            gesture.video.currentTime = Math.min(duration, Math.max(0, currentTime + delta));
+            pendingTap = null;
+            suppressClickUntil = now + DOUBLE_TAP_CONFIG.CLICK_SUPPRESSION_MS;
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return;
+        }
+    }
+
+    pendingTap = {
+        ...gesture,
+        x: touch.clientX,
+        y: touch.clientY,
+        side,
+        endedAt: now,
+    };
+}
 
 function createSpeedOverlay(): void {
     if (speedOverlay?.isConnected) return;
@@ -951,12 +1094,25 @@ function clearLongPressState(hideVisibleOverlay: boolean): boolean {
     pressContext = null;
     pressStartX = null;
     pressStartY = null;
+    pressFence = null;
     return wasLongPress;
 }
 
 const handleLongPressDown = (e: Event): void => {
     const eventData = longPressEventData(e);
-    if (!JC.currentSettings?.longPress2xEnabled || (eventData.button !== undefined && eventData.button !== 0) || pressTimer) {
+    const isTouch = eventData.touches !== undefined;
+    const longPressEnabled = Boolean(JC.currentSettings?.longPress2xEnabled);
+    const doubleTapEnabled = isTouch
+        && Boolean(JC.currentSettings?.doubleTapSeekEnabled)
+        && !isNativeIntegratedClient();
+    if ((!longPressEnabled && !doubleTapEnabled)
+        || (eventData.button !== undefined && eventData.button !== 0)
+        || pressTimer) {
+        return;
+    }
+    if (isTouch && (eventData.touches?.length ?? 0) !== 1) {
+        clearLongPressState(false);
+        clearTapGestureState();
         return;
     }
     const context = JC.identity.capture();
@@ -965,17 +1121,34 @@ const handleLongPressDown = (e: Event): void => {
     if (!videoElement) return;
     pressContext = context;
     const pressedVideo = videoElement;
+    pressFence = captureGestureFence(context, pressedVideo);
 
     // Store initial press position
     pressStartX = eventData.clientX ?? eventData.touches?.[0]?.clientX ?? null;
     pressStartY = eventData.clientY ?? eventData.touches?.[0]?.clientY ?? null;
 
+    if (doubleTapEnabled && !pressedVideo.paused && pressStartX !== null && pressStartY !== null) {
+        activeTouchGesture = {
+            ...pressFence,
+            startX: pressStartX,
+            startY: pressStartY,
+            moved: false,
+        };
+    } else {
+        activeTouchGesture = null;
+        if (isTouch) pendingTap = null;
+    }
+
     originalSpeed = videoElement.playbackRate || LONG_PRESS_CONFIG.SPEED_NORMAL;
     isLongPress = false;
 
+    if (!longPressEnabled) return;
+
     const timer = schedulePlaybackTimer(context, () => {
-        if (pressTimer !== timer || videoElement !== pressedVideo || getVideo() !== pressedVideo) {
+        if (pressTimer !== timer || videoElement !== pressedVideo || !pressFence || !isGestureFenceCurrent(pressFence)) {
             if (pressTimer === timer) clearLongPressState(false);
+            activeTouchGesture = null;
+            pendingTap = null;
             return;
         }
         if (JC.state!.pauseScreenClickTimer) {
@@ -983,6 +1156,8 @@ const handleLongPressDown = (e: Event): void => {
             JC.state!.pauseScreenClickTimer = null;
         }
         isLongPress = true;
+        activeTouchGesture = null;
+        pendingTap = null;
         // Make sure video is playing when we activate speed boost
         if (pressedVideo.paused) {
             pressedVideo.play().catch((error) => {
@@ -997,23 +1172,34 @@ const handleLongPressDown = (e: Event): void => {
 };
 
 const handleLongPressUp = (e: Event): void => {
-    if (!pressTimer) return;
+    if (!pressTimer && !activeTouchGesture) return;
+    const touchGesture = activeTouchGesture;
     if (clearLongPressState(true)) {
+        activeTouchGesture = null;
+        pendingTap = null;
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        return;
     }
+    if (touchGesture) finishTouchTap(e, touchGesture);
 };
 
 const handleLongPressCancel = (): void => {
     clearLongPressState(true);
+    clearTapGestureState();
 };
 
 // Handle mouse movement during press to detect drag/scrub
 const handleLongPressMove = (e: Event): void => {
-    if (!pressTimer || isLongPress || pressStartX === null || pressStartY === null) return;
+    if ((!pressTimer && !activeTouchGesture) || isLongPress || pressStartX === null || pressStartY === null) return;
 
     const eventData = longPressEventData(e);
+    if (eventData.touches && eventData.touches.length !== 1) {
+        clearLongPressState(false);
+        clearTapGestureState();
+        return;
+    }
     const currentX = eventData.clientX ?? eventData.touches?.[0]?.clientX;
     const currentY = eventData.clientY ?? eventData.touches?.[0]?.clientY;
 
@@ -1026,6 +1212,9 @@ const handleLongPressMove = (e: Event): void => {
     // If user moves more than threshold, cancel the long press (likely a drag attempt)
     if (distanceMoved > LONG_PRESS_CONFIG.MOVEMENT_THRESHOLD) {
         clearLongPressState(false);
+        if (activeTouchGesture) activeTouchGesture.moved = true;
+        activeTouchGesture = null;
+        pendingTap = null;
     }
 };
 
@@ -1038,6 +1227,12 @@ const handleLongPressClick = (e: Event): void => {
         e.stopPropagation();
         e.stopImmediatePropagation();
         return;
+    }
+    if (suppressClickUntil >= Date.now()) {
+        suppressClickUntil = 0;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
     }
 };
 
@@ -1070,6 +1265,8 @@ function resetPlaybackState(): void {
     pressContext = null;
     pressStartX = null;
     pressStartY = null;
+    pressFence = null;
+    clearTapGestureState();
     speedOverlayShowTimer = null;
     speedOverlayHideTimer = null;
     speedOverlay?.remove();

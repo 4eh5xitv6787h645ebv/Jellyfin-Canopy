@@ -53,6 +53,8 @@ export interface PluginConfig {
  */
 export interface UserSettings {
     animeFillerWarningsEnabled?: boolean;
+    /** Opt-in 10-second double-tap seek for supported mobile-web playback. */
+    doubleTapSeekEnabled?: boolean;
     /** Additive per-user rating-tag denies; administrator denies still win. */
     ratingTagScopeOverrides?: unknown;
     /** null inherits admin, empty selects Automatic, otherwise canonical BCP-47. */

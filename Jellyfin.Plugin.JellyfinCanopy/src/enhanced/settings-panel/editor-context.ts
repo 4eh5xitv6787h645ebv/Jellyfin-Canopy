@@ -179,7 +179,7 @@ const TARGET_SETTING_DEFAULTS: Record<string, unknown> = {
     qualityTagsPosition: 'top-left', genreTagsPosition: 'top-right', languageTagsPosition: 'bottom-left', ratingTagsPosition: 'bottom-right',
     showRatingInPlayer: true, reviewsExpandedByDefault: false, displayLanguage: '',
     calendarDisplayMode: 'list', calendarDefaultViewMode: 'agenda',
-    disableAllShortcuts: false, longPress2xEnabled: false, lastOpenedTab: 'shortcuts',
+    disableAllShortcuts: false, longPress2xEnabled: false, doubleTapSeekEnabled: false, lastOpenedTab: 'shortcuts',
     isAdmin: undefined,
 };
 const TARGET_EDITABLE_SETTING_KEYS = new Set([
