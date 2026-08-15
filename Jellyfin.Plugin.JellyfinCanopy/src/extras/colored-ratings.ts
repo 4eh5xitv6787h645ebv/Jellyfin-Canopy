@@ -27,13 +27,80 @@ const CONFIG = {
     navSettleDelay: 500,
     cssId: 'jellyfin-ratings-style'
 };
+const SUPPORTED_FSK_RATINGS = new Set(['FSK-0', 'FSK-6', 'FSK-12', 'FSK-16', 'FSK-18']);
 
 let observerHandle: { unsubscribe(): void } | null = null;
 let navUnsubscribe: (() => void) | null = null;
 let navSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let processedElements = new WeakSet<Element>();
+let ratingMutationObservers = new Map<HTMLElement, MutationObserver>();
+interface RatingElementState {
+    sourceText: string | null;
+    sourceRating: string | null;
+    sourceAriaLabel: string | null;
+    sourceTitle: string | null;
+    renderedText: string | null;
+    renderedRating: string;
+    renderedAriaLabel: string | null;
+    renderedTitle: string | null;
+    ownsAriaLabel: boolean;
+    ownsTitle: boolean;
+}
+let elementStates = new Map<HTMLElement, RatingElementState>();
 let generation = 0;
+
+function captureObservedHostWrites(element: HTMLElement, mutations: MutationRecord[]): boolean {
+    const state = elementStates.get(element);
+    if (!state) return false;
+
+    let captured = false;
+    for (const mutation of mutations) {
+        // The mutation record itself proves that the host wrote this field,
+        // even when its value happens to equal our canonical render. A value
+        // comparison alone cannot distinguish that case from an untouched
+        // element. Plugin-owned writes are synchronously drained separately.
+        if (mutation.type === 'characterData' || mutation.type === 'childList') {
+            state.sourceText = element.textContent;
+            captured = true;
+        } else if (mutation.type === 'attributes') {
+            if (mutation.attributeName === CONFIG.attributeName) {
+                state.sourceRating = element.getAttribute(CONFIG.attributeName);
+                captured = true;
+            } else if (mutation.attributeName === 'aria-label') {
+                state.sourceAriaLabel = element.getAttribute('aria-label');
+                state.ownsAriaLabel = false;
+                captured = true;
+            } else if (mutation.attributeName === 'title') {
+                state.sourceTitle = element.getAttribute('title');
+                state.ownsTitle = false;
+                captured = true;
+            }
+        }
+    }
+    return captured;
+}
+
+function disconnectRatingObserver(element: HTMLElement, observer: MutationObserver): void {
+    // disconnect() discards queued records. Drain them first so a same-task
+    // host write followed by removal/identity teardown still transfers every
+    // field's ownership, including equal-canonical attribute values.
+    captureObservedHostWrites(element, observer.takeRecords());
+    observer.disconnect();
+}
+
+function writePluginState(element: HTMLElement, mutate: () => void): void {
+    const observer = ratingMutationObservers.get(element);
+    if (observer) {
+        // A retained host node can be repopulated in the same task immediately
+        // before Canopy runs. Capture those queued writes before overwriting it.
+        captureObservedHostWrites(element, observer.takeRecords());
+    }
+    mutate();
+    // Mutation records are queued synchronously. Removing only the records
+    // created by this bounded plugin write prevents our own canonical render
+    // from being mistaken for later host ownership.
+    observer?.takeRecords();
+}
 
 function isActive(context: IdentityContext, expectedGeneration: number): boolean {
     return generation === expectedGeneration && JC.identity.isCurrent(context);
@@ -59,49 +126,164 @@ function injectCSS(): void {
     }
 }
 
+function observeRatingMutations(
+    element: HTMLElement,
+    context: IdentityContext,
+    expectedGeneration: number
+): void {
+    if (!window.MutationObserver || ratingMutationObservers.has(element)) return;
+
+    const observer = new MutationObserver((mutations) => {
+        if (!isActive(context, expectedGeneration)) return;
+        if (captureObservedHostWrites(element, mutations)) {
+            debouncedProcess(context, expectedGeneration);
+        }
+    });
+    // PERF(R3): character-data observation is deliberately limited to the
+    // handful of live rating elements. Observing body/document would also see
+    // high-frequency playback clock and OSD updates.
+    observer.observe(element, {
+        attributes: true,
+        attributeFilter: [CONFIG.attributeName, 'aria-label', 'title'],
+        characterData: true,
+        childList: true,
+        subtree: true,
+    });
+    ratingMutationObservers.set(element, observer);
+}
+
+function pruneRatingMutationObservers(liveElements: Set<HTMLElement>): void {
+    ratingMutationObservers.forEach((observer, element) => {
+        if (liveElements.has(element) && element.isConnected) return;
+        disconnectRatingObserver(element, observer);
+        ratingMutationObservers.delete(element);
+        const state = elementStates.get(element);
+        if (state) {
+            restoreLatestHostState(element, state);
+            elementStates.delete(element);
+        }
+    });
+}
+
+function writeOptionalAttribute(element: HTMLElement, name: string, value: string | null): void {
+    if (value === null) element.removeAttribute(name);
+    else element.setAttribute(name, value);
+}
+
+function restoreRatingElement(element: HTMLElement, state: RatingElementState): void {
+    element.textContent = state.sourceText;
+    writeOptionalAttribute(element, CONFIG.attributeName, state.sourceRating);
+    writeOptionalAttribute(element, 'aria-label', state.sourceAriaLabel);
+    writeOptionalAttribute(element, 'title', state.sourceTitle);
+    delete element.dataset.jcColoredRating;
+}
+
+function captureHostChanges(element: HTMLElement, state: RatingElementState): boolean {
+    const currentText = element.textContent;
+    const currentRating = element.getAttribute(CONFIG.attributeName);
+    const currentAriaLabel = element.getAttribute('aria-label');
+    const currentTitle = element.getAttribute('title');
+    if (currentText === state.renderedText && currentRating === state.renderedRating
+        && currentAriaLabel === state.renderedAriaLabel && currentTitle === state.renderedTitle) {
+        return false;
+    }
+    // A retained host node can be populated with a different item on
+    // navigation. Values that no longer match our last render are the latest
+    // host-owned state, including updates made immediately before detachment.
+    if (currentText !== state.renderedText) state.sourceText = currentText;
+    if (currentRating !== state.renderedRating) state.sourceRating = currentRating;
+    if (currentAriaLabel !== state.renderedAriaLabel) {
+        state.sourceAriaLabel = currentAriaLabel;
+        state.ownsAriaLabel = false;
+    }
+    if (currentTitle !== state.renderedTitle) {
+        state.sourceTitle = currentTitle;
+        state.ownsTitle = false;
+    }
+    return true;
+}
+
+function restoreLatestHostState(element: HTMLElement, state: RatingElementState): void {
+    // MutationObserver callbacks are asynchronous. Inspect the DOM at the
+    // ownership boundary so a host update made immediately before removal or
+    // identity/config teardown cannot be overwritten by an older snapshot.
+    captureHostChanges(element, state);
+    restoreRatingElement(element, state);
+}
+
 
 function processRatingElements(context: IdentityContext, expectedGeneration: number): void {
     if (!isActive(context, expectedGeneration) || !isFeatureEnabled()) return;
     try {
         const elements = document.querySelectorAll<HTMLElement>(CONFIG.targetSelector);
+        const liveElements = new Set(elements);
 
         elements.forEach((element) => {
             if (!isActive(context, expectedGeneration)) return;
-            if (processedElements.has(element)) {
-                const currentRating = element.textContent?.trim();
-                const existingRating = element.getAttribute(CONFIG.attributeName);
-                if (currentRating === existingRating) {
-                    return;
-                }
+            let state = elementStates.get(element);
+            if (state) {
+                if (!captureHostChanges(element, state)) return;
+            } else {
+                state = {
+                    sourceText: element.textContent,
+                    sourceRating: element.getAttribute(CONFIG.attributeName),
+                    sourceAriaLabel: element.getAttribute('aria-label'),
+                    sourceTitle: element.getAttribute('title'),
+                    renderedText: element.textContent,
+                    renderedRating: '',
+                    renderedAriaLabel: element.getAttribute('aria-label'),
+                    renderedTitle: element.getAttribute('title'),
+                    ownsAriaLabel: false,
+                    ownsTitle: false,
+                };
+                elementStates.set(element, state);
             }
 
             const ratingText = element.textContent?.trim();
             if (ratingText && ratingText.length > 0) {
                 const normalizedRating = normalizeRating(ratingText);
-
-                if (element.getAttribute(CONFIG.attributeName) !== normalizedRating) {
+                const isFsk = SUPPORTED_FSK_RATINGS.has(normalizedRating);
+                const visibleText = isFsk ? normalizedRating : element.textContent;
+                let ariaLabel = element.getAttribute('aria-label');
+                let title = element.getAttribute('title');
+                writePluginState(element, () => {
+                    if (visibleText !== element.textContent) element.textContent = visibleText;
                     element.setAttribute(CONFIG.attributeName, normalizedRating);
+                    if (isFsk || (state.ownsAriaLabel && state.sourceAriaLabel === null) || ariaLabel === null) {
+                        ariaLabel = `Content rated ${normalizedRating}`;
+                        element.setAttribute('aria-label', ariaLabel);
+                        state.ownsAriaLabel = true;
+                    } else if (state.ownsAriaLabel) {
+                        ariaLabel = state.sourceAriaLabel;
+                        writeOptionalAttribute(element, 'aria-label', ariaLabel);
+                        state.ownsAriaLabel = false;
+                    }
+                    if (isFsk || (state.ownsTitle && state.sourceTitle === null) || title === null) {
+                        title = `Rating: ${normalizedRating}`;
+                        element.setAttribute('title', title);
+                        state.ownsTitle = true;
+                    } else if (state.ownsTitle) {
+                        title = state.sourceTitle;
+                        writeOptionalAttribute(element, 'title', title);
+                        state.ownsTitle = false;
+                    }
                     element.dataset.jcColoredRating = 'true';
-                    processedElements.add(element);
-
-                    if (!element.getAttribute('aria-label')) {
-                        element.setAttribute('aria-label', `Content rated ${normalizedRating}`);
-                        element.dataset.jcColoredRatingAria = 'true';
-                    }
-                    if (!element.getAttribute('title')) {
-                        element.setAttribute('title', `Rating: ${normalizedRating}`);
-                        element.dataset.jcColoredRatingTitle = 'true';
-                    }
-                }
+                });
+                state.renderedText = visibleText;
+                state.renderedRating = normalizedRating;
+                state.renderedAriaLabel = ariaLabel;
+                state.renderedTitle = title;
             }
+            observeRatingMutations(element, context, expectedGeneration);
         });
+        pruneRatingMutationObservers(liveElements);
 
     } catch (error) {
         console.error('🪼 Jellyfin Canopy: Error processing rating elements', error);
     }
 }
 
-function normalizeRating(rating: string): string {
+export function normalizeRating(rating: string): string {
     if (!rating) return '';
 
     const normalized = rating.replace(/\s+/g, ' ').trim().toUpperCase();
@@ -114,6 +296,9 @@ function normalizeRating(rating: string): string {
         'APPROVED': 'APPROVED',
         'PASSED': 'PASSED'
     };
+
+    const fsk = normalized.match(/^(?:DE-|FSK(?:-| )?)(0|6|12|16|18)$/);
+    if (fsk) return `FSK-${fsk[1]}`;
 
     return ratingMappings[normalized] || rating.trim();
 }
@@ -148,6 +333,14 @@ export function mutationsTouchRatings(mutations: MutationRecord[]): boolean {
             }
         }
 
+        for (const node of mutation.removedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            const el = node as Element;
+            if (el.matches?.(CONFIG.targetSelector) || el.querySelector?.(CONFIG.targetSelector)) {
+                return true;
+            }
+        }
+
         const target = mutation.target as Element;
         if (target.nodeType === Node.ELEMENT_NODE &&
             (target.matches(CONFIG.targetSelector) || target.closest(CONFIG.targetSelector))) {
@@ -163,9 +356,9 @@ function setupMutationObserver(context: IdentityContext, expectedGeneration: num
     try {
         // PERF(R3): rides the shared structural body observer instead of a
         // dedicated characterData:true body observer — that one fired on the
-        // OSD clock's text updates every second during playback. Rating text
-        // only ever (re)renders via childList mutations, and the
-        // per-navigation pass below covers cached-page re-shows.
+        // OSD clock's text updates every second during playback. Retained text
+        // nodes are covered by the element-scoped observers installed above;
+        // this shared subscription discovers new/replaced rating elements.
         observerHandle = onBodyMutation('colored-ratings', (mutations) => {
             if (isActive(context, expectedGeneration) && mutationsTouchRatings(mutations)) {
                 debouncedProcess(context, expectedGeneration);
@@ -230,20 +423,44 @@ function cleanup(): void {
         clearTimeout(debounceTimer);
         debounceTimer = null;
     }
-    processedElements = new WeakSet();
+    ratingMutationObservers.forEach((observer, element) => disconnectRatingObserver(element, observer));
+    ratingMutationObservers.clear();
 }
 
 export function resetColoredRatings(): void {
     generation += 1;
     cleanup();
+    // The state map is deliberately enumerable so teardown can restore a
+    // host-cached element even while it is detached from document.
+    elementStates.forEach((state, element) => restoreLatestHostState(element, state));
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
-        element.removeAttribute(CONFIG.attributeName);
-        if (element.dataset.jcColoredRatingAria === 'true') element.removeAttribute('aria-label');
-        if (element.dataset.jcColoredRatingTitle === 'true') element.removeAttribute('title');
+        // Defensive cleanup for annotations left by an interrupted/older
+        // activation that has no entry in this module instance's state map.
+        // A legacy marker alone is ambiguous after the host has reused the
+        // element. Remove only a value that still exactly matches the
+        // predecessor's deterministic render; otherwise fail open.
+        const visibleText = element.textContent?.trim() ?? '';
+        const expectedRating = visibleText ? normalizeRating(visibleText) : '';
+        const currentRating = element.getAttribute(CONFIG.attributeName);
+        if (expectedRating && currentRating === expectedRating) {
+            element.removeAttribute(CONFIG.attributeName);
+        }
+        if (element.dataset.jcColoredRatingAria === 'true'
+            && expectedRating
+            && element.getAttribute('aria-label') === `Content rated ${expectedRating}`) {
+            element.removeAttribute('aria-label');
+        }
+        if (element.dataset.jcColoredRatingTitle === 'true'
+            && expectedRating
+            && element.getAttribute('title') === `Rating: ${expectedRating}`) {
+            element.removeAttribute('title');
+        }
         delete element.dataset.jcColoredRating;
         delete element.dataset.jcColoredRatingAria;
         delete element.dataset.jcColoredRatingTitle;
     });
+    elementStates = new Map();
+    ratingMutationObservers = new Map();
     document.getElementById(CONFIG.cssId)?.remove();
 }
 

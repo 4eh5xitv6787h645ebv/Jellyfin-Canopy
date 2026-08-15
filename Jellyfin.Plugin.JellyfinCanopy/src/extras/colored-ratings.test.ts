@@ -3,7 +3,7 @@
 // observer (PERF(R3/R5) fix). Only batches that can actually contain rating elements
 // may schedule the full-document processing pass.
 import { describe, expect, it } from 'vitest';
-import { mutationsTouchRatings } from './colored-ratings';
+import { mutationsTouchRatings, normalizeRating } from './colored-ratings';
 
 function record(partial: Partial<MutationRecord>): MutationRecord {
     return {
@@ -29,6 +29,14 @@ describe('mutationsTouchRatings', () => {
         wrapper.innerHTML = '<span class="mediaInfoOfficialRating">PG-13</span>';
 
         const batch = [record({ addedNodes: [wrapper] as unknown as NodeList })];
+        expect(mutationsTouchRatings(batch)).toBe(true);
+    });
+
+    it('matches a removed rating subtree so element observers can be pruned', () => {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = '<span class="mediaInfoOfficialRating">PG-13</span>';
+
+        const batch = [record({ removedNodes: [wrapper] as unknown as NodeList })];
         expect(mutationsTouchRatings(batch)).toBe(true);
     });
 
@@ -61,5 +69,24 @@ describe('mutationsTouchRatings', () => {
             record({ addedNodes: [text] as unknown as NodeList })
         ];
         expect(mutationsTouchRatings(batch)).toBe(false);
+    });
+});
+
+describe('normalizeRating', () => {
+    const ages = ['0', '6', '12', '16', '18'] as const;
+    const supportedAliases = ages.flatMap((age) => [
+        [`DE-${age}`, `FSK-${age}`],
+        [`FSK${age}`, `FSK-${age}`],
+        [`FSK ${age}`, `FSK-${age}`],
+        [`FSK-${age}`, `FSK-${age}`],
+    ] as const);
+
+    it.each(supportedAliases)('canonicalizes supported German alias %s', (input, expected) => {
+        expect(normalizeRating(input)).toBe(expected);
+        expect(normalizeRating(expected)).toBe(expected);
+    });
+
+    it.each(['DE-15', 'FSK-21', 'DE12', 'US-12', 'TV-14'])('does not rewrite %s', (input) => {
+        expect(normalizeRating(input)).toBe(input);
     });
 });
