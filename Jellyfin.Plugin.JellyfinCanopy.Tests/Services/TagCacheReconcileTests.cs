@@ -136,6 +136,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                     Id = id,
                     Name = "Regional languages",
                     DateLastSaved = T0,
+                    OriginalLanguage = "pt-BR",
                 };
                 var lib = new CountingLibraryManager { GetItemListHook = _ => new List<BaseItem> { movie } };
                 using var svc = NewSvc(lib, dir);
@@ -151,6 +152,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Assert.DoesNotContain("en", audioLanguages);
                 Assert.DoesNotContain("es", audioLanguages);
                 Assert.DoesNotContain("pt", audioLanguages);
+                Assert.Equal("pt-BR", entry.OriginalLanguage);
                 Assert.Equal(
                     new[] { "en-US", "es-MX", "pt-BR" },
                     entry.StreamData!.Streams!
@@ -419,6 +421,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                     CommunityRating = 9.0f,
                     CriticRating = 90,
                     Genres = new[] { "Drama" },
+                    OriginalLanguage = "ja",
                 };
                 var season = new StubSeason
                 {
@@ -439,6 +442,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                     SeasonId = seasonId,
                     CommunityRating = null,
                     CriticRating = 0,
+                    OriginalLanguage = "pt-BR",
                 };
                 var scan = new List<BaseItem> { series, season, episode };
                 var lib = new CountingLibraryManager
@@ -461,11 +465,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 Assert.Null(seasonEntry!.CommunityRating);
                 Assert.Equal(7, seasonEntry.CriticRating);
                 Assert.Equal(new[] { "Drama" }, seasonEntry.Genres);
+                Assert.Equal("pt-BR", seasonEntry.OriginalLanguage);
 
                 var episodeEntry = svc.GetEntryForTest(Key(episodeId));
                 Assert.NotNull(episodeEntry);
                 Assert.Null(episodeEntry!.CommunityRating);
                 Assert.Equal(0, episodeEntry.CriticRating);
+                Assert.Equal("pt-BR", episodeEntry.OriginalLanguage);
+                Assert.Equal("pt-BR", svc.GetEntryForTest(Key(seriesId))!.OriginalLanguage);
             }
             finally { TryDelete(dir); }
         }

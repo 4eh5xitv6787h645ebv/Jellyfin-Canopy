@@ -221,7 +221,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // complete, validated BoxSet forward-membership snapshot plus explicit
         // over-cap/unavailable sentinels; its derived reverse map lets Movie
         // removal/move invalidation survive restart after live old edges disappear.
-        private const int CurrentCacheSchemaVersion = 7;
+        private const int CurrentCacheSchemaVersion = 8;
 
         // User access cache: avoids expensive GetItemIds query on every request.
         // Jellyfin increments User.RowVersion for every persisted policy update,
@@ -2814,6 +2814,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 stripped.Genres = Array.Empty<string>();
                 stripped.AudioLanguages = null;
+                stripped.OriginalLanguage = null;
                 stripped.StreamData = null;
             }
             if (stripRatings)
@@ -3420,6 +3421,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     if (firstEp != null)
                     {
                         entry.StreamSourceId = firstEp.Id.ToString("N");
+                        entry.OriginalLanguage = ReadOriginalLanguage(firstEp);
                         if (entry.Genres == null || entry.Genres.Length == 0)
                         {
                             entry.Genres = firstEp.Genres;
@@ -3480,6 +3482,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 else
                 {
                     entry.StreamSourceId = item.Id.ToString("N");
+                    entry.OriginalLanguage = ReadOriginalLanguage(item);
                     var media = ExtractMediaData(item);
                     if (media == null)
                     {
@@ -3539,6 +3542,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             catch (Exception ex)
             {
                 _logger.LogWarning($"[TagCache] Failed to build entry for {item.Id}: {ex.Message}");
+                return null;
+            }
+        }
+
+        internal static string? ReadOriginalLanguage(BaseItem item)
+        {
+            try
+            {
+                var value = item.GetInheritedOriginalLanguage();
+                if (string.IsNullOrWhiteSpace(value)) return null;
+                value = value.Trim();
+                return value.Length <= 255 ? value : null;
+            }
+            catch
+            {
+                // Original-language metadata is optional. A broken parent link must
+                // not turn an otherwise usable cache entry into a total miss.
                 return null;
             }
         }

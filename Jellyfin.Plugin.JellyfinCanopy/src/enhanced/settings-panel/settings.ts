@@ -29,6 +29,8 @@ import {
     type PanelEditorContext,
 } from './editor-context';
 
+const LANGUAGE_FILTER_CHANGED_EVENT = 'jellyfin-canopy:language-filter-changed';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 function reapplyAcknowledgedSideEffects(): void {
@@ -83,7 +85,7 @@ function persistEditorSettings(
     try {
         request = editor.saveSettings();
     } catch (error) {
-        request = Promise.reject(error);
+        request = Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
     return Promise.resolve(request).then(
         () => true,
@@ -229,9 +231,13 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         const changed = liveSettings.languageTagFilter !== acknowledgedLanguageFilter;
         liveSettings.languageTagFilter = acknowledgedLanguageFilter;
         if (liveSettings !== settings) settings.languageTagFilter = acknowledgedLanguageFilter;
-        if (changed && liveSettings.languageTagsEnabled
-            && typeof (JC as any).reinitializeLanguageTags === 'function') {
-            (JC as any).reinitializeLanguageTags();
+        if (changed && appliesToActor && JC.identity.isCurrent(editor.actor)) {
+            if (typeof (JC as any).reinitializeLanguageTags === 'function') {
+                (JC as any).reinitializeLanguageTags();
+            }
+            window.dispatchEvent(new CustomEvent(LANGUAGE_FILTER_CHANGED_EVENT, {
+                detail: editor.actor,
+            }));
         }
     };
     const settleLanguageFilterCarrier = (generation: LanguageFilterGeneration, saved: boolean): void => {
@@ -532,9 +538,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
     updateAudioLanguageInput();
 
     const languageFilterMode = document.getElementById('languageTagFilterMode') as HTMLSelectElement | null;
-    const languageFilterInput = document.getElementById('languageTagFilterLanguages') as HTMLInputElement | null;
+    const languageFilterInput = document.getElementById('languageTagFilterLanguages') as HTMLSelectElement | null;
     const languageFilterOriginal = document.getElementById('languageTagFilterOriginal') as HTMLInputElement | null;
-    const languageFilterCustom = document.getElementById('languageTagFilterCustom') as HTMLElement | null;
+    const languageFilterCustom = document.getElementById('languageTagFilterCustom');
     const commitLanguageFilter = (): void => {
         if (!languageFilterMode || !languageFilterInput || !languageFilterOriginal) return;
         const intent = ++languageFilterIntent;
@@ -542,7 +548,9 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         if (languageFilterMode.value === 'inherit') {
             next = null;
         } else {
-            const raw = languageFilterInput.value.split(',').map((value) => value.trim()).filter(Boolean);
+            const raw = Array.from(languageFilterInput.options)
+                .filter((option) => option.selected)
+                .map((option) => option.value);
             const languages: string[] = [];
             try {
                 if (raw.length > MAX_LANGUAGE_TAG_FILTER_ENTRIES) throw new Error('too many');
@@ -557,7 +565,6 @@ export function wireSettingsListeners(ctx: PanelContext): void {
                 return;
             }
             languageFilterInput.setCustomValidity('');
-            languageFilterInput.value = languages.join(', ');
             next = { schemaVersion: LANGUAGE_TAG_FILTER_SCHEMA_VERSION, languages, includeOriginal: languageFilterOriginal.checked };
         }
         if (!appliesToActor) {
@@ -578,14 +585,52 @@ export function wireSettingsListeners(ctx: PanelContext): void {
         if (languageFilterCustom) languageFilterCustom.style.display = languageFilterMode.value === 'custom' ? 'block' : 'none';
         commitLanguageFilter();
     });
-    languageFilterInput?.addEventListener('change', commitLanguageFilter);
+    const unavailableAtOpen = new Set(Array.from(languageFilterInput?.options || [])
+        .filter((option) => option.dataset.known === 'false' && option.selected)
+        .map((option) => option.value));
+    languageFilterInput?.addEventListener('change', () => {
+        Array.from(languageFilterInput.options).forEach((option) => {
+            if (option.dataset.known === 'false' && !option.selected) {
+                unavailableAtOpen.delete(option.value);
+                option.remove();
+            }
+        });
+        const forgedUnknown = Array.from(languageFilterInput.selectedOptions)
+            .some((option) => option.dataset.known !== 'true' && !unavailableAtOpen.has(option.value));
+        if (forgedUnknown) {
+            languageFilterInput.setCustomValidity(JC.t!('panel_settings_language_filter_invalid'));
+            languageFilterInput.reportValidity();
+            return;
+        }
+        commitLanguageFilter();
+    });
+    let activeLanguageOption: HTMLOptionElement | null = null;
+    languageFilterInput?.addEventListener('click', (event) => {
+        if (event.target instanceof HTMLOptionElement) activeLanguageOption = event.target;
+    });
     languageFilterOriginal?.addEventListener('change', commitLanguageFilter);
     document.getElementById('languageTagFilterReset')?.addEventListener('click', () => {
         if (!languageFilterInput || !languageFilterOriginal) return;
-        languageFilterInput.value = '';
+        Array.from(languageFilterInput.options).forEach((option) => { option.selected = false; });
         languageFilterOriginal.checked = false;
+        if (languageFilterMode) languageFilterMode.value = 'inherit';
+        if (languageFilterCustom) languageFilterCustom.style.display = 'none';
         commitLanguageFilter();
     });
+    const moveLanguageSelection = (direction: -1 | 1): void => {
+        if (!languageFilterInput) return;
+        const option = activeLanguageOption?.selected
+            ? activeLanguageOption
+            : languageFilterInput.selectedOptions[0] || null;
+        if (!option) return;
+        const neighbor = direction < 0 ? option.previousElementSibling : option.nextElementSibling;
+        if (!(neighbor instanceof HTMLOptionElement)) return;
+        if (direction < 0) languageFilterInput.insertBefore(option, neighbor);
+        else languageFilterInput.insertBefore(neighbor, option);
+        commitLanguageFilter();
+    };
+    document.getElementById('languageTagFilterMoveUp')?.addEventListener('click', () => moveLanguageSelection(-1));
+    document.getElementById('languageTagFilterMoveDown')?.addEventListener('click', () => moveLanguageSelection(1));
 
     // Expand or collapse the 6 category rows when the user clicks the chevron.
     // The chevron rotation is driven by CSS via the aria-expanded attribute.

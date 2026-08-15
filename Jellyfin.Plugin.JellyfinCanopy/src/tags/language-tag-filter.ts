@@ -75,8 +75,10 @@ export function filterMediaLanguageIdentities(
         if (identity && !ordered.some((entry) => entry.canonicalTag === tag)) ordered.push(identity);
     };
     if (policy.includeOriginal) {
-        const original = resolveMediaLanguage(authoritativeOriginal);
-        if (original.status === 'valid') add(original.canonicalTag);
+        const originals = Array.isArray(authoritativeOriginal)
+            ? resolveMediaLanguageIdentities(authoritativeOriginal)
+            : resolveMediaLanguageIdentities([authoritativeOriginal]);
+        originals.forEach((original) => add(original.canonicalTag));
     }
     policy.languages.forEach(add);
     return ordered;

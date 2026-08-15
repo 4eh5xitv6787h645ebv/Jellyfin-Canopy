@@ -954,7 +954,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                     resolver,
                     _userConfig,
                     _projection,
-                    new StubTagCacheLifecycle());
+                    new StubTagCacheLifecycle(),
+                    new LanguageTagInventoryService(Library, Cache));
                 Controller.ControllerContext = new ControllerContext
                 {
                     HttpContext = new DefaultHttpContext

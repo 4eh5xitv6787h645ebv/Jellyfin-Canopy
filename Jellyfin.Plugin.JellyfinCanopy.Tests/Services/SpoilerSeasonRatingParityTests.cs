@@ -277,6 +277,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
         }
 
         [Fact]
+        public void GetTagData_OriginalLanguageIsAuthoritativeAndAbsentFromGuardedStrip()
+        {
+            var movie = new StreamMovie(width: 1920, height: 1080)
+            {
+                Id = Guid.NewGuid(),
+                Name = "Original language fixture",
+                OriginalLanguage = "ja",
+            };
+            var ordinary = GetItemTagData(new PluginConfiguration(), new UserSpoilerBlur(), movie);
+            Assert.Equal("ja", ordinary.GetProperty("OriginalLanguage").GetString());
+
+            var state = new UserSpoilerBlur();
+            var movieId = movie.Id.ToString("N");
+            state.Movies[movieId] = new SpoilerBlurMovieEntry { MovieId = movieId };
+            var guarded = GetItemTagData(StrictConfig(), state, movie);
+            Assert.False(guarded.TryGetProperty("OriginalLanguage", out _));
+        }
+
+        [Fact]
         public void GetTagData_GuardedMovieQualityProjection_PreservesVideoWidth()
         {
             var movie = new StreamMovie(width: 8192, height: 4096)
@@ -379,22 +398,25 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 var resolver = new SpoilerUserResolver(
                     manager, library, NullLogger<SpoilerUserResolver>.Instance, identity);
                 var configProvider = new FakePluginConfigProvider(cfg);
+                using var tagCacheService = new TagCacheService(
+                    library, appPaths, NullLogger<TagCacheService>.Instance);
 
-                // GetTagData does not touch the cache/revision services; null test
-                // placeholders keep this harness focused on its live fallback path.
+                // GetTagData does not touch the cache/revision services; the cache is
+                // present only because the controller's inventory owner is non-nullable.
                 var controller = new TagCacheController(
                     new RecordingHttpClientFactory(new HttpClientHandler()),
                     NullLogger<TagCacheController>.Instance,
                     users,
                     new SeerrCache(configProvider),
                     configProvider,
-                    tagCacheService: null!,
+                    tagCacheService,
                     library,
                     new StubUserDataManager(),
                     resolver,
                     manager,
                     projectionRevisionService: null!,
-                    tagCacheLifecycle: new StubTagCacheLifecycle());
+                    tagCacheLifecycle: new StubTagCacheLifecycle(),
+                    languageTagInventoryService: new LanguageTagInventoryService(library, tagCacheService));
                 var principal = new ClaimsPrincipal(new ClaimsIdentity(
                     new[] { new Claim("Jellyfin-UserId", user.Id.ToString()) },
                     "TestAuth"));

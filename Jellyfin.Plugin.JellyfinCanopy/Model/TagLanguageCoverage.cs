@@ -24,6 +24,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Model
         /// <summary>Observed languages whose full/partial status is unresolved.</summary>
         public string[] UnknownLanguages { get; init; } = System.Array.Empty<string>();
 
+        /// <summary>Authoritative original languages reported by accessible Episodes.</summary>
+        public string[] OriginalLanguages { get; init; } = System.Array.Empty<string>();
+
         /// <summary>True when traversal or the bounded language list was truncated.</summary>
         public bool Truncated { get; init; }
 

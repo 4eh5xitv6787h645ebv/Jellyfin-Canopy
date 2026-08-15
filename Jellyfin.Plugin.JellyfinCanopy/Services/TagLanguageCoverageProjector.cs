@@ -366,8 +366,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var present = new Dictionary<string, int>(StringComparer.Ordinal);
             var representatives = new Dictionary<string, CanonicalLanguage>(StringComparer.Ordinal);
             var unknownObserved = new HashSet<string>(StringComparer.Ordinal);
+            var originals = new Dictionary<string, CanonicalLanguage>(StringComparer.Ordinal);
             foreach (var item in evidence)
             {
+                var original = CanonicalizeLanguage(item.OriginalLanguage);
+                if (original != null)
+                {
+                    originals[original.Key] = originals.TryGetValue(original.Key, out var currentOriginal)
+                        ? ChooseRepresentative(currentOriginal, original)
+                        : original;
+                }
+
                 var languages = item.Languages
                     .Select(CanonicalizeLanguage)
                     .Where(static language => language != null)
@@ -436,6 +445,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     .Select(item => representatives[item.Language].WireTag).ToArray(),
                 UnknownLanguages = ordered.Where(static item => item.Tier == 2)
                     .Select(item => representatives[item.Language].WireTag).ToArray(),
+                OriginalLanguages = originals
+                    .Where(pair => representatives.ContainsKey(pair.Key))
+                    .Select(static pair => pair.Value)
+                    .OrderBy(static language => language.WireTag, StringComparer.Ordinal)
+                    .Take(MaximumLanguagesPerContainer)
+                    .Select(static language => language.WireTag).ToArray(),
                 Truncated = totalLanguages > MaximumLanguagesPerContainer,
                 OmittedLanguageCount = Math.Max(0, totalLanguages - MaximumLanguagesPerContainer),
             };
@@ -446,8 +461,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             var current = entry.SourceRevision != 0
                 && (!currentRevision.HasValue || entry.SourceRevision == currentRevision.Value);
             return current
-                ? LanguageEpisodeEvidence.Observed(entry.AudioLanguages ?? Array.Empty<string>())
-                : LanguageEpisodeEvidence.Unknown(entry.AudioLanguages ?? Array.Empty<string>());
+                ? LanguageEpisodeEvidence.Observed(entry.AudioLanguages ?? Array.Empty<string>(), entry.OriginalLanguage)
+                : LanguageEpisodeEvidence.Unknown(entry.AudioLanguages ?? Array.Empty<string>(), entry.OriginalLanguage);
         }
 
         private static CanonicalLanguage ChooseRepresentative(CanonicalLanguage left, CanonicalLanguage right)
@@ -543,6 +558,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 hasUntrustedRegion);
         }
 
+        internal static string? CanonicalizeLanguageTag(string? value)
+            => CanonicalizeLanguage(value)?.WireTag;
+
         private static IReadOnlyDictionary<string, string> BuildAliasMap(string values)
             => values.Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Select(static value => value.Split('=', 2))
@@ -589,13 +607,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
         private sealed record CanonicalLanguage(string Key, string WireTag, bool HasUntrustedRegion);
 
-        internal readonly record struct LanguageEpisodeEvidence(bool ProbeSucceeded, string[] Languages)
+        internal readonly record struct LanguageEpisodeEvidence(
+            bool ProbeSucceeded,
+            string[] Languages,
+            string? OriginalLanguage)
         {
-            internal static LanguageEpisodeEvidence Observed(IEnumerable<string> languages)
-                => new(true, languages.ToArray());
+            internal static LanguageEpisodeEvidence Observed(
+                IEnumerable<string> languages,
+                string? originalLanguage = null)
+                => new(true, languages.ToArray(), originalLanguage);
 
-            internal static LanguageEpisodeEvidence Unknown(IEnumerable<string> languages)
-                => new(false, languages.ToArray());
+            internal static LanguageEpisodeEvidence Unknown(
+                IEnumerable<string> languages,
+                string? originalLanguage = null)
+                => new(false, languages.ToArray(), originalLanguage);
         }
     }
 }

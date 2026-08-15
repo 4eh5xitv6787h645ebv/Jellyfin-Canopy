@@ -57,6 +57,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     | TagCacheFieldDependency.ParentSeries,
                 [nameof(TagCacheEntry.AudioLanguages)] = TagCacheFieldDependency.OwnItem
                     | TagCacheFieldDependency.FirstEpisode,
+                [nameof(TagCacheEntry.OriginalLanguage)] = TagCacheFieldDependency.OwnItem
+                    | TagCacheFieldDependency.FirstEpisode,
                 [nameof(TagCacheEntry.StreamData)] = TagCacheFieldDependency.OwnItem
                     | TagCacheFieldDependency.FirstEpisode,
                 [nameof(TagCacheEntry.LastUpdated)] = TagCacheFieldDependency.OwnItem,

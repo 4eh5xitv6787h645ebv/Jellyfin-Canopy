@@ -227,6 +227,72 @@ describe('regional language poster tags', () => {
         ]);
     });
 
+    it('applies configured regional priority globally before mixed-coverage cap', () => {
+        JC.currentSettings = {
+            languageTagsEnabled: true,
+            languageTagFilter: {
+                schemaVersion: 1,
+                languages: ['ja-JP', 'fr-FR', 'de-DE', 'en-US'],
+                includeOriginal: false,
+            },
+        };
+        const { host } = cardHost();
+        renderer.renderFromServerCache(host, {
+            LanguageCoverage: {
+                EligibleEpisodeCount: 4,
+                ObservedEpisodeCount: 3,
+                Complete: false,
+                FullLanguages: [],
+                PartialLanguages: ['en-US'],
+                UnknownLanguages: ['de-DE', 'fr-FR', 'ja-JP'],
+                OriginalLanguages: [],
+                Truncated: false,
+            },
+        }, 'policy-priority-series');
+
+        expect(presentations(host).map((tag) => JSON.parse(tag.dataset.langTags || '[]'))).toEqual([
+            ['ja-JP'], ['fr-FR'], ['de-DE'],
+        ]);
+        expect(presentations(host).map((tag) => tag.dataset.coverage)).toEqual([
+            'unknown', 'unknown', 'unknown',
+        ]);
+    });
+
+    it('uses authoritative OriginalLanguage on the prioritized server-cache leaf path', () => {
+        JC.currentSettings = {
+            languageTagsEnabled: true,
+            languageTagFilter: { schemaVersion: 1, languages: [], includeOriginal: true },
+        };
+        const { host } = cardHost();
+        renderer.renderFromServerCache(host, {
+            Type: 'Movie', AudioLanguages: ['en-US', 'ja-JP'], OriginalLanguage: 'ja-JP',
+        }, 'original-cache-leaf');
+
+        expect(presentations(host).map((tag) => JSON.parse(tag.dataset.langTags || '[]')))
+            .toEqual([['ja-JP']]);
+    });
+
+    it('retains authoritative Original through the hot-cache path without guessing', () => {
+        JC.currentSettings = {
+            languageTagsEnabled: true,
+            languageTagFilter: { schemaVersion: 1, languages: [], includeOriginal: true },
+        };
+        const live = cardHost();
+        renderer.render(live.host, {
+            Id: 'original-hot-leaf',
+            Type: 'Movie',
+            OriginalLanguage: 'pt-BR',
+            MediaSources: [{ MediaStreams: [
+                { Type: 'Audio', Language: 'en-US' },
+                { Type: 'Audio', Language: 'pt-BR' },
+            ] }],
+        });
+        const hot = cardHost();
+        expect(renderer.renderFromCache(hot.host, 'original-hot-leaf')).toBe(true);
+        expect(presentations(hot.host).map((tag) => JSON.parse(tag.dataset.langTags || '[]')))
+            .toEqual([['pt-BR']]);
+    });
+
     it('renders collection sidecars with member labels and one deterministic three-chip cap', () => {
         const { host } = cardHost();
         renderer.renderFromServerCache(host, {

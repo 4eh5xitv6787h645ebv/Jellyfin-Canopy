@@ -202,7 +202,7 @@ export function validateMediaLanguageIdentity(value: unknown): MediaLanguageIden
         canonicalTag: resolved.canonicalTag,
         // A null marker is deliberately conservative: it preserves the fact
         // that the original raw region was numeric, retired or unsupported.
-        flagRegion: record.flagRegion as string | null,
+        flagRegion: record.flagRegion,
     };
 }
 

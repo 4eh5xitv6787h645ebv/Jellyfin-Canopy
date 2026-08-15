@@ -34,6 +34,9 @@ public sealed class TagCacheDependencyInvalidationTests
             TagCacheFieldDependency.OwnItem | TagCacheFieldDependency.FirstEpisode,
             TagCacheDependencyGraph.FieldDependencies[nameof(TagCacheEntry.StreamData)]);
         Assert.Equal(
+            TagCacheFieldDependency.OwnItem | TagCacheFieldDependency.FirstEpisode,
+            TagCacheDependencyGraph.FieldDependencies[nameof(TagCacheEntry.OriginalLanguage)]);
+        Assert.Equal(
             TagCacheFieldDependency.OwnItem
                 | TagCacheFieldDependency.FirstEpisode
                 | TagCacheFieldDependency.ParentSeries,
@@ -78,6 +81,7 @@ public sealed class TagCacheDependencyInvalidationTests
             CommunityRating = 1,
             CriticRating = 10,
             AudioLanguages = new[] { "eng" },
+            OriginalLanguage = "ja",
             StreamData = streamData,
             LastUpdated = 5,
             SeriesId = Key(series.Id),
@@ -103,6 +107,7 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal(existing.EpisodeNumber, refreshed.EpisodeNumber);
         Assert.Same(existing.Genres, refreshed.Genres);
         Assert.Same(existing.AudioLanguages, refreshed.AudioLanguages);
+        Assert.Equal(existing.OriginalLanguage, refreshed.OriginalLanguage);
         Assert.Same(streamData, refreshed.StreamData);
         Assert.Equal(existing.SeriesId, refreshed.SeriesId);
         Assert.Equal(existing.SeasonId, refreshed.SeasonId);

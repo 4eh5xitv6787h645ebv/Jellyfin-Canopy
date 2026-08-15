@@ -41,6 +41,22 @@ public sealed class TagLanguageCoverageProjectorTests
     }
 
     [Fact]
+    public void Aggregate_ProjectsOnlyCanonicalOriginalsThatArePresentInAudioEvidence()
+    {
+        var result = TagLanguageCoverageProjector.Aggregate(
+            new[]
+            {
+                TagLanguageCoverageProjector.LanguageEpisodeEvidence.Observed(
+                    new[] { "pt-br", "eng" }, "pt-BR"),
+                TagLanguageCoverageProjector.LanguageEpisodeEvidence.Observed(
+                    new[] { "en" }, "ja"),
+            },
+            enumerationComplete: true);
+
+        Assert.Equal(new[] { "pt-BR" }, result.OriginalLanguages);
+    }
+
+    [Fact]
     public void Aggregate_FailedProbe_NeverBecomesFullOrAbsent()
     {
         var result = TagLanguageCoverageProjector.Aggregate(

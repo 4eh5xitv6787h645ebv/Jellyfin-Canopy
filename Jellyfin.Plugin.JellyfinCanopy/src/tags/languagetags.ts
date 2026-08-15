@@ -49,6 +49,7 @@ interface LanguageCoverageProjection {
     full: MediaLanguageIdentity[];
     partial: MediaLanguageIdentity[];
     unknown: MediaLanguageIdentity[];
+    originalLanguages: MediaLanguageIdentity[];
     truncated: boolean;
     omittedLanguageCount: number | null;
     memberNoun: 'episode' | 'member';
@@ -226,7 +227,8 @@ function readLanguageCoverage(
         || typeof record.Truncated !== 'boolean'
         || !Array.isArray(record.FullLanguages)
         || !Array.isArray(record.PartialLanguages)
-        || !Array.isArray(record.UnknownLanguages)) return null;
+        || !Array.isArray(record.UnknownLanguages)
+        || (record.OriginalLanguages !== undefined && !Array.isArray(record.OriginalLanguages))) return null;
     const eligibleCountField = memberNoun === 'episode' ? 'EligibleEpisodeCount' : 'EligibleMemberCount';
     const observedCountField = memberNoun === 'episode' ? 'ObservedEpisodeCount' : 'ObservedMemberCount';
     const eligibleMemberCount = record[eligibleCountField] === null
@@ -283,6 +285,10 @@ function readLanguageCoverage(
     const full = byTier('full');
     const partial = byTier('partial');
     const unknown = byTier('unknown');
+    const rawOriginalLanguages = (record.OriginalLanguages ?? []) as unknown[];
+    const originalLanguages = resolveMediaLanguageIdentities(rawOriginalLanguages);
+    if (originalLanguages.length !== rawOriginalLanguages.length
+        || originalLanguages.length > 32) return null;
     if (record.Complete && (eligibleMemberCount === null || observedMemberCount !== eligibleMemberCount)) return null;
     if ((record.Complete && unknown.length > 0) || (!record.Complete && full.length > 0)) return null;
     return {
@@ -292,6 +298,7 @@ function readLanguageCoverage(
         full,
         partial,
         unknown,
+        originalLanguages,
         truncated: record.Truncated,
         omittedLanguageCount,
         memberNoun,
@@ -323,10 +330,20 @@ function insertLanguageCoverage(
         ['unknown', coverage.unknown],
     ];
     const filter = currentLanguageTagFilter();
-    const presentations = groups.flatMap(([state, languages]) =>
+    const controlled = languageTagFilterControlsOrder(filter);
+    const byLanguage = new Map(groups.flatMap(([state, languages]) =>
+        languages.map((language) => [language.canonicalTag, state] as const)));
+    const orderedGroups: Array<[LanguageCoverageState, MediaLanguageIdentity[]]> = controlled
+        ? filterMediaLanguageIdentities(
+            groups.flatMap(([, languages]) => languages),
+            filter,
+            authoritativeOriginal,
+        ).map((language) => [byLanguage.get(language.canonicalTag)!, [language]])
+        : groups;
+    const presentations = orderedGroups.flatMap(([state, languages]) =>
         buildMediaLanguagePresentations(
-            filterMediaLanguageIdentities(languages, filter, authoritativeOriginal),
-            languageTagFilterControlsOrder(filter),
+            controlled ? languages : filterMediaLanguageIdentities(languages, filter, authoritativeOriginal),
+            controlled,
         )
             .map((presentation) => ({ state, presentation })));
 
@@ -509,7 +526,7 @@ const spec: TagSpec = {
                 // Coverage is policy-scoped, so never retain it in browser storage.
                 ctx.hot?.delete(itemId);
                 ctx.setPersistent(itemId, undefined);
-                if (coverage) insertLanguageCoverage(ctx, el, coverage, item.OriginalLanguage);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage, coverage.originalLanguages);
                 return;
             }
             if (isCollection) {
@@ -600,7 +617,7 @@ const spec: TagSpec = {
                     coverageValue,
                     isCollection ? 'member' : 'episode',
                 );
-                if (coverage) insertLanguageCoverage(ctx, el, coverage, entry.OriginalLanguage);
+                if (coverage) insertLanguageCoverage(ctx, el, coverage, coverage.originalLanguages);
                 return;
             }
             if (isCollection) return;

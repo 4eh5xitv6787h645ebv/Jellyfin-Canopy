@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JC } from '../../globals';
 import { recordDetailsViewShown, resetDetailsViewTrackingForTests } from '../../core/details-view';
+const LANGUAGE_FILTER_CHANGED_EVENT = 'jellyfin-canopy:language-filter-changed';
 import {
     initializeDetailsPage,
     installDetailsPage,
@@ -142,6 +143,48 @@ describe('details-page identity dispatcher', () => {
         expect(chip?.dataset.fileSource).toBe('BluRay');
         expect(getItem).toHaveBeenCalledTimes(1);
         expect(getItem).toHaveBeenCalledWith('pageusera', 'source-independent');
+    });
+
+    it('rerenders an open audio-language row for the acknowledged acting-user policy only', async () => {
+        const page = mountDetailsPage('language-live');
+        vi.spyOn(ApiClient, 'getItem').mockResolvedValue({
+            Id: 'language-live',
+            Type: 'Movie',
+            MediaSources: [{ MediaStreams: [
+                { Type: 'Audio', Language: 'en-US' },
+                { Type: 'Audio', Language: 'pt-BR' },
+            ] }],
+        });
+        JC.currentSettings = {
+            showAudioLanguages: true,
+            languageTagFilter: { schemaVersion: 1, languages: ['en-US'], includeOriginal: false },
+        };
+
+        initializeDetailsPage();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        expect(page.querySelector<HTMLElement>('.audio-language-item')?.dataset.lang).toBe('en-US');
+
+        const owner = JC.identity.capture()!;
+        JC.currentSettings.languageTagFilter = {
+            schemaVersion: 1, languages: ['pt-BR'], includeOriginal: false,
+        };
+        window.dispatchEvent(new CustomEvent(LANGUAGE_FILTER_CHANGED_EVENT, { detail: owner }));
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        expect(page.querySelector<HTMLElement>('.audio-language-item')?.dataset.lang).toBe('pt-BR');
+
+        JC.currentSettings.languageTagFilter = {
+            schemaVersion: 1, languages: ['en-US'], includeOriginal: false,
+        };
+        window.dispatchEvent(new CustomEvent(LANGUAGE_FILTER_CHANGED_EVENT, {
+            detail: { ...owner, userId: 'different-user' },
+        }));
+        vi.advanceTimersByTime(100);
+        await flushPromises();
+        expect(page.querySelector<HTMLElement>('.audio-language-item')?.dataset.lang).toBe('pt-BR');
     });
 
     it('removes a stale source when the host reuses the details page for an unknown item', async () => {

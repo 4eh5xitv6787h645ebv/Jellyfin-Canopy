@@ -223,6 +223,15 @@ function resolveTargetSettings(
         userSettings,
         'preferredAudioLanguage',
     ) ? userSettings.preferredAudioLanguage : null;
+    // Nested language policy is validated by its feature owner. Preserve the
+    // target account's exact tri-state value here instead of letting the
+    // generic scalar merge collapse every object to the administrator/default
+    // tier. This mirrors the acting-user loader without publishing target
+    // state into the actor runtime.
+    merged.languageTagFilter = Object.prototype.hasOwnProperty.call(
+        userSettings,
+        'languageTagFilter',
+    ) ? userSettings.languageTagFilter : null;
     merged.ratingTagScopeOverrides = Object.prototype.hasOwnProperty.call(
         userSettings,
         'ratingTagScopeOverrides',
