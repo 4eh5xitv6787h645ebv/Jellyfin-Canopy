@@ -607,6 +607,7 @@ test.describe('tags', () => {
                 Complete: true,
                 FullLanguages: ['en'],
                 PartialLanguages: [],
+                OriginalLanguages: [],
                 UnknownLanguages: [],
                 Truncated: false,
                 OmittedLanguageCount: 0,
