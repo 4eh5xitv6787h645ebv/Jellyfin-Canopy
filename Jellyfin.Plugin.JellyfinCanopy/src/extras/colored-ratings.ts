@@ -49,6 +49,25 @@ interface RatingElementState {
 let elementStates = new Map<HTMLElement, RatingElementState>();
 let generation = 0;
 
+function captureObservedHostText(element: HTMLElement, mutations: MutationRecord[]): boolean {
+    if (!mutations.some((mutation) => mutation.type === 'characterData')) return false;
+    const state = elementStates.get(element);
+    if (state) {
+        // The mutation itself proves that the host wrote this text, even when
+        // its value happens to equal our canonical render. A value comparison
+        // alone cannot distinguish that case from an untouched element.
+        state.sourceText = element.textContent;
+    }
+    return true;
+}
+
+function disconnectRatingTextObserver(element: HTMLElement, observer: MutationObserver): void {
+    // disconnect() discards queued records. Drain them first so a same-task
+    // host write followed by removal/identity teardown still advances sourceText.
+    captureObservedHostText(element, observer.takeRecords());
+    observer.disconnect();
+}
+
 function isActive(context: IdentityContext, expectedGeneration: number): boolean {
     return generation === expectedGeneration && JC.identity.isCurrent(context);
 }
@@ -82,7 +101,7 @@ function observeRatingText(
 
     const observer = new MutationObserver((mutations) => {
         if (!isActive(context, expectedGeneration)) return;
-        if (mutations.some((mutation) => mutation.type === 'characterData')) {
+        if (captureObservedHostText(element, mutations)) {
             debouncedProcess(context, expectedGeneration);
         }
     });
@@ -96,7 +115,7 @@ function observeRatingText(
 function pruneRatingTextObservers(liveElements: Set<HTMLElement>): void {
     ratingTextObservers.forEach((observer, element) => {
         if (liveElements.has(element) && element.isConnected) return;
-        observer.disconnect();
+        disconnectRatingTextObserver(element, observer);
         ratingTextObservers.delete(element);
         const state = elementStates.get(element);
         if (state) {
@@ -362,7 +381,7 @@ function cleanup(): void {
         clearTimeout(debounceTimer);
         debounceTimer = null;
     }
-    ratingTextObservers.forEach((observer) => observer.disconnect());
+    ratingTextObservers.forEach((observer, element) => disconnectRatingTextObserver(element, observer));
     ratingTextObservers.clear();
 }
 
@@ -375,10 +394,14 @@ export function resetColoredRatings(): void {
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
         // Defensive cleanup for annotations left by an interrupted/older
         // activation that has no entry in this module instance's state map.
+        // The main marker proves ownership of `rating`; predecessor-specific
+        // markers are the only proof that accessibility metadata is ours.
         element.removeAttribute(CONFIG.attributeName);
-        element.removeAttribute('aria-label');
-        element.removeAttribute('title');
+        if (element.dataset.jcColoredRatingAria === 'true') element.removeAttribute('aria-label');
+        if (element.dataset.jcColoredRatingTitle === 'true') element.removeAttribute('title');
         delete element.dataset.jcColoredRating;
+        delete element.dataset.jcColoredRatingAria;
+        delete element.dataset.jcColoredRatingTitle;
     });
     elementStates = new Map();
     ratingTextObservers = new Map();

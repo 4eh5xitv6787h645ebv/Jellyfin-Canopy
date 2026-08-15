@@ -119,6 +119,26 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.hasAttribute('title')).toBe(false);
     });
 
+    it('retains a late host write equal to the canonical rendered text', async () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        // Move beyond navigation settling, then model a new item's already-
+        // canonical host value on the retained text node. The value comparison
+        // is equal, but the characterData record still transfers ownership.
+        await vi.advanceTimersByTimeAsync(600);
+        rating.firstChild!.nodeValue = 'FSK-12';
+        await vi.advanceTimersByTimeAsync(100);
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
     it('updates plugin-owned accessibility metadata from FSK to non-FSK', async () => {
         const rating = addRating('DE-12');
         JC.initializeColoredRatings!();
@@ -244,6 +264,60 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.getAttribute('aria-label')).toBe('Host DE-16 label');
         expect(rating.getAttribute('title')).toBe('Host DE-16 title');
         expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
+    it('drains an equal canonical host write before immediate detached identity teardown', () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        // No microtask/timer yield: teardown must drain the observer record
+        // before disconnect() would otherwise discard it.
+        rating.firstChild!.nodeValue = 'FSK-12';
+        rating.remove();
+        switchIdentity('ratings-server-b', 'ratings-user-b');
+
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
+    it('preserves host accessibility metadata on predecessor-marker cleanup', () => {
+        const rating = addRating('PG-13');
+        rating.setAttribute('rating', 'stale-plugin-rating');
+        rating.setAttribute('aria-label', 'Host rating label');
+        rating.setAttribute('title', 'Host rating title');
+        rating.dataset.jcColoredRating = 'true';
+
+        resetColoredRatings();
+
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.getAttribute('aria-label')).toBe('Host rating label');
+        expect(rating.getAttribute('title')).toBe('Host rating title');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingAria).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingTitle).toBeUndefined();
+    });
+
+    it('removes accessibility metadata proven owned by predecessor markers', () => {
+        const rating = addRating('PG-13');
+        rating.setAttribute('rating', 'PG-13');
+        rating.setAttribute('aria-label', 'Content rated PG-13');
+        rating.setAttribute('title', 'Rating: PG-13');
+        rating.dataset.jcColoredRating = 'true';
+        rating.dataset.jcColoredRatingAria = 'true';
+        rating.dataset.jcColoredRatingTitle = 'true';
+
+        resetColoredRatings();
+
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingAria).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingTitle).toBeUndefined();
     });
 
     it('preserves host metadata for unsupported FSK-prefixed values', () => {
