@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Kontrollerer",
   "qbittorrent_state_error": "Overførselsfejl",
   "qbittorrent_state_unknown": "Torrent aktiv",
-  "qbittorrent_unavailable": "Torrenttelemetri er ikke tilgængelig"
+  "qbittorrent_unavailable": "Torrenttelemetri er ikke tilgængelig",
+  "qbittorrent_timestamp_last_activity": "Seneste aktivitet",
+  "qbittorrent_timestamp_completed": "Fuldført",
+  "qbittorrent_timestamp_added": "Tilføjet"
 }

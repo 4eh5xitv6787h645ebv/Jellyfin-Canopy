@@ -89,6 +89,12 @@ describe('qBittorrent item telemetry', () => {
         expect(context.page.textContent).toContain('100.0%');
         expect(context.page.textContent).toContain('2.25');
         expect(context.page.textContent).toContain('…example.net');
+        const activity = context.page.querySelector<HTMLTimeElement>(
+            'time[data-timestamp-kind="last-activity"]',
+        );
+        expect(activity?.dateTime).toBe(payload.lastActivityAt);
+        expect(activity?.textContent).toContain('Last activity:');
+        expect(activity?.getAttribute('aria-label')).toBe(activity?.textContent);
         expect(context.page.textContent).not.toContain('hash');
         expect(QBITTORRENT_TELEMETRY_CSS).toMatch(/block-size:\s*2\.25rem/);
         expect(QBITTORRENT_TELEMETRY_CSS).toMatch(/overflow:\s*auto hidden/);
@@ -96,6 +102,34 @@ describe('qBittorrent item telemetry', () => {
             '/qbittorrent/telemetry/item-a',
             expect.objectContaining({ skipCache: true, skipRetry: true, timeoutMs: 10_000 }),
         );
+        integration.reset();
+    });
+
+    it('falls back from activity to completion to added time and omits absent timestamps', async () => {
+        const plugin = vi.fn()
+            .mockResolvedValueOnce({ ...payload, lastActivityAt: null })
+            .mockResolvedValueOnce({ ...payload, lastActivityAt: null, completedAt: null })
+            .mockResolvedValueOnce({ ...payload, lastActivityAt: null, completedAt: null, addedAt: null });
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const integration = createQbittorrentTelemetryIntegration(scope());
+
+        const completed = target('item-completed');
+        integration.render(completed);
+        await vi.waitFor(() => expect(completed.page.querySelector('time')?.dataset.timestampKind)
+            .toBe('completed'));
+        expect(completed.page.querySelector('time')?.textContent).toContain('Completed:');
+
+        const added = target('item-added');
+        integration.render(added);
+        await vi.waitFor(() => expect(added.page.querySelector('time')?.dataset.timestampKind)
+            .toBe('added'));
+        expect(added.page.querySelector('time')?.textContent).toContain('Added:');
+
+        const missing = target('item-missing');
+        integration.render(missing);
+        await vi.waitFor(() => expect(plugin).toHaveBeenCalledTimes(3));
+        await Promise.resolve();
+        expect(missing.page.querySelector('time')).toBeNull();
         integration.reset();
     });
 
@@ -174,6 +208,27 @@ describe('qBittorrent item telemetry', () => {
         integration.reset();
         await vi.advanceTimersByTimeAsync(480_000);
         expect(plugin).toHaveBeenCalledTimes(5);
+    });
+
+    it('suppresses hidden-page polls and resumes on the next visible interval', async () => {
+        vi.useFakeTimers();
+        let visibility: DocumentVisibilityState = 'visible';
+        vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+        const plugin = vi.fn().mockResolvedValue(payload);
+        JC.core.api = { plugin } as unknown as ApiApi;
+        const integration = createQbittorrentTelemetryIntegration(scope());
+        const context = target('item-visibility');
+
+        integration.render(context);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        visibility = 'hidden';
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(plugin).toHaveBeenCalledTimes(1);
+        visibility = 'visible';
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(plugin).toHaveBeenCalledTimes(2);
+        integration.reset();
     });
 
     it('removes telemetry and aborts work when configuration ownership drains', async () => {

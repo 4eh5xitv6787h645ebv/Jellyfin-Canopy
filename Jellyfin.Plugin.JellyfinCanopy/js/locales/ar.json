@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "جارٍ التحقق",
   "qbittorrent_state_error": "خطأ في النقل",
   "qbittorrent_state_unknown": "تورنت نشط",
-  "qbittorrent_unavailable": "بيانات التورنت غير متاحة"
+  "qbittorrent_unavailable": "بيانات التورنت غير متاحة",
+  "qbittorrent_timestamp_last_activity": "آخر نشاط",
+  "qbittorrent_timestamp_completed": "اكتمل",
+  "qbittorrent_timestamp_added": "أُضيف"
 }

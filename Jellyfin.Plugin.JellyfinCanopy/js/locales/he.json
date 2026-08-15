@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "בבדיקה",
   "qbittorrent_state_error": "שגיאת העברה",
   "qbittorrent_state_unknown": "טורנט פעיל",
-  "qbittorrent_unavailable": "נתוני הטורנט אינם זמינים"
+  "qbittorrent_unavailable": "נתוני הטורנט אינם זמינים",
+  "qbittorrent_timestamp_last_activity": "פעילות אחרונה",
+  "qbittorrent_timestamp_completed": "הושלם",
+  "qbittorrent_timestamp_added": "נוסף"
 }

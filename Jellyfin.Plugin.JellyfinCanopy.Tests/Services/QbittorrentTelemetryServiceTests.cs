@@ -397,6 +397,54 @@ public sealed class QbittorrentTelemetryServiceTests
         Assert.Single(handler.Sent);
     }
 
+    [Theory]
+    [InlineData("not-ok")]
+    [InlineData("oversized")]
+    public async Task LegacyLoginInvalidBody_LogsOutTheAlreadyOwnedSession(string bodyKind)
+    {
+        var cookies = new List<string>();
+        var handler = LegacyLoginBodyHandler(
+            () => new StringContent(
+                bodyKind == "oversized" ? new string('x', 65) : "Nope.",
+                Encoding.ASCII),
+            cookies);
+        var service = new QbittorrentTelemetryService(
+            new RecordingHttpClientFactory(handler),
+            Provider("password"));
+
+        var result = await service.TestConnectionAsync(CancellationToken.None);
+
+        Assert.Equal(QbittorrentTelemetryResultKind.Unavailable, result);
+        Assert.Equal(
+            [
+                (HttpMethod.Post, "/api/v2/auth/login"),
+                (HttpMethod.Post, "/api/v2/auth/logout"),
+            ],
+            handler.Sent.Select(request => (request.Method, request.Path)).ToArray());
+        Assert.Equal(["SID=legacy-cleanup-session"], cookies);
+    }
+
+    [Fact]
+    public async Task LegacyLoginThrowingBody_LogsOutWithSameCookieAndPreservesGenericFailure()
+    {
+        var cookies = new List<string>();
+        var handler = LegacyLoginBodyHandler(() => new ThrowingContent(), cookies);
+        var service = new QbittorrentTelemetryService(
+            new RecordingHttpClientFactory(handler),
+            Provider("password"));
+
+        var result = await service.TestConnectionAsync(CancellationToken.None);
+
+        Assert.Equal(QbittorrentTelemetryResultKind.Unavailable, result);
+        Assert.Equal(
+            [
+                (HttpMethod.Post, "/api/v2/auth/login"),
+                (HttpMethod.Post, "/api/v2/auth/logout"),
+            ],
+            handler.Sent.Select(request => (request.Method, request.Path)).ToArray());
+        Assert.Equal(["SID=legacy-cleanup-session"], cookies);
+    }
+
     [Fact]
     public async Task MalformedTorrentPayload_StillLogsOutTheOwnedSession()
     {
@@ -521,6 +569,35 @@ public sealed class QbittorrentTelemetryServiceTests
                     {
                         Content = new StringContent(string.Empty, Encoding.ASCII),
                     };
+                }
+
+                return null;
+            },
+        };
+
+    private static RecordingHttpMessageHandler LegacyLoginBodyHandler(
+        Func<HttpContent> content,
+        List<string> cookies)
+        => new()
+        {
+            ResponseFactory = request =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("/api/v2/auth/login", StringComparison.Ordinal))
+                {
+                    var response = new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = content(),
+                    };
+                    response.Headers.TryAddWithoutValidation(
+                        "Set-Cookie",
+                        "SID=legacy-cleanup-session; HttpOnly; SameSite=Strict; path=/");
+                    return response;
+                }
+
+                if (request.RequestUri.AbsolutePath.EndsWith("/api/v2/auth/logout", StringComparison.Ordinal))
+                {
+                    cookies.Add(Assert.Single(request.Headers.GetValues("Cookie")));
+                    return new HttpResponseMessage(HttpStatusCode.OK);
                 }
 
                 return null;

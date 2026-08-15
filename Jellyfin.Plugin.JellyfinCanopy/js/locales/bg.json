@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Проверяване",
   "qbittorrent_state_error": "Грешка при прехвърляне",
   "qbittorrent_state_unknown": "Активен торент",
-  "qbittorrent_unavailable": "Телеметрията за торента не е налична"
+  "qbittorrent_unavailable": "Телеметрията за торента не е налична",
+  "qbittorrent_timestamp_last_activity": "Последна активност",
+  "qbittorrent_timestamp_completed": "Завършено",
+  "qbittorrent_timestamp_added": "Добавено"
 }

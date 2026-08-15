@@ -294,20 +294,45 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService, 
             request,
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.OK)
-        {
-            var body = await ReadBoundedAsync(response, 64, cancellationToken).ConfigureAwait(false);
-            if (body == null
-                || !Encoding.ASCII.GetString(body).Trim().Equals("Ok.", StringComparison.Ordinal))
-            {
-                return null;
-            }
-        }
-        else if (response.StatusCode != HttpStatusCode.NoContent)
+        if (response.StatusCode != HttpStatusCode.OK
+            && response.StatusCode != HttpStatusCode.NoContent)
         {
             return null;
         }
 
+        // qBittorrent has already allocated the server-side session when this
+        // response arrives. Take ownership of its one accepted cookie before a
+        // legacy response-body read can fail, so every later failure can still
+        // release the exact session under the independent cleanup deadline.
+        var accepted = ParseOwnedSessionCookie(response);
+        if (accepted == null)
+        {
+            return null;
+        }
+
+        if (response.StatusCode == HttpStatusCode.NoContent) return accepted;
+
+        try
+        {
+            var body = await ReadBoundedAsync(response, 64, cancellationToken).ConfigureAwait(false);
+            if (body != null
+                && Encoding.ASCII.GetString(body).Trim().Equals("Ok.", StringComparison.Ordinal))
+            {
+                return accepted;
+            }
+        }
+        catch
+        {
+            await LogoutBestEffortAsync(client, capture, accepted).ConfigureAwait(false);
+            throw;
+        }
+
+        await LogoutBestEffortAsync(client, capture, accepted).ConfigureAwait(false);
+        return null;
+    }
+
+    private static SessionCookie? ParseOwnedSessionCookie(HttpResponseMessage response)
+    {
         SessionCookie? accepted = null;
         foreach (var header in response.Headers.TryGetValues("Set-Cookie", out var values)
             ? values
@@ -387,6 +412,11 @@ public sealed class QbittorrentTelemetryService : IQbittorrentTelemetryService, 
         catch (IOException)
         {
             // Response-stream transport faults must not replace a successful read-only result.
+        }
+        catch (Exception)
+        {
+            // Cleanup is strictly best effort. A handler-specific cleanup fault
+            // must never replace the primary login/read result or exception.
         }
     }
 

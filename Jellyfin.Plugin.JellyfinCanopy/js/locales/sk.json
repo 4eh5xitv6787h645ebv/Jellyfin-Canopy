@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Kontrola",
   "qbittorrent_state_error": "Chyba prenosu",
   "qbittorrent_state_unknown": "Torrent je aktívny",
-  "qbittorrent_unavailable": "Telemetria torrentu nie je dostupná"
+  "qbittorrent_unavailable": "Telemetria torrentu nie je dostupná",
+  "qbittorrent_timestamp_last_activity": "Posledná aktivita",
+  "qbittorrent_timestamp_completed": "Dokončené",
+  "qbittorrent_timestamp_added": "Pridané"
 }

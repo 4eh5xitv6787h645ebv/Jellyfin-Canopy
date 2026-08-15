@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Ellenőrzés",
   "qbittorrent_state_error": "Átviteli hiba",
   "qbittorrent_state_unknown": "Aktív torrent",
-  "qbittorrent_unavailable": "A torrent telemetriája nem érhető el"
+  "qbittorrent_unavailable": "A torrent telemetriája nem érhető el",
+  "qbittorrent_timestamp_last_activity": "Legutóbbi tevékenység",
+  "qbittorrent_timestamp_completed": "Befejezve",
+  "qbittorrent_timestamp_added": "Hozzáadva"
 }

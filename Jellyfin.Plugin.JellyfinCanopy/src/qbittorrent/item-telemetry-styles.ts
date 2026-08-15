@@ -25,6 +25,7 @@ export const QBITTORRENT_TELEMETRY_CSS = `
 .jc-qbittorrent-telemetry .material-icons { font-size: 1.05rem; }
 .jc-qbittorrent-telemetry-details { display: inline-flex; gap: .5rem; }
 .jc-qbittorrent-telemetry-detail { color: var(--jf-palette-text-secondary, currentColor); }
+.jc-qbittorrent-telemetry-time { font-variant-numeric: tabular-nums; }
 .jc-qbittorrent-telemetry-error {
     background: color-mix(in srgb, var(--jf-palette-error-main, #f44336) 18%, transparent);
 }

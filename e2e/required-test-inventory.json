@@ -100,7 +100,7 @@
     "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › unsupported input mode and protocol fail closed without owner state",
     "e2e/platform-native-pilot.spec.ts › Platform v1 native pilot — live Jellyfin 12 › a live parental-policy revocation invalidates an already-prepared Seerr capability",
     "e2e/player-shortcuts-direct.spec.ts › direct player shortcuts › track, aspect, and playback-info actions stay on direct browser surfaces",
-    "e2e/qbittorrent-telemetry.spec.ts › qBittorrent telemetry › real browser render, navigation fencing, and live disable teardown",
+    "e2e/qbittorrent-telemetry.spec.ts › qBittorrent telemetry › real loader account, no-match polling, navigation, and live disable lifecycle",
     "e2e/request-approvals.spec.ts › in-app request approvals › admin: affordance renders and the approve/decline endpoint round-trips",
     "e2e/request-approvals.spec.ts › in-app request approvals › non-admin: no approve/decline UI and the endpoint returns 403",
     "e2e/requests-long-title-responsive.spec.ts › responsive Requests and Issues cards (#466 finding 6) › modern: long request and issue titles ellipsize without card overflow",

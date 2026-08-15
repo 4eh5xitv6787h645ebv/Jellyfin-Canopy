@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Kontrollerar",
   "qbittorrent_state_error": "Överföringsfel",
   "qbittorrent_state_unknown": "Torrent aktiv",
-  "qbittorrent_unavailable": "Torrenttelemetri är inte tillgänglig"
+  "qbittorrent_unavailable": "Torrenttelemetri är inte tillgänglig",
+  "qbittorrent_timestamp_last_activity": "Senaste aktivitet",
+  "qbittorrent_timestamp_completed": "Slutförd",
+  "qbittorrent_timestamp_added": "Tillagd"
 }

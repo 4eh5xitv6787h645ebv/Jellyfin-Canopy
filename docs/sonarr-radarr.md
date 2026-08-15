@@ -427,7 +427,9 @@ Canopy can add compact, read-only torrent health to movie and episode details.
 This is separate from the Sonarr/Radarr lifecycle: it reports the current
 qBittorrent transfer state, bounded progress and ratio, a redacted tracker
 identity, and relevant timestamps for an item that already exists in Jellyfin.
-It is disabled by default.
+The compact timestamp shows last activity when available, otherwise completion,
+then the added time; it is omitted when qBittorrent supplies none of those
+values. It is disabled by default.
 
 To configure it, expand **qBittorrent read-only telemetry** in the **Requests
 Page** settings, enter the Web UI connection, and add one path mapping per line.

@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "正在检查",
   "qbittorrent_state_error": "传输错误",
   "qbittorrent_state_unknown": "种子活动中",
-  "qbittorrent_unavailable": "种子遥测不可用"
+  "qbittorrent_unavailable": "种子遥测不可用",
+  "qbittorrent_timestamp_last_activity": "最后活动",
+  "qbittorrent_timestamp_completed": "已完成",
+  "qbittorrent_timestamp_added": "已添加"
 }

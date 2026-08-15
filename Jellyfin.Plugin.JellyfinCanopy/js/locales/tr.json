@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Kontrol ediliyor",
   "qbittorrent_state_error": "Aktarım hatası",
   "qbittorrent_state_unknown": "Torrent etkin",
-  "qbittorrent_unavailable": "Torrent telemetrisi kullanılamıyor"
+  "qbittorrent_unavailable": "Torrent telemetrisi kullanılamıyor",
+  "qbittorrent_timestamp_last_activity": "Son etkinlik",
+  "qbittorrent_timestamp_completed": "Tamamlandı",
+  "qbittorrent_timestamp_added": "Eklendi"
 }

@@ -1,4 +1,5 @@
 import type { FeatureScope } from '../core/feature-loader';
+import { formatDate, formatTime } from '../core/locale';
 import {
     registerDetailsIntegration,
     type DetailsIntegration,
@@ -133,6 +134,31 @@ function appendText(parent: Element, className: string, value: string): void {
     parent.appendChild(span);
 }
 
+function appendRelevantTimestamp(parent: Element, telemetry: QbittorrentTelemetry): void {
+    const relevant = telemetry.lastActivityAt
+        ? { value: telemetry.lastActivityAt, key: 'qbittorrent_timestamp_last_activity', fallback: 'Last activity', kind: 'last-activity' }
+        : telemetry.completedAt
+            ? { value: telemetry.completedAt, key: 'qbittorrent_timestamp_completed', fallback: 'Completed', kind: 'completed' }
+            : telemetry.addedAt
+                ? { value: telemetry.addedAt, key: 'qbittorrent_timestamp_added', fallback: 'Added', kind: 'added' }
+                : null;
+    if (!relevant) return;
+    const date = new Date(relevant.value);
+    const localized = `${formatDate(date, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+    })} ${formatTime(date, { hour: '2-digit', minute: '2-digit' })}`.slice(0, 128);
+    const label = text(relevant.key, relevant.fallback);
+    const time = document.createElement('time');
+    time.className = 'jc-qbittorrent-telemetry-detail jc-qbittorrent-telemetry-time';
+    time.dateTime = relevant.value;
+    time.dataset.timestampKind = relevant.kind;
+    time.setAttribute('aria-label', `${label}: ${localized}`);
+    time.textContent = `${label}: ${localized}`;
+    parent.appendChild(time);
+}
+
 function render(
     context: DetailsIntegrationContext,
     phase: Phase,
@@ -180,6 +206,7 @@ function render(
     if (telemetry.trackerIdentity) {
         appendText(details, 'jc-qbittorrent-telemetry-detail', telemetry.trackerIdentity);
     }
+    appendRelevantTimestamp(details, telemetry);
     chip.appendChild(details);
     slot.appendChild(chip);
 }

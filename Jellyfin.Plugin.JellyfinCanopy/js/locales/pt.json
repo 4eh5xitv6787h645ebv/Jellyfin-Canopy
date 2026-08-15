@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "A verificar",
   "qbittorrent_state_error": "Erro de transferência",
   "qbittorrent_state_unknown": "Torrent ativo",
-  "qbittorrent_unavailable": "Telemetria do torrent indisponível"
+  "qbittorrent_unavailable": "Telemetria do torrent indisponível",
+  "qbittorrent_timestamp_last_activity": "Última atividade",
+  "qbittorrent_timestamp_completed": "Concluído",
+  "qbittorrent_timestamp_added": "Adicionado"
 }

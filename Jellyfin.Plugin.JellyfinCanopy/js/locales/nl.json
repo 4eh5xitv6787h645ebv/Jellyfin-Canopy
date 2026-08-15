@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Controleren",
   "qbittorrent_state_error": "Overdrachtsfout",
   "qbittorrent_state_unknown": "Torrent actief",
-  "qbittorrent_unavailable": "Torrenttelemetrie niet beschikbaar"
+  "qbittorrent_unavailable": "Torrenttelemetrie niet beschikbaar",
+  "qbittorrent_timestamp_last_activity": "Laatste activiteit",
+  "qbittorrent_timestamp_completed": "Voltooid",
+  "qbittorrent_timestamp_added": "Toegevoegd"
 }

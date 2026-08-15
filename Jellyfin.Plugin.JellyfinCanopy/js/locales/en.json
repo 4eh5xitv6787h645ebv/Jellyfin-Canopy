@@ -1005,5 +1005,8 @@
   "qbittorrent_state_checking": "Checking",
   "qbittorrent_state_error": "Transfer error",
   "qbittorrent_state_unknown": "Torrent active",
-  "qbittorrent_unavailable": "Torrent telemetry unavailable"
+  "qbittorrent_unavailable": "Torrent telemetry unavailable",
+  "qbittorrent_timestamp_last_activity": "Last activity",
+  "qbittorrent_timestamp_completed": "Completed",
+  "qbittorrent_timestamp_added": "Added"
 }
