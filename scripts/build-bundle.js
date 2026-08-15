@@ -37,6 +37,7 @@ const BOOTSTRAP_ENTRIES = Object.freeze({
 // entry here without changing output naming, manifest generation, or serving.
 const ESM_ENTRIES = Object.freeze({
     'active-streams': path.join(SRC_ROOT, 'entries', 'active-streams.ts'),
+    awards: path.join(SRC_ROOT, 'entries', 'awards.ts'),
     'activity-icons': path.join(SRC_ROOT, 'entries', 'activity-icons.ts'),
     'bookmarks-page': path.join(SRC_ROOT, 'entries', 'bookmarks-page.ts'),
     'bookmarks-runtime': path.join(SRC_ROOT, 'entries', 'bookmarks-runtime.ts'),

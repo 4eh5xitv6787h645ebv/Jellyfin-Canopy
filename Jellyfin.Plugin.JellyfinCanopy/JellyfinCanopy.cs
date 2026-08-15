@@ -521,6 +521,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy
         /// </summary>
         public static string AssetCacheDirectory => GetPluginDataSubdirectory("asset_cache");
 
+        /// <summary>On-disk root of the optional, versioned local awards index.</summary>
+        public static string AwardsIndexDirectory => GetPluginDataSubdirectory("awards_index");
+
         private static string GetPluginDataSubdirectory(string name)
         {
             if (Instance == null)

@@ -6,6 +6,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Platform.Hosting;
 using Jellyfin.Plugin.JellyfinCanopy.Services;
+using Jellyfin.Plugin.JellyfinCanopy.Services.Awards;
 using Jellyfin.Plugin.JellyfinCanopy.Services.Seerr;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.Platform;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
@@ -31,7 +32,7 @@ public sealed class MonitorSubscriptionLifecycleTests
 {
     private sealed class Fixture
     {
-        public Fixture(PluginConfiguration? initialConfig)
+        public Fixture(PluginConfiguration? initialConfig, IAwardsSourceClient? awardsSource = null)
         {
             Provider = new FakePluginConfigProvider(initialConfig);
             Library = new CountingLibraryManager();
@@ -66,6 +67,12 @@ public sealed class MonitorSubscriptionLifecycleTests
             PrepareHandles = new PlatformPrepareHandleOwner();
             PreparedContexts = new PlatformPreparedActionContextOwner(Capabilities);
             Qbittorrent = new StubQbittorrentTelemetryService();
+            AwardsIndexPath = Path.Combine(Path.GetTempPath(), $"jc-awards-notifier-{Guid.NewGuid():N}.json");
+            Awards = new AwardsIndexService(
+                awardsSource ?? new NoOpAwardsSource(),
+                NullLogger<AwardsIndexService>.Instance,
+                AwardsIndexPath,
+                configProvider: Provider);
             Notifier = new LiveNotifierService(
                 null!,
                 Sessions,
@@ -78,6 +85,7 @@ public sealed class MonitorSubscriptionLifecycleTests
                 PreparedContexts,
                 new StubTagCacheLifecycle(),
                 Qbittorrent,
+                Awards,
                 NullLogger<LiveNotifierService>.Instance);
         }
 
@@ -93,6 +101,10 @@ public sealed class MonitorSubscriptionLifecycleTests
 
         public AutoSeasonRequestMonitor AutoSeason { get; }
 
+        public AwardsIndexService Awards { get; }
+
+        public string AwardsIndexPath { get; }
+
         public PlatformActionCapabilityService Capabilities { get; }
 
         public PlatformPrepareHandleOwner PrepareHandles { get; }
@@ -102,6 +114,12 @@ public sealed class MonitorSubscriptionLifecycleTests
         public StubQbittorrentTelemetryService Qbittorrent { get; }
 
         public LiveNotifierService Notifier { get; }
+
+        private sealed class NoOpAwardsSource : IAwardsSourceClient
+        {
+            public Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+                => Task.FromResult(new AwardsSourceSnapshot(Array.Empty<AwardsSourceRecord>()));
+        }
 
         /// <summary>Models the startup scheduled task's three Initialize() calls.</summary>
         public void RunStartup()
@@ -143,6 +161,7 @@ public sealed class MonitorSubscriptionLifecycleTests
             PreparedContexts.Dispose();
             Capabilities.Dispose();
             PrepareHandles.Dispose();
+            Awards.Dispose();
         }
     }
 
@@ -156,6 +175,61 @@ public sealed class MonitorSubscriptionLifecycleTests
         Assert.Equal(1, fixture.Qbittorrent.InvalidationCount);
         await notification;
         fixture.DisposeMonitors();
+    }
+
+    [Fact]
+    public async Task ConfigurationSave_DisablingAwardsCancelsAndJoinsThePhysicalRefreshOwner()
+    {
+        var source = new LiveConfigAwardsSource();
+        var fixture = new Fixture(new PluginConfiguration { AwardsEnabled = true }, source);
+        var refresh = fixture.Awards.RefreshAsync(CancellationToken.None);
+        await source.Started.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var notification = fixture.SaveConfigurationAsync(new PluginConfiguration { AwardsEnabled = false });
+        await source.CancellationObserved.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(notification.IsCompleted);
+        source.Release();
+
+        await notification;
+        Assert.False(await refresh);
+        Assert.Equal(1, source.Calls);
+        Assert.False(File.Exists(fixture.AwardsIndexPath));
+        fixture.DisposeMonitors();
+    }
+
+    private sealed class LiveConfigAwardsSource : IAwardsSourceClient
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _cancellationObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<AwardsSourceSnapshot> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls { get; private set; }
+
+        public Task Started => _started.Task;
+
+        public Task CancellationObserved => _cancellationObserved.Task;
+
+        public async Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+        {
+            Calls++;
+            _started.TrySetResult();
+            using var registration = cancellationToken.Register(() => _cancellationObserved.TrySetResult());
+            return await _completion.Task.ConfigureAwait(false);
+        }
+
+        public void Release()
+            => _completion.TrySetResult(new AwardsSourceSnapshot([
+                new AwardsSourceRecord(
+                    "Q42",
+                    AwardsMediaKind.Movie,
+                    "tmdb",
+                    "123",
+                    "Late Award",
+                    2026,
+                    AwardOutcome.Win),
+            ]));
     }
 
     private static PluginConfiguration Config(

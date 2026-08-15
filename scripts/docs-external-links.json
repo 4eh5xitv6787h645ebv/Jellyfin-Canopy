@@ -137,6 +137,18 @@
       "probe": "dns-only"
     },
     {
+      "url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_API_Usage_Guidelines/en",
+      "reason": "Official Wikimedia API usage guidance governing the optional awards index client."
+    },
+    {
+      "url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_Robot_Policy",
+      "reason": "Official Wikimedia robot policy governing the optional automated awards index refresh."
+    },
+    {
+      "url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy/en",
+      "reason": "Official Wikimedia User-Agent policy governing the optional awards index client."
+    },
+    {
       "url": "https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy",
       "reason": "Canonical Jellyfin Canopy project link."
     },
@@ -325,8 +337,20 @@
       "reason": "Original upstream author support link."
     },
     {
+      "url": "https://wikitech.wikimedia.org/wiki/Wikidata_Query_Service/Technical_interactions",
+      "reason": "Official WDQS availability and failure-isolation guidance for the optional awards refresh."
+    },
+    {
       "url": "https://www.buymeacoffee.com/n00bcodr",
       "reason": "Historical upstream attribution or source reference."
+    },
+    {
+      "url": "https://www.mediawiki.org/wiki/API:Etiquette",
+      "reason": "Official MediaWiki API etiquette guidance governing the optional awards index refresh."
+    },
+    {
+      "url": "https://www.mediawiki.org/wiki/Manual:Maxlag_parameter",
+      "reason": "Official MediaWiki maxlag guidance documenting why it does not apply to the WDQS endpoint."
     },
     {
       "url": "https://www.themoviedb.org/",
@@ -335,6 +359,14 @@
     {
       "url": "https://www.themoviedb.org/settings/api",
       "reason": "Reviewed public third-party documentation or asset."
+    },
+    {
+      "url": "https://www.wikidata.org/wiki/Wikidata:Data_access",
+      "reason": "Official Wikidata data-access guidance for the optional awards source."
+    },
+    {
+      "url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+      "reason": "Official Wikidata licensing terms for locally cached awards facts."
     }
   ]
 }

@@ -8,6 +8,7 @@ export function isDetailsEnhancementsEnabled(): boolean {
         || JC.currentSettings?.showFileSource === true
         || JC.currentSettings?.showAudioLanguages === true
         || (JC.pluginConfig?.ShowReleaseDates === true && JC.pluginConfig?.TmdbEnabled === true)
+        || JC.pluginConfig?.AwardsEnabled === true
         || JC.pluginConfig?.HiddenContentEnabled === true
         || JC.pluginConfig?.SpoilerBlurEnabled === true
         || (

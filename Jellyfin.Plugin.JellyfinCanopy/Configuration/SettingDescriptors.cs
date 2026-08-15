@@ -179,6 +179,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Configuration
                 Public("HideReviewsFromHiddenUsers", c => c.HideReviewsFromHiddenUsers),
                 Public("HideReviewsFromDisabledUsers", c => c.HideReviewsFromDisabledUsers),
                 Public("ShowReleaseDates", c => c.ShowReleaseDates),
+                Public("AwardsEnabled", c => c.AwardsEnabled),
                 Public("ShowUserRatingOnPosters", c => c.ShowUserRatingOnPosters),
                 Public("ShowUserRatingDash", c => c.ShowUserRatingDash),
                 PublicUser("PauseScreenEnabled", c => c.PauseScreenEnabled, nameof(UserSettings.PauseScreenEnabled)),

@@ -267,6 +267,14 @@ const OBSERVED_SIGNED_OUT_HOME_401S = [
 test('scroll-handler host race requires the exact pageerror and a hashed stock-web frame', () => {
     assert.equal(isKnownJellyfinWebScrollHandlerError(OBSERVED_SCROLL_HANDLER_RACE), true);
     assert.equal(isKnownJellyfinWebHostNoise(OBSERVED_SCROLL_HANDLER_RACE), true);
+    const webkit = {
+        ...OBSERVED_SCROLL_HANDLER_RACE,
+        text: SCROLL_HANDLER_WEBKIT_ERROR,
+        stack: "TypeError: t.scrollHandler is not a function. (In 't.scrollHandler()', 't.scrollHandler' is null)\n"
+            + '    at unknown (http://127.0.0.1:32790/web/49275.fcf2b77489e84c80e220.chunk.js:1:2144)',
+    };
+    assert.equal(isKnownJellyfinWebScrollHandlerError(webkit), true);
+    assert.equal(isKnownJellyfinWebHostNoise(webkit), true);
     assert.equal(
         isKnownJellyfinWebScrollHandlerError({
             ...OBSERVED_SCROLL_HANDLER_RACE,
@@ -291,6 +299,7 @@ test('scroll-handler classifier rejects missing, similar, non-pageerror, and non
         { ...OBSERVED_SCROLL_HANDLER_RACE, source: undefined },
         { ...OBSERVED_SCROLL_HANDLER_RACE, text: 't.scrollHandler is not a function' },
         { ...OBSERVED_SCROLL_HANDLER_RACE, text: `${SCROLL_HANDLER_ERROR} extra` },
+        { ...OBSERVED_SCROLL_HANDLER_RACE, text: `${SCROLL_HANDLER_WEBKIT_ERROR} extra` },
         {
             ...OBSERVED_WEBKIT_SCROLL_HANDLER_RACE,
             text: SCROLL_HANDLER_WEBKIT_ERROR.replace(' is null)', ' was null)'),

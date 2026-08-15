@@ -15,7 +15,7 @@ Every admin option lives on one of the tabs in the plugin config page: **Dashboa
 | **Seerr** | Seerr connection and Seerr integration features. | [Discover & Request](discover.md) |
 | **Maintainerr** | Read-only connection, native admin page, item status, external links, and regular-user opt-in. | [Maintainerr](maintainerr.md) |
 | **\*arr** | Sonarr / Radarr instances and *arr features. | [Sonarr & Radarr](sonarr-radarr.md) |
-| **Elsewhere** | Elsewhere panel, TMDB API key, TMDB Reviews, Release Dates. | [Discover & Request](discover.md) |
+| **Elsewhere** | Elsewhere panel, TMDB API key, TMDB Reviews, Release Dates, optional cached Wikidata Awards. | [Discover & Request](discover.md), [The Enhanced Experience](enhanced.md#awards-index) |
 | **Discovery** | Discovery / Trending feed (requires a Seerr connection). | [Discover & Request](discover.md) |
 | **Extras** | Custom branding, extras/UI-tweak toggles, Active Streams widget, Letterboxd links, splash screen. | [Customization](customization.md) |
 | **Keyboard** | Keyboard shortcuts. | [The Enhanced Experience](enhanced.md) |

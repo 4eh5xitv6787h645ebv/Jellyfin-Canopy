@@ -108,6 +108,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy
                 .ConfigurePrimaryHttpMessageHandler(Helpers.PluginHttpClients.CreateDiscoveryHandler);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.TmdbClient);
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.AssetsClient);
+            serviceCollection.AddHttpClient(Services.Awards.WikidataAwardsClient.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri("https://query.wikidata.org/");
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            }).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                AutomaticDecompression = System.Net.DecompressionMethods.GZip
+                    | System.Net.DecompressionMethods.Deflate,
+            });
             serviceCollection.AddHttpClient(Helpers.PluginHttpClients.JikanClient, client =>
             {
                 client.BaseAddress = new Uri("https://api.jikan.moe/v4/");
@@ -225,10 +235,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy
             serviceCollection.AddSingleton<TagCacheProjectionRevisionService>();
             serviceCollection.AddSingleton<TagCacheMonitor>();
             serviceCollection.AddSingleton<TagCacheLifecycleService>();
+            serviceCollection.AddSingleton(new Services.Awards.AwardsHostIdentity(applicationHost.SystemId));
+            serviceCollection.AddSingleton<Services.Awards.IAwardsSourceClient, Services.Awards.WikidataAwardsClient>();
+            serviceCollection.AddSingleton<Services.Awards.AwardsIndexService>();
+            serviceCollection.AddSingleton<IHostedService>(serviceProvider =>
+                serviceProvider.GetRequiredService<Services.Awards.AwardsIndexService>());
             serviceCollection.AddSingleton<ITagCacheLifecycle>(services =>
                 services.GetRequiredService<TagCacheLifecycleService>());
             serviceCollection.AddTransient<ArrTagsSyncTask>();
             serviceCollection.AddTransient<BuildTagCacheTask>();
+            serviceCollection.AddTransient<RefreshAwardsIndexTask>();
             serviceCollection.AddTransient<SeerrWatchlistSyncTask>();
             serviceCollection.AddTransient<JellyfinToSeerrWatchlistSyncTask>();
             serviceCollection.AddTransient<SeerrUserImportTask>();
