@@ -23,11 +23,22 @@ export interface SeerrModalHandle {
     close: () => void;
 }
 
+export type SeerrRequestVariant = 'standard' | '4k';
+
+export interface SeerrAdvancedOptionsHandle {
+    setVariant: (variant: SeerrRequestVariant) => void;
+}
+
 /** Generic Seerr request modal factory (JC.seerrModal). */
 export interface SeerrModalApi {
     create: (options: SeerrModalOptions) => SeerrModalHandle;
     createAdvancedOptionsHTML: (idPrefix: string) => string;
-    populateAdvancedOptions: (modalElement: HTMLElement, data: any, idPrefix: string) => void;
+    populateAdvancedOptions: (
+        modalElement: HTMLElement,
+        data: any,
+        idPrefix: string,
+        variant: SeerrRequestVariant,
+    ) => SeerrAdvancedOptionsHandle;
     closeAll: () => void;
 }
 
@@ -41,7 +52,29 @@ declare module '../types/jc' {
 const logPrefix = '🪼 Jellyfin Canopy: Seerr Modal:';
 const modal = {} as SeerrModalApi;
 type ManagedModal = SeerrModalHandle & { destroy: () => void };
-type IdentityCleanupElement = HTMLElement & { _jcIdentityCleanups?: Set<() => void> };
+type IdentityCleanupElement = HTMLElement & {
+    _jcIdentityCleanups?: Set<() => void>;
+    _jcModalIsCurrent?: () => boolean;
+};
+type UnknownRecord = Record<string, unknown>;
+
+interface NormalizedAdvancedServer {
+    id: string;
+    name: string;
+    server: UnknownRecord;
+}
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readUnknownArray(value: unknown): unknown[] {
+    return Array.isArray(value) ? value : [];
+}
+
+function readAdvancedServers(data: unknown): unknown[] {
+    return isUnknownRecord(data) ? readUnknownArray(data.servers) : [];
+}
 const activeModals = new Set<ManagedModal>();
 
 const HISTORY_STATE_KEY = '__jellyfinCanopySeerrModal';
@@ -1723,6 +1756,9 @@ modal.create = function({ title, subtitle, bodyHtml, backdropPath, backdropUrl, 
         && JC.identity.isCurrent(identity)
         && !isClosing
         && !historyBackRequested;
+    // Connected is not synonymous with live: owned close becomes inert before
+    // its deferred Back, and animated removal retains the element for 300 ms.
+    modalElement._jcModalIsCurrent = isCurrent;
 
     const show = () => {
         if (installLeases <= 0 || JC.seerrModal !== modal) {
@@ -2042,12 +2078,37 @@ modal.createAdvancedOptionsHTML = function(idPrefix) {
  * @param {HTMLElement} modalElement - The root element of the modal.
  * @param {object} data - The data fetched from the API, containing servers, profiles, and folders.
  * @param {string} idPrefix - The prefix ('movie' or 'tv') used for the element IDs.
+ * @param {'standard'|'4k'} initialVariant - The request mode whose configured default should be selected.
  */
-modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
+modal.populateAdvancedOptions = function(modalElement, data, idPrefix, initialVariant) {
+    const managedModalElement = modalElement as IdentityCleanupElement;
     const identity = JC.identity.ownerOf(modalElement) || JC.identity.capture();
-    const isCurrent = () => !!identity
+    let active = true;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let applyVariantDefault: (() => void) | null = null;
+    const hasCurrentOwner = () => !!identity
+        && active
         && JC.identity.isCurrent(identity)
         && document.body.contains(modalElement);
+    const isCurrent = () => hasCurrentOwner()
+        && (managedModalElement._jcModalIsCurrent?.() ?? true);
+    let variant = initialVariant;
+    const handle: SeerrAdvancedOptionsHandle = {
+        setVariant(nextVariant) {
+            if (!isCurrent()) return;
+            variant = nextVariant;
+            applyVariantDefault?.();
+        },
+    };
+    const deactivate = () => {
+        active = false;
+        applyVariantDefault = null;
+        if (interval !== null) {
+            clearInterval(interval);
+            interval = null;
+        }
+    };
+    managedModalElement._jcIdentityCleanups?.add(deactivate);
     // Backend failed to load server options: show an error note instead of
     // polling for selects that will only ever be populated with empty
     // placeholders — three empty dropdowns look like a valid config (W4-ERR-5).
@@ -2056,15 +2117,27 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
         if (container) {
             container.innerHTML = `<h3>${JC.t!('seerr_advanced_options')}</h3><div class="seerr-advanced-error">${JC.escapeHtml(data.error)}</div>`;
         }
-        return;
+        return handle;
     }
 
     // Use a timer to ensure emby-select elements are ready
     let attempts = 0;
     const maxAttempts = 50; // 5 seconds
-    const interval = setInterval(() => {
+    interval = setInterval(() => {
+        attempts++;
+        if (attempts > maxAttempts) {
+            if (interval !== null) {
+                clearInterval(interval);
+                interval = null;
+            }
+            console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
+            return;
+        }
         if (!isCurrent()) {
-            clearInterval(interval);
+            // An owned Back can fail and restore this modal. Pause during that
+            // recoverable close request; terminal close runs deactivate from
+            // the modal cleanup set, while identity/detachment cannot recover.
+            if (!hasCurrentOwner()) deactivate();
             return;
         }
         const serverSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-server`);
@@ -2072,58 +2145,89 @@ modal.populateAdvancedOptions = function(modalElement, data, idPrefix) {
         const folderSelect = modalElement.querySelector<HTMLSelectElement>(`#${idPrefix}-folder`);
 
         if (serverSelect && qualitySelect && folderSelect) {
-            clearInterval(interval);
+            if (interval !== null) {
+                clearInterval(interval);
+                interval = null;
+            }
 
             serverSelect.innerHTML = '<option value="">Select Server...</option>';
             qualitySelect.innerHTML = '<option value="">Select Quality...</option>';
             folderSelect.innerHTML = '<option value="">Select Folder...</option>';
 
-            data.servers.forEach((server: any) => {
+            const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+            const servers = readAdvancedServers(data)
+                .map((value): NormalizedAdvancedServer | null => {
+                    if (!isUnknownRecord(value)) return null;
+                    const numericId = typeof value.id === 'number'
+                        && Number.isSafeInteger(value.id)
+                        && value.id > 0
+                        ? String(value.id)
+                        : null;
+                    if (!numericId) return null;
+                    const name = typeof value.name === 'string' && value.name.trim()
+                        ? value.name.trim()
+                        : `Server ${numericId}`;
+                    return { id: numericId, name, server: value };
+                })
+                .filter((server): server is NormalizedAdvancedServer => server !== null)
+                .sort((left, right) => collator.compare(left.name, right.name)
+                    || collator.compare(left.id, right.id));
+
+            servers.forEach(({ id, name }) => {
                 const option = document.createElement('option');
-                option.value = server.id;
-                option.textContent = server.name || `Server ${server.id}`;
-                if (server.isDefault) option.selected = true;
+                option.value = id;
+                option.textContent = name;
                 serverSelect.appendChild(option);
             });
 
             function updateServerDependentOptions() {
-                const selectedServer = data.servers.find((s: any) => s.id == serverSelect!.value);
+                if (!isCurrent()) return;
+                const selectedServer = servers.find(({ id }) => id === serverSelect!.value)?.server;
                 qualitySelect!.innerHTML = '<option value="">Select Quality...</option>';
                 folderSelect!.innerHTML = '<option value="">Select Folder...</option>';
                 if (!selectedServer) return;
 
-                selectedServer.qualityProfiles.forEach((profile: any) => {
+                readUnknownArray(selectedServer.qualityProfiles).forEach((value) => {
+                    if (!isUnknownRecord(value)
+                        || typeof value.id !== 'number'
+                        || !Number.isSafeInteger(value.id)
+                        || value.id <= 0) return;
                     const option = document.createElement('option');
-                    option.value = profile.id;
-                    option.textContent = profile.name || `Profile ${profile.id}`;
-                    if (profile.id === selectedServer.activeProfileId) option.selected = true;
+                    option.value = String(value.id);
+                    option.textContent = typeof value.name === 'string' && value.name
+                        ? value.name
+                        : `Profile ${value.id}`;
+                    if (value.id === selectedServer.activeProfileId) option.selected = true;
                     qualitySelect!.appendChild(option);
                 });
-                selectedServer.rootFolders.forEach((folder: any) => {
+                readUnknownArray(selectedServer.rootFolders).forEach((value) => {
+                    if (!isUnknownRecord(value) || typeof value.path !== 'string' || !value.path) return;
                     const option = document.createElement('option');
-                    option.value = folder.path;
-                    option.textContent = folder.path;
-                    if (folder.path === selectedServer.activeDirectory) option.selected = true;
+                    option.value = value.path;
+                    option.textContent = value.path;
+                    if (value.path === selectedServer.activeDirectory) option.selected = true;
                     folderSelect!.appendChild(option);
                 });
             }
 
             serverSelect.addEventListener('change', updateServerDependentOptions);
-            // Trigger initial population if a default server is selected
-            if (serverSelect.value) {
+            applyVariantDefault = () => {
+                const is4k = variant === '4k';
+                const selectedDefault = servers.find(({ server }) => server.isDefault === true
+                    && typeof server.is4k === 'boolean'
+                    && server.is4k === is4k);
+                serverSelect.value = selectedDefault?.id || '';
                 updateServerDependentOptions();
-            }
+            };
+            applyVariantDefault();
 
-        } else {
-            attempts++;
-            if (attempts > maxAttempts) {
-                clearInterval(interval);
-                console.error(`${logPrefix} Could not find advanced options elements in modal after ${maxAttempts} attempts.`);
-            }
+            managedModalElement._jcIdentityCleanups?.add(
+                () => serverSelect.removeEventListener('change', updateServerDependentOptions)
+            );
+
         }
     }, 100);
-    const cleanups = (modalElement as IdentityCleanupElement)._jcIdentityCleanups;
-    cleanups?.add(() => clearInterval(interval));
+    return handle;
 };
 
 modal.closeAll = function(): void {

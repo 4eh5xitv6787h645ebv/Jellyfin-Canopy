@@ -53,7 +53,7 @@ describe('Seerr request modal identity ownership', () => {
         JC.seerrModal!.populateAdvancedOptions(handle.modalElement, {
             servers: [{ id: 1, name: 'A server', qualityProfiles: [], rootFolders: [] }],
             tags: [],
-        }, 'movie');
+        }, 'movie', 'standard');
 
         const retainedSelect = handle.modalElement.querySelector<HTMLSelectElement>('#movie-server')!;
         JC.identity.transition('modal-server-b2', 'modal-user-b2', 'account switch');

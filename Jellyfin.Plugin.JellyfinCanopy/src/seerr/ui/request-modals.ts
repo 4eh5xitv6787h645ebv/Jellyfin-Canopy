@@ -85,7 +85,7 @@ ui.showMovieRequestModal = async function (tmdbId: any, title: any, searchResult
     try {
         const data = await fetchAdvancedRequestData('movie');
         if (!JC.identity.isCurrent(identity) || !modalElement.isConnected) return;
-        populateAdvancedOptions(modalElement, data, 'movie');
+        populateAdvancedOptions(modalElement, data, 'movie', is4k === true ? '4k' : 'standard');
     } catch (error: any) {
         if (!JC.identity.isCurrent(identity) || !modalElement.isConnected) return;
         console.error(`${logPrefix} Failed to load advanced options:`, error);
@@ -144,6 +144,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
     const identity = JC.identity.capture();
     if (!identity || !JC.identity.isCurrent(identity)) return;
     const { create, createAdvancedOptionsHTML, populateAdvancedOptions } = JC.seerrModal!;
+    let advancedOptionsHandle: ReturnType<typeof populateAdvancedOptions> | null = null;
     const { fetchCollectionDetails, requestMedia, fetchAdvancedRequestData } = JC.seerrAPI!;
 
     // Fetch collection details
@@ -366,7 +367,12 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
         try {
             const advancedData = await fetchAdvancedRequestData('movie');
             if (!JC.identity.isCurrent(identity)) return;
-            populateAdvancedOptions(modalInstance.modalElement, advancedData, 'movie');
+            advancedOptionsHandle = populateAdvancedOptions(
+                modalInstance.modalElement,
+                advancedData,
+                'movie',
+                'standard',
+            );
         } catch (error: any) {
             if (!JC.identity.isCurrent(identity)) return;
             console.error('Failed to load advanced options:', error);
@@ -410,6 +416,7 @@ ui.showCollectionRequestModal = async function (collectionId: any, collectionNam
             fourKToggle.addEventListener('change', () => {
                 if (!JC.identity.isCurrent(identity)) return;
                 const is4k = fourKToggle.checked;
+                advancedOptionsHandle?.setVariant(is4k ? '4k' : 'standard');
                 movieList.querySelectorAll<HTMLElement>('.seerr-collection-movie-row').forEach((row) => {
                     const checkbox = row.querySelector<HTMLInputElement>('.seerr-collection-checkbox');
                     const badge = row.querySelector<HTMLElement>('.seerr-season-status');
