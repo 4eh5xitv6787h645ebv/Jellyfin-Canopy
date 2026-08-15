@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 45903,
-        "totalLines": 55841
+        "coveredLines": 46003,
+        "totalLines": 55951
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 45895,
-        "maximumCoveredLines": 45903
+        "cleanRuns": 2,
+        "minimumCoveredLines": 46000,
+        "maximumCoveredLines": 46003
       },
       "tolerance": {
-        "missingCoveredLines": 8,
-        "rationale": "Issue #718 adds bounded per-user canonical language and region filtering, authoritative Original-language inheritance, caller-scoped inventory, and cache invalidation to the merged issue #715 read-only qBittorrent telemetry mainline. Two clean canonical local .NET SDK 10.0.109/runtime 10.0.9 full-suite runs on exact integrated head 27e002c9e02be125216a3bfe06130053f30e52ba passed all 4,394 tests on the identical 55,841-line assembly scope and measured 45,898/55,841 (82.194087%) and 45,895/55,841 (82.188714%). The hosted GitHub Actions Unit job 95053705601 then passed all 4,394 tests on PR synthetic merge 7bba8666ccd0c25fe2bd4cb2ca9262fefc206bbf of exact published head cb32bdc862b08a3e13ad9c6876f645f655cba8d8 into its unchanged base e4674b89965a865821d1fc89a567f99409f4cbda; that merge tree is byte-identical to the reviewed head tree. It measured 45,903/55,841 (82.203041%) before failing solely because that clean gain exceeded the prior reviewed high-water. The reviewed observed high-water is therefore 45,903/55,841 and the exact observed floor remains 45,895/55,841; the eight-line instrumentation spread is 0.014326 percentage points, within the 0.15-point policy maximum. Two earlier canonical attempts that passed only 4,393/4,394 tests were excluded; their distinct timing-sensitive failures each passed an immediate focused rerun and no evidence from either non-clean attempt entered this envelope. The prior issue #715 and pre-integration issue #718 observations remain evidence for their earlier scopes and are not mixed into this combined scope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 3,
+        "rationale": "Issues #732 and #733 add bounded per-user effective Continue Watching removal policy, exact-user cache invalidation, and authoritative classification of the resume, resumeaudio, and resumebook Home row identities on top of merged issue #718. Two clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite coverage runs on exact rebased implementation head 70b4bc4a975ccfeff241d7e841347697a29d158d passed all 4,412 tests on the identical 55,951-line assembly scope and measured 46,000/55,951 (82.214795%) and 46,003/55,951 (82.220157%). The reviewed observed high-water is therefore 46,003/55,951 and the exact observed floor is 46,000/55,951; the three-line instrumentation spread is 0.005362 percentage points, within the 0.15-point policy maximum. Two earlier canonical attempts that passed only 4,411/4,412 tests were excluded; the identical full suite passed immediate clean minimal-logger reruns, and no evidence from either non-clean attempt entered this envelope. The prior issue #718 observations remain evidence for their earlier scope and are not mixed into this expanded scope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
