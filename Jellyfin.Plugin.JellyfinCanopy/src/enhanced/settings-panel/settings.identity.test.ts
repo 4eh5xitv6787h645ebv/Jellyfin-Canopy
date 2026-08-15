@@ -133,7 +133,7 @@ describe('settings panel document listener identity cleanup', () => {
             resetAutoCloseTimer: vi.fn(),
         } as unknown as PanelContext);
 
-        expect(preview.style.fontSize).toBe('11px');
+        expect(preview.style.fontSize).toBe('14px');
         expect(preview.style.fontFamily).toContain('Arial');
         expect(preview.style.transform).toBe('translate(-50%, -100%)');
         expect(preview.style.padding).toBe('0.08em 0.2em');

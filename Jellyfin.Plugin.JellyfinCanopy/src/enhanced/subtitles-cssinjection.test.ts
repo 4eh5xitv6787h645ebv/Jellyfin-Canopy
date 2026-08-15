@@ -18,7 +18,7 @@ describe('subtitles ::cue insertRule injection', () => {
         // Browser-like colour validator (jsdom has no CSS global).
         (globalThis as unknown as { CSS: unknown }).CSS = {
             supports: (prop: string, val: string) =>
-                prop === 'color' && /^#[0-9a-f]{3,8}$/i.test(val.trim()),
+                prop === 'color' && /^(?:#[0-9a-f]{3,8}|(?:rgba?|hsla?|hwb|color)\(.+\))$/i.test(val.trim()),
         };
     });
     afterEach(() => {
@@ -140,6 +140,39 @@ describe('subtitles ::cue insertRule injection', () => {
         const cueRule = (document.getElementById('jc-html-videoplayer-cuestyle') as HTMLStyleElement)
             .sheet?.cssRules[0]?.cssText || '';
         expect(cueRule).not.toMatch(/(?:^|[;{])\s*(?:top|left|bottom|transform)\s*:/i);
+    });
+
+    it.each([
+        'rgb(255 0 0 / 0)',
+        'hsl(0 100% 50% / 0)',
+        'color(srgb 1 0 0 / 0)',
+        'hwb(0 0% 0% / 0)',
+    ])('treats browser-valid zero-alpha %s as transparent in playback', async (background) => {
+        const JC = window.JellyfinCanopy;
+        JC.identity.transition('subtitle-server', 'transparent-user', `subtitle-${background}`);
+        JC.currentSettings = {
+            customSubtitleTextColor: '#FFFFFFFF',
+            customSubtitleBgColor: background,
+            disableCustomSubtitleStyles: false,
+        };
+        document.body.appendChild(document.createElement('video'));
+        const container = document.createElement('div');
+        container.className = 'videoSubtitles';
+        const inner = document.createElement('div');
+        inner.className = 'videoSubtitlesInner';
+        container.appendChild(inner);
+        document.body.appendChild(container);
+        const clientSheet = document.createElement('style');
+        clientSheet.id = 'htmlvideoplayer-cuestyle';
+        document.head.appendChild(clientSheet);
+
+        const subtitles = await import('./subtitles');
+        disposeSubtitles = subtitles.installSubtitles();
+        JC.applySavedStylesWhenReady?.();
+
+        expect(inner.style.getPropertyValue('padding')).toBe('0px');
+        expect(inner.style.getPropertyValue('border-radius')).toBe('');
+        expect(inner.style.getPropertyValue('text-shadow')).not.toBe('none');
     });
 
     it('restores host inline styles and removes its cue sheet on teardown', async () => {

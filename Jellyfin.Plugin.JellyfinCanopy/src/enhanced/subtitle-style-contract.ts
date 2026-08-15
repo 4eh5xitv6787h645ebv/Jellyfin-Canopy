@@ -5,6 +5,7 @@ export const SUBTITLE_HORIZONTAL_MIN = 10;
 export const SUBTITLE_HORIZONTAL_MAX = 90;
 export const SUBTITLE_VERTICAL_MIN = 2;
 export const SUBTITLE_VERTICAL_MAX = 98;
+const PREVIEW_FONT_SIZES_PX = [8, 10, 12, 14, 16, 18] as const;
 
 export interface ResolvedSubtitleStyle {
     backgroundColor: string;
@@ -35,15 +36,20 @@ export function clampSubtitleVertical(value: unknown): number {
     return clamp(value, 85, SUBTITLE_VERTICAL_MIN, SUBTITLE_VERTICAL_MAX);
 }
 
-/** True for every alpha-zero serialization emitted by the subtitle picker. */
+/** True for validated CSS colors whose serialized alpha component is zero. */
 export function isFullyTransparentColor(value: string | undefined): boolean {
-    const normalized = value?.replace(/\s+/g, '').toLowerCase();
+    const normalized = value?.trim().toLowerCase();
     if (!normalized) return false;
     if (normalized === 'transparent') return true;
     if (/^#[0-9a-f]{3}0$/.test(normalized) || /^#[0-9a-f]{6}00$/.test(normalized)) return true;
-    const functional = normalized.match(/^(?:rgba|hsla)\((.*)\)$/);
+    // cssColorOr validates the complete value before this helper is called.
+    // Accept both legacy comma alpha and modern slash alpha across the color
+    // functions browsers expose through the settings API.
+    const functional = normalized.match(/^(?:rgba?|hsla?|hwb|color)\((.*)\)$/s);
     if (!functional) return false;
-    const alpha = functional[1].match(/(?:,|\/)([+-]?(?:\d+\.?\d*|\.\d+)%?)$/)?.[1];
+    const alpha = functional[1].match(
+        /(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?%?)\s*$/i,
+    )?.[1];
     if (!alpha) return false;
     const numeric = Number.parseFloat(alpha);
     return Number.isFinite(numeric) && numeric === 0;
@@ -59,14 +65,17 @@ function presetIndex(value: unknown, length: number, fallback: number): number {
 export function resolveSubtitleStyle(settings: SubtitleSettings): ResolvedSubtitleStyle {
     const textColor = cssColorOr(settings.customSubtitleTextColor, '#FFFFFFFF');
     const backgroundColor = cssColorOr(settings.customSubtitleBgColor, '#00000000');
-    const size = fontSizePresets[presetIndex(settings.selectedFontSizePresetIndex, fontSizePresets.length, 2)];
+    const sizeIndex = presetIndex(settings.selectedFontSizePresetIndex, fontSizePresets.length, 2);
+    const size = fontSizePresets[sizeIndex];
     const family = fontFamilyPresets[presetIndex(settings.selectedFontFamilyPresetIndex, fontFamilyPresets.length, 0)];
     const visibleBackground = !isFullyTransparentColor(backgroundColor);
     return {
         backgroundColor,
         fontFamily: family.family,
         fontSizeVw: size.size,
-        previewFontSizePx: Math.max(8, Math.min(18, Math.round(size.size * 6))),
+        // The editor is intentionally bounded, but every playback preset must
+        // remain visually distinct and ordered inside its compact preview.
+        previewFontSizePx: PREVIEW_FONT_SIZES_PX[sizeIndex] ?? PREVIEW_FONT_SIZES_PX[2],
         textColor,
         textShadow: visibleBackground ? 'none' : '0 0 4px #000, 0 0 8px #000, 1px 1px 2px #000',
         visibleBackground,
