@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr nie je k dispozícii",
   "maintainerr_version": "Verzia {version}",
   "maintainerr_view_content": "Zobraziť mediálne položky",
-  "maintainerr_views": "Maintainerr zobrazenia"
+  "maintainerr_views": "Maintainerr zobrazenia",
+  "track_off": "Vypnuté",
+  "aspect_ratio_auto": "Auto",
+  "aspect_ratio_cover": "Orezanie",
+  "aspect_ratio_fill": "Vyplniť",
+  "playback_info_title": "Informácie o prehrávaní",
+  "pi_resolution": "Rozlíšenie",
+  "pi_speed": "Rýchlosť",
+  "pi_dropped_frames": "Stratené snímky",
+  "pi_buffer": "Vo vyrovnávacej pamäti",
+  "pi_play_method": "Metóda prehrávania",
+  "pi_transcoding": "Prekódovanie",
+  "pi_bitrate": "Dátový tok",
+  "pi_transcode_reason": "Dôvod",
+  "pi_container": "Kontajner",
+  "pi_audio": "Zvuk",
+  "pi_subtitle": "Titulky"
 }

@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr недоступен.",
   "maintainerr_version": "Версия {version}",
   "maintainerr_view_content": "Просмотр медиа-элементов",
-  "maintainerr_views": "Maintainerr просмотров"
+  "maintainerr_views": "Maintainerr просмотров",
+  "track_off": "Выкл.",
+  "aspect_ratio_auto": "Авто",
+  "aspect_ratio_cover": "Заполнение",
+  "aspect_ratio_fill": "Растянуть",
+  "playback_info_title": "Информация о воспроизведении",
+  "pi_resolution": "Разрешение",
+  "pi_speed": "Скорость",
+  "pi_dropped_frames": "Пропущенные кадры",
+  "pi_buffer": "Буфер",
+  "pi_play_method": "Метод воспроизведения",
+  "pi_transcoding": "Транскодирование",
+  "pi_bitrate": "Битрейт",
+  "pi_transcode_reason": "Причина",
+  "pi_container": "Контейнер",
+  "pi_audio": "Аудио",
+  "pi_subtitle": "Субтитры"
 }

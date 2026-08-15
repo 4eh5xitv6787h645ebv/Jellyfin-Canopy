@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr אינו זמין",
   "maintainerr_version": "גרסה {version}",
   "maintainerr_view_content": "הצג פריטי מדיה",
-  "maintainerr_views": "תצוגות Maintainerr"
+  "maintainerr_views": "תצוגות Maintainerr",
+  "track_off": "כבוי",
+  "aspect_ratio_auto": "אוטומטי",
+  "aspect_ratio_cover": "כיסוי",
+  "aspect_ratio_fill": "מילוי",
+  "playback_info_title": "פרטי ניגון",
+  "pi_resolution": "רזולוציה",
+  "pi_speed": "מהירות",
+  "pi_dropped_frames": "פריימים שאבדו",
+  "pi_buffer": "במאגר",
+  "pi_play_method": "שיטת ניגון",
+  "pi_transcoding": "קידוד מחדש",
+  "pi_bitrate": "קצב סיביות",
+  "pi_transcode_reason": "סיבה",
+  "pi_container": "מיכל",
+  "pi_audio": "שמע",
+  "pi_subtitle": "כתוביות"
 }

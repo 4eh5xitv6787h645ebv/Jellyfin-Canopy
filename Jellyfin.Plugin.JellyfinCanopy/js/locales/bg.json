@@ -980,5 +980,21 @@
   "maintainerr_unavailable": "Maintainerr не е наличен",
   "maintainerr_version": "Версия {version}",
   "maintainerr_view_content": "Преглед на медийни елементи",
-  "maintainerr_views": "Maintainerr показвания"
+  "maintainerr_views": "Maintainerr показвания",
+  "track_off": "Изкл.",
+  "aspect_ratio_auto": "Автоматично",
+  "aspect_ratio_cover": "Покриване",
+  "aspect_ratio_fill": "Запълване",
+  "playback_info_title": "Информация за възпроизвеждането",
+  "pi_resolution": "Резолюция",
+  "pi_speed": "Скорост",
+  "pi_dropped_frames": "Изпуснати кадри",
+  "pi_buffer": "Буферирано",
+  "pi_play_method": "Метод на възпроизвеждане",
+  "pi_transcoding": "Транскодиране",
+  "pi_bitrate": "Битрейт",
+  "pi_transcode_reason": "Причина",
+  "pi_container": "Контейнер",
+  "pi_audio": "Аудио",
+  "pi_subtitle": "Субтитри"
 }
