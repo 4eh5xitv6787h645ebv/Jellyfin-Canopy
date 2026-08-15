@@ -25,6 +25,26 @@ public sealed class RefreshAwardsIndexTaskTests : IDisposable
     }
 
     [Fact]
+    public void StableSchedule_DistributesHundredThousandInstallFleetAcrossWeekSeconds()
+    {
+        const int secondsPerWeek = 7 * 24 * 60 * 60;
+        var secondCounts = new int[secondsPerWeek];
+        for (var index = 0; index < 100_000; index++)
+        {
+            var (day, time) = RefreshAwardsIndexTask.StableSchedule($"simulated-install-{index}");
+            var second = ((int)day * 24 * 60 * 60) + (int)time.TotalSeconds;
+            secondCounts[second]++;
+        }
+
+        Assert.Equal(100_000, secondCounts.Sum());
+        Assert.InRange(secondCounts.Count(count => count > 0), 90_000, 100_000);
+        Assert.InRange(secondCounts.Max(), 1, 6);
+        var hourCounts = secondCounts.Chunk(60 * 60).Select(hour => hour.Sum()).ToArray();
+        Assert.Equal(168, hourCounts.Length);
+        Assert.All(hourCounts, count => Assert.InRange(count, 500, 700));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ReReadsLiveConfigurationAfterDisabledNetworkFreeNoOp()
     {
         var source = new ControlledSource();

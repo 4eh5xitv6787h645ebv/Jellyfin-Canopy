@@ -215,7 +215,8 @@ function isKnownHiddenContentHostNoise(text) {
 }
 
 /**
- * Exact Jellyfin-web scroll cleanup race. The message alone is not evidence of
+ * Exact Jellyfin-web scroll cleanup race, including the browser-specific text
+ * WebKit appends to the same TypeError. The message alone is not evidence of
  * host ownership: require a pageerror with an immutable hashed stock-web frame,
  * and fail closed when any Canopy frame appears in the same stack.
  *

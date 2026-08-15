@@ -438,7 +438,8 @@ Awards are deliberately optional and disabled by default. Enabling the setting
 does not make a network request during Jellyfin startup. Run **Dashboard** →
 **Scheduled Tasks** → **Jellyfin Canopy** → **Refresh Awards Index** once after
 enabling it; after that, the task has one stable per-server time spread across
-the week. A manual run and the scheduled run share one physical refresh.
+the week, down to a stable per-install second. A manual run and the scheduled
+run share one physical refresh.
 
 The refresh queries only the public Wikidata Query Service. It sends no Jellyfin
 item IDs, library names, file paths, user identities, or provider IDs from your
@@ -450,9 +451,12 @@ cap each win or nomination group at 250 facts and reject malformed responses.
 
 Canopy follows Wikimedia's [API etiquette](https://www.mediawiki.org/wiki/API:Etiquette)
 and [User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy/en):
-one descriptive Canopy-specific User-Agent with a contact URL, GET requests,
-strictly serial pages, a minimum one-second page interval, and `Retry-After` /
-bounded exponential backoff for throttling. Pages use a strict keyset cursor,
+one descriptive `JellyfinCanopy-AwardsBot` User-Agent with a contact URL, GET
+requests with gzip/deflate support, strictly serial pages, a minimum one-second
+page interval, and `Retry-After` / bounded exponential backoff for 429
+throttling. A 5xx ends the invocation without an immediate retry, ensuring the
+next automatic request is well beyond Wikimedia's required 15-minute outage
+pause. Pages use a strict keyset cursor,
 not an increasingly expensive or mutation-sensitive offset. Each page has a
 50-second timeout, three attempts, and an 8 MiB decoded response limit. One task
 execution reads at most sixteen 5,000-binding pages (128 MiB of responses) and
@@ -469,18 +473,72 @@ new index and removes the checkpoint. A malformed, expired, over-limit, failed,
 or still-in-progress traversal never replaces the last complete index. The
 [Action API `maxlag` parameter](https://www.mediawiki.org/wiki/Manual:Maxlag_parameter)
 does not apply to the Wikidata Query Service endpoint used here; Canopy does not
-call `api.php` for this feature.
+call `api.php` for this feature. Canopy also follows Wikimedia's
+[robot policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_Robot_Policy),
+[API usage guidelines](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_API_Usage_Guidelines/en),
+and [WDQS usage guidance](https://www.wikidata.org/wiki/Wikidata:Data_access):
+there is no HTML crawling, concurrency is one per server, throttling stops work,
+and the persistent checkpoint/cache avoids restarting a traversal. Wikidata's
+structured data is [CC0](https://www.wikidata.org/wiki/Wikidata:Licensing);
+Canopy still labels the source in the UI and keeps the index local rather than
+operating a redistribution endpoint.
+
+WDQS documents a deliberately low availability objective and recommends that
+clients isolate failures rather than put the public service on an interactive
+critical path ([technical interactions](https://wikitech.wikimedia.org/wiki/Wikidata_Query_Service/Technical_interactions)).
+Canopy's fetch runs only in the background scheduled/manual task; detail pages
+read the last complete local snapshot, and an outage cannot replace it.
+
+##### Capacity and fleet impact (PERF S4/S5)
 
 The weekly local index is the cache: repeat detail views generate no Wikimedia
-traffic. At the deliberately pessimistic fleet model of 100,000 servers all
-opting in and evenly assigned across the 10,080 minutes of a week, successful
-scheduled executions average at most about 2.65 WDQS requests/second globally
-(sixteen calls per server per week); the hard all-retry envelope is about 7.94
-requests/second. Actual traffic should be far below that because the feature is
-opt-in, short datasets stop early, requests are serial, and backoff stretches
-throttled work. User-started continuation runs are also process-coalesced and
-serial; administrators should wait for a task to finish before starting the
-next continuation.
+traffic. Capacity is independent of the local Jellyfin library and user count:
+
+- Source traversal is capped at 200,000 bindings / 600,000 provider-expanded
+  records. Its conservative resident envelope is `8 × 128 MiB checkpoint + 8
+  MiB page = 1,032 MiB`.
+- The provider-key index is capped at 250,000 entries, 250 facts per entry, and
+  64 MiB serialized. Its conservative resident envelope is `8 × 64 MiB + 512
+  bytes × 250,000 keys = about 634.1 MiB`; in other words
+  `f(local items, users) = O(1)` with these fixed provider caps.
+- A refresh can hold the old resident index, the detached new index, traversal
+  state, and at most 128 MiB of UTF-16 serialization at once: a conservative
+  process peak of about 2.37 GiB. Steady disk is at most 192 MiB (128 MiB
+  checkpoint + 64 MiB index); atomic checkpoint replacement can briefly hold
+  old + temporary checkpoint + index, at most 320 MiB.
+
+Fleet calculations use the canonical 100,000-install planning model. With the
+default setting off, provider requests, provider data, checkpoint disk, and
+resident index RAM are all exactly zero. In the deliberately pessimistic model
+where all 100,000 installations opt in, one maximum weekly execution is 16
+successful requests/server: 1.6 million/week or 2.65 requests/second averaged
+across the fleet. Three bounded attempts on every page is the 4.8 million/week,
+7.94 requests/second attempt envelope. At the decoded 8 MiB/page ceiling those
+are respectively 1.74 TiB/day and 5.23 TiB/day; actual on-wire bytes are gzip or
+deflate compressed, but the safety calculation takes no credit for compression.
+The currently observed 45,153-binding shape completes in ten pages (80 MiB
+decoded/server, 1.09 TiB/day at 100% opt-in). The absolute 200,000-binding
+traversal needs 40 full pages plus one empty terminal proof across at least
+three executions: 328 MiB/server total, or 1.49 TiB/day when averaged over those
+three weeks at 100% opt-in.
+
+The stable SHA-256 schedule uses all 604,800 seconds of a week; the deterministic
+100,000-install stress test checks hour-level balance and a maximum six starts
+in any simulated second. Requests remain serial within each server and are
+separated by at least one second. Startup, restart, server recreation, and
+plugin upgrade perform zero provider requests, so there is no restart wave.
+Manual task starts cannot be fleet-jittered: centrally automating a simultaneous
+manual run across a large deployment would create up to one first request per
+server and is unsupported. Administrators should allow each run to finish and
+must not mass-trigger it.
+
+On 429, Canopy honors a positive `Retry-After` only when it fits the 20-second
+retry budget; otherwise it stops and retains checkpoint/last-good data. Timeouts
+use bounded 5/10-second backoff; 5xx stops immediately as described above.
+Redirects, malformed/partial JSON, invalid cursors/IDs, corrupt or expired
+checkpoints, declared or streamed oversize bodies, and any capacity overflow
+all fail closed without publishing. This feature's public-WDQS footprint is why
+it remains an explicit admin opt-in; the default fleet produces no traffic.
 
 ### Bookmarks
 

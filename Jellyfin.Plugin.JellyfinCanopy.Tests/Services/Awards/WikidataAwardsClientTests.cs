@@ -77,7 +77,7 @@ public sealed class WikidataAwardsClientTests
         {
             await Task.Yield();
             calls++;
-            Assert.Contains("JellyfinCanopy-Awards/2.0", request.Headers.UserAgent.ToString(), StringComparison.Ordinal);
+            Assert.Contains("JellyfinCanopy-AwardsBot/2.0", request.Headers.UserAgent.ToString(), StringComparison.Ordinal);
             if (calls == 1)
             {
                 var throttled = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
@@ -115,6 +115,29 @@ public sealed class WikidataAwardsClientTests
     }
 
     [Fact]
+    public async Task FetchComplete_ServerErrorStopsWithoutImmediateRetry()
+    {
+        var calls = 0;
+        var delays = new List<TimeSpan>();
+        var client = CreateClient((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }, (delay, _) =>
+        {
+            delays.Add(delay);
+            return Task.CompletedTask;
+        });
+
+        var failure = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.FetchCompleteAsync(CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failure.StatusCode);
+        Assert.Equal(1, calls);
+        Assert.Empty(delays);
+    }
+
+    [Fact]
     public async Task FetchComplete_RejectsDeclaredOversizedResponseWithoutRetrying()
     {
         var calls = 0;
@@ -124,6 +147,24 @@ public sealed class WikidataAwardsClientTests
             var response = JsonResponse("{}");
             response.Content.Headers.ContentLength = WikidataAwardsClient.MaxResponseBytes + 1L;
             return Task.FromResult(response);
+        }, (_, _) => Task.CompletedTask);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.FetchCompleteAsync(CancellationToken.None));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task FetchComplete_RejectsStreamedOversizedResponseWithoutDeclaredLength()
+    {
+        var calls = 0;
+        var client = CreateClient((_, _) =>
+        {
+            calls++;
+            var bytes = new byte[WikidataAwardsClient.MaxResponseBytes + 1];
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new NonSeekableReadStream(bytes)),
+            });
         }, (_, _) => Task.CompletedTask);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => client.FetchCompleteAsync(CancellationToken.None));
@@ -141,6 +182,69 @@ public sealed class WikidataAwardsClientTests
             maxTotalPages: 1);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => client.FetchCompleteAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchComplete_AcceptsExactMaximumOnlyAfterEmptyTerminalProbe()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jc-awards-max-" + Guid.NewGuid().ToString("N"));
+        var checkpointPath = Path.Combine(root, "checkpoint.json");
+        var calls = 0;
+        try
+        {
+            Task<HttpResponseMessage> Send(HttpRequestMessage _, CancellationToken __)
+            {
+                calls++;
+                return Task.FromResult(JsonResponse(calls == 1
+                    ? PageBody(WikidataAwardsClient.PageSize, 1)
+                    : "{\"results\":{\"bindings\":[]}}"));
+            }
+
+            var first = CreateClient(Send, (_, _) => Task.CompletedTask, checkpointPath: checkpointPath, maxPagesPerInvocation: 1, maxTotalPages: 1);
+            await Assert.ThrowsAsync<InvalidDataException>(() => first.FetchCompleteAsync(CancellationToken.None));
+            var resumed = CreateClient(Send, (_, _) => Task.CompletedTask, checkpointPath: checkpointPath, maxPagesPerInvocation: 1, maxTotalPages: 1);
+
+            var snapshot = await resumed.FetchCompleteAsync(CancellationToken.None);
+
+            Assert.Equal(WikidataAwardsClient.PageSize, snapshot.Records.Count);
+            Assert.Equal(2, calls);
+            Assert.False(File.Exists(checkpointPath));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FetchComplete_RejectsMaximumPlusOneAndRetainsProgress()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jc-awards-max-plus-one-" + Guid.NewGuid().ToString("N"));
+        var checkpointPath = Path.Combine(root, "checkpoint.json");
+        var calls = 0;
+        try
+        {
+            Task<HttpResponseMessage> Send(HttpRequestMessage _, CancellationToken __)
+            {
+                calls++;
+                return Task.FromResult(JsonResponse(calls == 1
+                    ? PageBody(WikidataAwardsClient.PageSize, 1)
+                    : PageBody(1, WikidataAwardsClient.PageSize + 1)));
+            }
+
+            var first = CreateClient(Send, (_, _) => Task.CompletedTask, checkpointPath: checkpointPath, maxPagesPerInvocation: 1, maxTotalPages: 1);
+            await Assert.ThrowsAsync<InvalidDataException>(() => first.FetchCompleteAsync(CancellationToken.None));
+            var resumed = CreateClient(Send, (_, _) => Task.CompletedTask, checkpointPath: checkpointPath, maxPagesPerInvocation: 1, maxTotalPages: 1);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => resumed.FetchCompleteAsync(CancellationToken.None));
+
+            Assert.Equal(2, calls);
+            Assert.True(File.Exists(checkpointPath));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -229,6 +333,107 @@ public sealed class WikidataAwardsClientTests
     }
 
     [Fact]
+    public async Task FetchComplete_CollapsesDuplicateLogicalRecordsAcrossCursors()
+    {
+        var calls = 0;
+        var client = CreateClient(
+            (_, _) =>
+            {
+                calls++;
+                return Task.FromResult(JsonResponse(calls == 1
+                    ? PageBody(WikidataAwardsClient.PageSize, 1)
+                    : PageBody(1, WikidataAwardsClient.PageSize + 1, logicalStart: 1)));
+            },
+            (_, _) => Task.CompletedTask,
+            maxPagesPerInvocation: 2,
+            maxTotalPages: 2);
+
+        var snapshot = await client.FetchCompleteAsync(CancellationToken.None);
+
+        Assert.Equal(WikidataAwardsClient.PageSize, snapshot.Records.Count);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task FetchComplete_DiscardsCorruptUnknownAndExpiredCheckpoints()
+    {
+        var invalidPayloads = new[]
+        {
+            "not-json",
+            CheckpointJson(version: 999, DateTimeOffset.UtcNow),
+            CheckpointJson(version: 1, DateTimeOffset.UtcNow.AddDays(-31)),
+        };
+
+        foreach (var payload in invalidPayloads)
+        {
+            var root = Path.Combine(Path.GetTempPath(), "jc-awards-invalid-checkpoint-" + Guid.NewGuid().ToString("N"));
+            var checkpointPath = Path.Combine(root, "checkpoint.json");
+            Directory.CreateDirectory(root);
+            await File.WriteAllTextAsync(checkpointPath, payload);
+            var queries = new List<string>();
+            try
+            {
+                var client = CreateClient((request, _) =>
+                {
+                    queries.Add(Uri.UnescapeDataString(request.RequestUri!.Query));
+                    return Task.FromResult(JsonResponse("{\"results\":{\"bindings\":[]}}"));
+                }, (_, _) => Task.CompletedTask, checkpointPath: checkpointPath);
+
+                var snapshot = await client.FetchCompleteAsync(CancellationToken.None);
+
+                Assert.Empty(snapshot.Records);
+                Assert.Single(queries);
+                Assert.DoesNotContain("FILTER(?cursor >", queries[0], StringComparison.Ordinal);
+                Assert.False(File.Exists(checkpointPath));
+            }
+            finally
+            {
+                if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void ValidateCheckpoint_AcceptsMaximumAndRejectsMaximumPlusOne()
+    {
+        var maximum = new AwardsSourceCheckpoint
+        {
+            Version = 1,
+            Complete = false,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            CompletedPages = WikidataAwardsClient.MaxTotalPages,
+            BindingCount = WikidataAwardsClient.MaxTotalBindings,
+            Cursor = "cursor-maximum",
+            Records = [],
+        };
+
+        WikidataAwardsClient.ValidateCheckpoint(maximum);
+        var plusOne = new AwardsSourceCheckpoint
+        {
+            Version = maximum.Version,
+            Complete = maximum.Complete,
+            StartedAtUtc = maximum.StartedAtUtc,
+            CompletedPages = WikidataAwardsClient.MaxTotalPages + 1,
+            BindingCount = WikidataAwardsClient.MaxTotalBindings + WikidataAwardsClient.PageSize,
+            Cursor = maximum.Cursor,
+            Records = [],
+        };
+        Assert.Throws<InvalidDataException>(() => WikidataAwardsClient.ValidateCheckpoint(plusOne));
+
+        WikidataAwardsClient.ValidateCheckpointCapacity(
+            WikidataAwardsClient.MaxTotalPages,
+            WikidataAwardsClient.MaxTotalBindings,
+            WikidataAwardsClient.MaxExpandedProviderRecords);
+        Assert.Throws<InvalidDataException>(() => WikidataAwardsClient.ValidateCheckpointCapacity(
+            WikidataAwardsClient.MaxTotalPages,
+            WikidataAwardsClient.MaxTotalBindings,
+            WikidataAwardsClient.MaxExpandedProviderRecords + 1));
+        WikidataAwardsClient.ValidateCheckpointByteLength(WikidataAwardsClient.MaxCheckpointBytes);
+        Assert.Throws<InvalidDataException>(() =>
+            WikidataAwardsClient.ValidateCheckpointByteLength(WikidataAwardsClient.MaxCheckpointBytes + 1L));
+    }
+
+    [Fact]
     public async Task FetchComplete_DoesNotPublishWhenCompletedCheckpointCannotBeRemoved()
     {
         var root = Path.Combine(Path.GetTempPath(), "jc-awards-checkpoint-dir-" + Guid.NewGuid().ToString("N"));
@@ -264,15 +469,21 @@ public sealed class WikidataAwardsClientTests
             maxPagesPerInvocation,
             maxTotalPages);
 
-    private static string PageBody(int count, int start, bool includeImdb = false)
+    private static string PageBody(int count, int start, bool includeImdb = false, int? logicalStart = null)
     {
-        var bindings = Enumerable.Range(start, count).Select(value =>
+        var bindings = Enumerable.Range(start, count).Select((value, index) =>
         {
-            var imdb = includeImdb ? $"\"imdb\":{{\"value\":\"tt{value + 1_000_000:D7}\"}}," : string.Empty;
-            return $"{{\"cursor\":{{\"value\":\"cursor-{value:D9}\"}},\"item\":{{\"value\":\"Q{value}\"}},\"kind\":{{\"value\":\"Movie\"}},\"outcome\":{{\"value\":\"win\"}},\"awardLabel\":{{\"value\":\"Award {value}\"}},{imdb}\"tmdbMovie\":{{\"value\":\"{value}\"}}}}";
+            var logicalValue = (logicalStart ?? start) + index;
+            var imdb = includeImdb ? $"\"imdb\":{{\"value\":\"tt{logicalValue + 1_000_000:D7}\"}}," : string.Empty;
+            return $"{{\"cursor\":{{\"value\":\"cursor-{value:D9}\"}},\"item\":{{\"value\":\"Q{logicalValue}\"}},\"kind\":{{\"value\":\"Movie\"}},\"outcome\":{{\"value\":\"win\"}},\"awardLabel\":{{\"value\":\"Award {logicalValue}\"}},{imdb}\"tmdbMovie\":{{\"value\":\"{logicalValue}\"}}}}";
         });
         return "{\"results\":{\"bindings\":[" + string.Join(',', bindings) + "]}}";
     }
+
+    private static string CheckpointJson(int version, DateTimeOffset startedAtUtc)
+        => $$"""
+        {"version":{{version}},"complete":false,"startedAtUtc":"{{startedAtUtc:O}}","completedPages":1,"bindingCount":5000,"cursor":"cursor-000005000","records":[]}
+        """;
 
     private static HttpResponseMessage JsonResponse(string json)
         => new(HttpStatusCode.OK)
@@ -293,5 +504,11 @@ public sealed class WikidataAwardsClientTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
             => send(request, cancellationToken);
+    }
+
+    private sealed class NonSeekableReadStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    {
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
     }
 }

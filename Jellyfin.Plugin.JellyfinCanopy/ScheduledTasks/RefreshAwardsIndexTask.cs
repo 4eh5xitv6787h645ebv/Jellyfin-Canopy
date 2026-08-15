@@ -67,9 +67,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.ScheduledTasks
 
         internal static (DayOfWeek Day, TimeSpan Time) StableSchedule(string systemId)
         {
+            // PERF(S5): spread an opt-in 100k-install fleet across all 604,800
+            // week-seconds. Startup/upgrade performs no provider I/O.
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(systemId ?? string.Empty));
-            var minuteOfWeek = BitConverter.ToUInt32(hash, 0) % (7U * 24U * 60U);
-            return ((DayOfWeek)(minuteOfWeek / (24U * 60U)), TimeSpan.FromMinutes(minuteOfWeek % (24U * 60U)));
+            var secondOfWeek = BitConverter.ToUInt32(hash, 0) % (7U * 24U * 60U * 60U);
+            return (
+                (DayOfWeek)(secondOfWeek / (24U * 60U * 60U)),
+                TimeSpan.FromSeconds(secondOfWeek % (24U * 60U * 60U)));
         }
     }
 }

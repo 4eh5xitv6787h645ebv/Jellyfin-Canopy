@@ -23,10 +23,8 @@ const CONFIG_PATH = `/Plugins/${PLUGIN_ID}/Configuration`;
 // and stale-navigation assertions exercise the module's physical fetches.
 test.use({ serviceWorkers: 'block' });
 
-const WEBKIT_BLOCKED_SERVICE_WORKER_HOST_ERRORS = [
-    /^pageerror: t\.scrollHandler is not a function\. \(In 't\.scrollHandler\(\)', 't\.scrollHandler' is null\)$/,
-    /^pageerror: \/127\.0\.0\.1:\d+\/Playback\/BitrateTest\?Size=500000 due to access control checks\.$/,
-] as const;
+const WEBKIT_BLOCKED_SERVICE_WORKER_BITRATE_ERROR =
+    /^pageerror: \/127\.0\.0\.1:\d+\/Playback\/BitrateTest\?Size=500000 due to access control checks\.$/;
 
 function assertNoAwardsRuntimeErrors(consoleErrors: ConsoleErrors, isWebKit: boolean): void {
     if (!isWebKit) {
@@ -34,19 +32,15 @@ function assertNoAwardsRuntimeErrors(consoleErrors: ConsoleErrors, isWebKit: boo
         return;
     }
 
-    const allowedCounts = WEBKIT_BLOCKED_SERVICE_WORKER_HOST_ERRORS.map(() => 0);
+    let allowedCount = 0;
     const unexpected = consoleErrors.realDetails().filter((detail) => {
         if (detail.source !== 'pageerror') return true;
-        const index = WEBKIT_BLOCKED_SERVICE_WORKER_HOST_ERRORS.findIndex((pattern) =>
-            pattern.test(detail.text));
-        if (index < 0) return true;
-        allowedCounts[index]++;
+        if (!WEBKIT_BLOCKED_SERVICE_WORKER_BITRATE_ERROR.test(detail.text)) return true;
+        allowedCount++;
         return false;
     });
-    for (const count of allowedCounts) {
-        expect(count, 'each stock WebKit service-worker-block error occurs at most once')
-            .toBeLessThanOrEqual(1);
-    }
+    expect(allowedCount, 'the stock WebKit service-worker-block bitrate error occurs at most once')
+        .toBeLessThanOrEqual(1);
     assertNoRuntimeErrors({
         ...consoleErrors,
         real: () => unexpected.map(({ text }) => text),
@@ -126,6 +120,8 @@ test.describe.serial('cached awards index (#717)', () => {
 
         let releaseFirst!: () => void;
         const firstHeld = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        let releaseSecond!: () => void;
+        const secondHeld = new Promise<void>((resolve) => { releaseSecond = resolve; });
         let requestCount = 0;
         const handler = async (route: Route): Promise<void> => {
             const url = route.request().url();
@@ -150,6 +146,7 @@ test.describe.serial('cached awards index (#717)', () => {
                 }
                 return;
             }
+            await secondHeld;
             await route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -190,9 +187,37 @@ test.describe.serial('cached awards index (#717)', () => {
             await waitForHash(page, secondId);
 
             const current = page.locator('#itemDetailPage:not(.hide)');
-            const section = current.locator(`.jc-awards-section[data-item-id="${secondId}"]`);
-            await expect(section).toBeVisible({ timeout: 30_000 });
-            await expect(section).toHaveAttribute('aria-labelledby', `jc-awards-heading-${secondId}`);
+            await expect.poll(() => requestCount, {
+                message: 'the second details owner starts its own physical request',
+                timeout: 30_000,
+            }).toBe(2);
+            const flowBefore = await current.locator('.detailPageSecondaryContainer').evaluate((node) => ({
+                top: node.getBoundingClientRect().top,
+                scrollHeight: document.documentElement.scrollHeight,
+            }));
+            releaseSecond();
+            const trigger = current.locator(`.jc-awards-trigger[data-item-id="${secondId}"]`);
+            await expect(trigger).toBeVisible({ timeout: 30_000 });
+            await expect(trigger).toHaveClass(/MuiIconButton-root/);
+            const flowAfterTrigger = await current.locator('.detailPageSecondaryContainer').evaluate((node) => ({
+                top: node.getBoundingClientRect().top,
+                scrollHeight: document.documentElement.scrollHeight,
+            }));
+            expect(Math.abs(flowAfterTrigger.top - flowBefore.top), 'late trigger keeps following detail geometry stable')
+                .toBeLessThanOrEqual(1);
+            expect(flowAfterTrigger.scrollHeight, 'late trigger adds no vertical document flow').toBe(flowBefore.scrollHeight);
+            await trigger.click();
+            const overlay = page.locator(`.jc-awards-overlay[data-item-id="${secondId}"]`);
+            const section = overlay.locator(`.jc-awards-section[data-item-id="${secondId}"]`);
+            await expect(overlay).toBeVisible();
+            await expect(overlay).toHaveAttribute('role', 'dialog');
+            await expect(overlay).toHaveAttribute('aria-modal', 'true');
+            await expect(overlay).toHaveAttribute('aria-labelledby', `jc-awards-heading-${secondId}`);
+            expect(await overlay.evaluate((node) => getComputedStyle(node).position)).toBe('fixed');
+            expect(await page.evaluate(() => document.documentElement.scrollHeight),
+                'opening variable-height awards content remains out of document flow')
+                .toBe(flowAfterTrigger.scrollHeight);
+            await expect(section).toHaveClass(/verticalSection/);
             await expect(section).toContainText('<img onerror=alert(1)>');
             await expect(section).toContainText('Audience Award');
             await expect(section.locator('img')).toHaveCount(0);
@@ -201,26 +226,28 @@ test.describe.serial('cached awards index (#717)', () => {
             releaseFirst();
             await page.waitForTimeout(250);
             await expect(current).not.toContainText('Stale award');
-            await expect(page.locator(`#itemDetailPage.hide .jc-awards-section`)).toHaveCount(0);
+            await expect(page.locator(`#itemDetailPage.hide .jc-awards-trigger`)).toHaveCount(0);
 
-            // Jellyfin can wipe detail children after late item data. The shared
-            // details observer must restore settled content without refetching.
-            await section.evaluate((node) => node.remove());
-            await current.locator('.detailPageSecondaryContainer').evaluate((host) => {
+            // Jellyfin can wipe detail actions after late item data. The shared
+            // details observer must restore the settled native trigger without refetching.
+            await overlay.locator('.jc-awards-close').click();
+            await trigger.evaluate((node) => node.remove());
+            await current.locator('.detailButtons, .itemActionsBottom, .mainDetailButtons, .detailButtonsContainer').first().evaluate((host) => {
                 const marker = document.createElement('span');
                 marker.dataset.awardsWipeProbe = 'true';
                 host.appendChild(marker);
             });
-            await expect(current.locator('.jc-awards-section')).toContainText('Audience Award');
+            await expect(current.locator('.jc-awards-trigger')).toBeVisible();
             expect(requestCount).toBe(2);
 
             await save(baseURL!, false);
             await page.waitForFunction(() =>
                 (window as any).JellyfinCanopy?.pluginConfig?.AwardsEnabled === false);
-            await expect(page.locator('.jc-awards-section')).toHaveCount(0);
+            await expect(page.locator('.jc-awards-trigger, .jc-awards-overlay')).toHaveCount(0);
             await expect(page.locator('#jc-awards-styles')).toHaveCount(0);
         } finally {
             releaseFirst();
+            releaseSecond();
             await page.unroute('**/JellyfinCanopy/awards/**', handler);
             page.off('console', recordAwardsWarning);
         }

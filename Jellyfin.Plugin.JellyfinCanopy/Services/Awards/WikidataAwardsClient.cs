@@ -12,8 +12,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 {
     /// <summary>
     /// Strictly serial, bounded WDQS reader. WDQS is not MediaWiki's Action API,
-    /// so the Action-API-only maxlag parameter does not apply; 429/503
-    /// Retry-After and exponential backoff are honored instead.
+    /// so the Action-API-only maxlag parameter does not apply. 429 Retry-After
+    /// and bounded timeout retries are honored; 5xx stops the invocation so the
+    /// next provider request cannot precede Wikimedia's 15-minute outage pause.
     /// </summary>
     public sealed partial class WikidataAwardsClient : IAwardsSourceClient
     {
@@ -25,6 +26,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         internal const int MaxCheckpointBytes = 128 * 1024 * 1024;
         internal const int MaxTotalBindings = PageSize * MaxTotalPages;
         internal const int MaxExpandedProviderRecords = MaxTotalBindings * 3;
+        // PERF(S4): the traversal graph/checkpoint is capped independently of
+        // library size. Eight times the 128 MiB serialized checkpoint plus the
+        // one 8 MiB page is a conservative 1,032 MiB resident refresh envelope.
+        internal const long MaxTraversalResidentBytes = (8L * MaxCheckpointBytes) + MaxResponseBytes;
         private const int CheckpointVersion = 1;
         private const string CheckpointFileName = "awards-source-checkpoint-v1.json";
         private const int MaxAttempts = 3;
@@ -39,7 +44,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
         };
-        private const string UserAgent = "JellyfinCanopy-Awards/2.0 (+https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy; contact: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)";
+        // PERF(S5): descriptive bot identity + contact is mandatory because
+        // this opt-in weekly task reaches the shared public WDQS service.
+        private const string UserAgent = "JellyfinCanopy-AwardsBot/2.0 (+https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy; contact: https://github.com/4eh5xitv6787h645ebv/Jellyfin-Canopy/issues)";
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<WikidataAwardsClient> _logger;
@@ -48,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         private readonly string _checkpointPath;
         private readonly int _maxPagesPerInvocation;
         private readonly int _maxTotalPages;
+        private readonly int _maxTotalBindings;
 
         public WikidataAwardsClient(
             IHttpClientFactory httpClientFactory,
@@ -60,6 +68,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             _checkpointPath = ResolveDefaultCheckpointPath();
             _maxPagesPerInvocation = MaxPagesPerInvocation;
             _maxTotalPages = MaxTotalPages;
+            _maxTotalBindings = MaxTotalBindings;
         }
 
         internal WikidataAwardsClient(
@@ -89,11 +98,14 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             _checkpointPath = checkpointPath;
             _maxPagesPerInvocation = maxPagesPerInvocation;
             _maxTotalPages = maxTotalPages;
+            _maxTotalBindings = PageSize * maxTotalPages;
         }
 
         public async Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
         {
             var checkpoint = LoadCheckpoint();
+            // PERF(S4): transient, source-global (not local-library/user keyed),
+            // capped at 600k records within MaxTraversalResidentBytes.
             var records = checkpoint?.Records.ToHashSet()
                 ?? new HashSet<AwardsSourceRecord>();
             var cursor = checkpoint?.Cursor;
@@ -108,14 +120,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                     await _delayAsync(MinimumPageInterval, cancellationToken).ConfigureAwait(false);
                 }
 
-                if (completedPages >= _maxTotalPages)
-                {
-                    throw new InvalidDataException(
-                        "Wikidata awards result reached the total traversal limit before completeness was proven.");
-                }
-
                 var sourcePage = await FetchPageAsync(cursor, cancellationToken).ConfigureAwait(false);
-                if (bindingCount > MaxTotalBindings - sourcePage.BindingCount)
+                if (bindingCount > _maxTotalBindings - sourcePage.BindingCount)
                 {
                     throw new InvalidDataException("Wikidata awards result exceeded the binding limit.");
                 }
@@ -178,8 +184,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                     using var response = await _httpClientFactory.CreateClient(HttpClientName)
                         .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
                         .ConfigureAwait(false);
-                    if (response.StatusCode == HttpStatusCode.TooManyRequests
-                        || response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
                     {
                         lastFailure = new HttpRequestException(
                             $"Wikidata returned {(int)response.StatusCode}.",
@@ -204,6 +209,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 catch (HttpRequestException exception)
                 {
                     lastFailure = exception;
+                    if (exception.StatusCode is not null && (int)exception.StatusCode >= 500)
+                    {
+                        // Wikimedia's robot policy requires a pause of at least
+                        // 15 minutes on server errors. End this invocation and
+                        // retain the checkpoint/last-good index; a later task run
+                        // is the next eligible request.
+                        throw;
+                    }
+
                     if (exception.StatusCode is not null
                         && exception.StatusCode != HttpStatusCode.RequestTimeout
                         && exception.StatusCode != HttpStatusCode.TooManyRequests
@@ -487,10 +501,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             try
             {
                 var info = new FileInfo(_checkpointPath);
-                if (info.Length is <= 0 or > MaxCheckpointBytes)
-                {
-                    throw new InvalidDataException("Wikidata awards checkpoint has an invalid size.");
-                }
+                ValidateCheckpointByteLength(info.Length);
 
                 using var stream = new FileStream(_checkpointPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                 var checkpoint = JsonSerializer.Deserialize<AwardsSourceCheckpoint>(stream, CheckpointJsonOptions)
@@ -515,10 +526,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
             ValidateCheckpoint(checkpoint);
             var json = JsonSerializer.Serialize(checkpoint, CheckpointJsonOptions);
-            if (Encoding.UTF8.GetByteCount(json) > MaxCheckpointBytes)
-            {
-                throw new InvalidDataException("Wikidata awards checkpoint exceeded the byte limit.");
-            }
+            ValidateCheckpointByteLength(Encoding.UTF8.GetByteCount(json));
 
             var directory = Path.GetDirectoryName(_checkpointPath);
             if (string.IsNullOrWhiteSpace(directory))
@@ -554,22 +562,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             }
         }
 
-        private static void ValidateCheckpoint(AwardsSourceCheckpoint checkpoint)
+        internal static void ValidateCheckpoint(AwardsSourceCheckpoint checkpoint)
         {
+            ValidateCheckpointCapacity(
+                checkpoint.CompletedPages,
+                checkpoint.BindingCount,
+                checkpoint.Records?.Count ?? 0);
             if (checkpoint.Version != CheckpointVersion
                 || checkpoint.Complete
                 || checkpoint.StartedAtUtc == default
                 || checkpoint.StartedAtUtc > DateTimeOffset.UtcNow.AddDays(1)
                 || DateTimeOffset.UtcNow - checkpoint.StartedAtUtc > MaximumCheckpointAge
-                || checkpoint.CompletedPages is < 1 or > MaxTotalPages
-                || checkpoint.BindingCount != checkpoint.CompletedPages * PageSize
                 || !IsValidCursor(checkpoint.Cursor)
                 || checkpoint.Records is null
-                || checkpoint.Records.Count > MaxExpandedProviderRecords
-                || checkpoint.Records.Count > checkpoint.BindingCount * 3
                 || checkpoint.Records.Any(record => !IsValidRecord(record)))
             {
                 throw new InvalidDataException("Wikidata awards checkpoint is invalid.");
+            }
+        }
+
+        internal static void ValidateCheckpointCapacity(
+            int completedPages,
+            int bindingCount,
+            int recordCount)
+        {
+            if (completedPages is < 1 or > MaxTotalPages
+                || bindingCount != completedPages * PageSize
+                || recordCount is < 0 or > MaxExpandedProviderRecords
+                || recordCount > bindingCount * 3)
+            {
+                throw new InvalidDataException("Wikidata awards checkpoint exceeded its capacity.");
+            }
+        }
+
+        internal static void ValidateCheckpointByteLength(long byteLength)
+        {
+            if (byteLength is <= 0 or > MaxCheckpointBytes)
+            {
+                throw new InvalidDataException("Wikidata awards checkpoint has an invalid size.");
             }
         }
 

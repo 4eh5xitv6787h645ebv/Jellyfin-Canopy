@@ -47,6 +47,20 @@ public sealed class AwardsIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public void EntryCapacity_AcceptsMaximumAndRejectsMaximumPlusOne()
+    {
+        AwardsIndexService.ValidateEntryCapacity(AwardsIndexService.MaxEntries);
+        Assert.Throws<InvalidDataException>(() =>
+            AwardsIndexService.ValidateEntryCapacity(AwardsIndexService.MaxEntries + 1));
+        Assert.Equal(
+            (8L * AwardsIndexService.MaxIndexBytes) + (512L * AwardsIndexService.MaxEntries),
+            AwardsIndexService.MaxResidentIndexBytes);
+        AwardsIndexService.ValidateIndexByteLength(AwardsIndexService.MaxIndexBytes);
+        Assert.Throws<InvalidDataException>(() =>
+            AwardsIndexService.ValidateIndexByteLength(AwardsIndexService.MaxIndexBytes + 1L));
+    }
+
+    [Fact]
     public async Task Refresh_CoalescesConcurrentCallersAndPublishesEmptyCompleteIndex()
     {
         var source = new ControlledSource();
@@ -152,6 +166,35 @@ public sealed class AwardsIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Lookup_ColdStartAndServiceRecreationUseDiskWithoutProviderTraffic()
+    {
+        var path = Path.Combine(_root, "recreation-index.json");
+        var record = new AwardsSourceRecord(
+            "Q42", AwardsMediaKind.Movie, "tmdb", "123", "Persisted Award", 2024, AwardOutcome.Win);
+        var seed = new AwardsIndexService(
+            new SequenceSource(new AwardsSourceSnapshot([record])),
+            NullLogger<AwardsIndexService>.Instance,
+            path);
+        Assert.True(await seed.RefreshAsync(CancellationToken.None));
+        var provider = new CountingSource();
+
+        foreach (var _ in Enumerable.Range(0, 2))
+        {
+            var recreated = new AwardsIndexService(
+                provider,
+                NullLogger<AwardsIndexService>.Instance,
+                path);
+            Assert.Equal(
+                "Persisted Award",
+                Assert.Single(recreated.Lookup(
+                    AwardsMediaKind.Movie,
+                    new Dictionary<string, string> { ["Tmdb"] = "123" }).Wins).Name);
+        }
+
+        Assert.Equal(0, provider.Calls);
+    }
+
+    [Fact]
     public async Task Refresh_BoundsANeverSettlingSourceAndRetainsPriorState()
     {
         var service = new AwardsIndexService(
@@ -221,6 +264,17 @@ public sealed class AwardsIndexServiceTests : IDisposable
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("unreachable");
+        }
+    }
+
+    private sealed class CountingSource : IAwardsSourceClient
+    {
+        public int Calls { get; private set; }
+
+        public Task<AwardsSourceSnapshot> FetchCompleteAsync(CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new AwardsSourceSnapshot(Array.Empty<AwardsSourceRecord>()));
         }
     }
 }

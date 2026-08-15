@@ -17,6 +17,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         internal const int MaxIndexBytes = 64 * 1024 * 1024;
         internal const int MaxEntries = 250_000;
         internal const int MaxAwardsPerEntry = 250;
+        // PERF(S4): the lookup is provider-key bounded, not library-item bounded.
+        // 8x the 64 MiB serialized index plus 512 bytes/key conservatively covers
+        // UTF-16 strings, immutable-dictionary nodes, entries, facts, and slack.
+        internal const long MaxResidentIndexBytes = (8L * MaxIndexBytes) + (512L * MaxEntries);
         private const string IndexFileName = "awards-index-v1.json";
         private static readonly TimeSpan RefreshTimeout = TimeSpan.FromMinutes(19);
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -35,6 +39,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
         private readonly object _loadGate = new();
         private Task<bool>? _refreshFlight;
         private bool _loaded;
+        // PERF(S4): source-global provider keys, never local items × users;
+        // hard-capped at 250k keys / MaxResidentIndexBytes (~634.1 MiB).
         private ImmutableDictionary<string, AwardsIndexEntry> _entries =
             ImmutableDictionary<string, AwardsIndexEntry>.Empty.WithComparers(StringComparer.Ordinal);
 
@@ -156,10 +162,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                 var document = BuildDocument(source.Records, DateTimeOffset.UtcNow);
                 var entries = ValidateDocument(document);
                 var json = JsonSerializer.Serialize(document, JsonOptions);
-                if (System.Text.Encoding.UTF8.GetByteCount(json) > MaxIndexBytes)
-                {
-                    throw new InvalidDataException("Awards index exceeded the byte limit.");
-                }
+                ValidateIndexByteLength(System.Text.Encoding.UTF8.GetByteCount(json));
 
                 var directory = Path.GetDirectoryName(_indexPath);
                 if (string.IsNullOrWhiteSpace(directory))
@@ -219,10 +222,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
                     if (File.Exists(_indexPath))
                     {
                         var info = new FileInfo(_indexPath);
-                        if (info.Length is <= 0 or > MaxIndexBytes)
-                        {
-                            throw new InvalidDataException("Awards index file has an invalid size.");
-                        }
+                        ValidateIndexByteLength(info.Length);
 
                         using var stream = new FileStream(_indexPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                         _afterIndexStreamOpened?.Invoke();
@@ -260,10 +260,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             var entries = new List<AwardsIndexEntry>();
             foreach (var group in byKey.OrderBy(group => group.Key, StringComparer.Ordinal))
             {
-                if (entries.Count >= MaxEntries)
-                {
-                    throw new InvalidDataException("Awards index exceeded the entry limit.");
-                }
+                ValidateEntryCapacity(entries.Count + 1);
 
                 var entities = group.Select(record => record.WikidataId).Distinct(StringComparer.Ordinal).ToArray();
                 if (entities.Length != 1)
@@ -299,12 +296,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
 
         private static ImmutableDictionary<string, AwardsIndexEntry> ValidateDocument(AwardsIndexDocument document)
         {
+            ValidateEntryCapacity(document.Entries?.Count ?? 0);
             if (document.Version != SchemaVersion
                 || !document.Complete
                 || document.GeneratedAtUtc == default
                 || document.GeneratedAtUtc > DateTimeOffset.UtcNow.AddDays(1)
-                || document.Entries is null
-                || document.Entries.Count > MaxEntries)
+                || document.Entries is null)
             {
                 throw new InvalidDataException("Awards index metadata is invalid or incomplete.");
             }
@@ -324,6 +321,22 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services.Awards
             }
 
             return builder.ToImmutable();
+        }
+
+        internal static void ValidateEntryCapacity(int entryCount)
+        {
+            if (entryCount is < 0 or > MaxEntries)
+            {
+                throw new InvalidDataException("Awards index exceeded the entry limit.");
+            }
+        }
+
+        internal static void ValidateIndexByteLength(long byteLength)
+        {
+            if (byteLength is <= 0 or > MaxIndexBytes)
+            {
+                throw new InvalidDataException("Awards index file has an invalid size.");
+            }
         }
 
         private static bool IsValidFact(AwardFact fact)
