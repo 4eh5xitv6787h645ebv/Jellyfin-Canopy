@@ -552,6 +552,10 @@ function reconcileAcknowledgedUserSettings(
     owner: SaveIntent['owner'],
 ): void {
     if (fileName !== 'settings.json') return;
+    if (JC.identity.isCurrent(owner)) {
+        const pauseDelay = Number(JC.currentSettings?.pauseScreenDelaySeconds ?? 5);
+        JC._pauseScreenInstance?.setDelaySeconds(Number.isFinite(pauseDelay) ? pauseDelay : 5);
+    }
     const runtime = JC.core.clientRuntime;
     if (!runtime) return;
     void runtime.reconcileUserSettings(owner).catch((error: unknown) => {
