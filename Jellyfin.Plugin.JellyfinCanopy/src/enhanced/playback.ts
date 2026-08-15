@@ -813,7 +813,21 @@ interface TrackPressOwnership {
     readonly src: string;
     /** Native source identity when the media URL exposes it. */
     readonly mediaSourceId: string | null;
+    /** Per-kind successful-command generation visible at the keypress. */
+    readonly commandGeneration: number;
 }
+
+type TrackSurfaceOwnership = Omit<TrackPressOwnership, 'session'>;
+
+interface TrackOwnedSurface {
+    readonly generation: number;
+    readonly session: TrackSessionIdentity;
+    readonly video: HTMLVideoElement | null;
+    readonly src: string;
+}
+
+const _trackSurfaceGeneration: Record<TrackSheetKind, number> = { subtitle: 0, audio: 0 };
+let _trackOwnedSurface: Partial<Record<TrackSheetKind, TrackOwnedSurface>> = {};
 
 function trackSessionIdentity(session: OwnSession | null): TrackSessionIdentity | null {
     const sessionId = session?.Id || '';
@@ -834,7 +848,11 @@ function sameTrackSession(expected: TrackSessionIdentity, actual: TrackSessionId
     return actual.mediaSourceId === expected.mediaSourceId;
 }
 
-function currentSurfaceStillMatchesPress(press: TrackPressOwnership): boolean {
+function currentSurfaceStillMatchesPress(
+    press: TrackSurfaceOwnership,
+    kind?: TrackSheetKind,
+    session?: TrackSessionIdentity,
+): boolean {
     const itemNow = currentTrackPressItemHint();
     if (press.itemHint !== null && itemNow !== press.itemHint) return false;
     const mediaSourceNow = getActiveMediaSourceId(getVideo());
@@ -842,14 +860,37 @@ function currentSurfaceStillMatchesPress(press: TrackPressOwnership): boolean {
     // A blob or otherwise incomplete source URL has no independent, complete
     // client marker. A stable route id alone cannot prove that the media
     // surface did not change while /Sessions still lagged.
-    return !press.exactSurfaceRequired || pressSurfaceUnchanged(press);
+    if (!press.exactSurfaceRequired || pressSurfaceUnchanged(press)) return true;
+    if (!kind || !session) return false;
+    const owned = _trackOwnedSurface[kind];
+    const video = getVideo();
+    return !!owned
+        && owned.generation > press.commandGeneration
+        && sameTrackSession(session, owned.session)
+        && video === owned.video
+        && (video?.currentSrc || video?.src || '') === owned.src;
 }
 
 function pressSurfaceUnchanged(
-    press: Pick<TrackPressOwnership, 'video' | 'src'>,
+    press: Pick<TrackSurfaceOwnership, 'video' | 'src'>,
 ): boolean {
     const video = getVideo();
     return video === press.video && (video?.currentSrc || video?.src || '') === press.src;
+}
+
+function recordOwnedTrackSurfaceTransition(
+    kind: TrackSheetKind,
+    session: TrackSessionIdentity,
+): void {
+    const video = getVideo();
+    const generation = _trackSurfaceGeneration[kind] + 1;
+    _trackSurfaceGeneration[kind] = generation;
+    _trackOwnedSurface[kind] = {
+        generation,
+        session,
+        video,
+        src: video?.currentSrc || video?.src || '',
+    };
 }
 
 async function cycleTrackViaApi(
@@ -874,7 +915,7 @@ async function cycleTrackViaApi(
     // not by whichever same-item session happens to exist when the queue runs.
     if (!pressSession) return false; // direct ownership unavailable; exact-surface fallback may still be safe
     if (!sameTrackSession(pressSession, trackSessionIdentity(session))) return true;
-    if (!session || !currentSurfaceStillMatchesPress(press)) return true;
+    if (!session || !currentSurfaceStillMatchesPress(press, kind, pressSession)) return true;
     const { sessionId, itemId } = pressSession;
 
     const type = kind === 'subtitle' ? 'Subtitle' : 'Audio';
@@ -907,7 +948,7 @@ async function cycleTrackViaApi(
     // can be stale (produced for the press item while the next episode landed
     // in flight). When the current source carries a derivable item id that
     // disagrees with the press item, the press is stale — swallow.
-    if (!currentSurfaceStillMatchesPress(press)) return true;
+    if (!currentSurfaceStillMatchesPress(press, kind, pressSession)) return true;
     try {
         await api.jf(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
@@ -924,7 +965,7 @@ async function cycleTrackViaApi(
         const failedSession = trackSessionIdentity(await probeOwnSession(context));
         if (baselineStale()
             || !sameTrackSession(pressSession, failedSession)
-            || !currentSurfaceStillMatchesPress(press)) return true;
+            || !currentSurfaceStillMatchesPress(press, kind, pressSession)) return true;
         console.warn(`🪼 Jellyfin Canopy: ${commandName} command failed, falling back to menu cycle`, err);
         return false;
     }
@@ -934,6 +975,7 @@ async function cycleTrackViaApi(
     // toast or the command memory. The memory is keyed by session+item, so a
     // write after a genuine item change self-invalidates on the next press.
     if (baselineStale()) return true;
+    recordOwnedTrackSurfaceTransition(kind, pressSession);
     const priorMemory = _lastCommandedTrack[kind];
     const laggingReportedIndices = new Set<number>(priorMemory?.laggingReportedIndices ?? []);
     if (typeof reported === 'number') laggingReportedIndices.add(reported);
@@ -965,6 +1007,7 @@ const _trackCycleChains: Record<TrackSheetKind, Promise<void>> = {
 };
 
 async function trackFallbackStillOwnsPress(
+    kind: TrackSheetKind,
     context: IdentityContext,
     expectedGeneration: number,
     press: TrackPressOwnership,
@@ -972,7 +1015,7 @@ async function trackFallbackStillOwnsPress(
     if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return false;
     const pressSession = await press.session.catch(() => null);
     if (!isPlaybackCurrent(context, expectedGeneration) || JC.isVideoPage?.() !== true) return false;
-    if (!currentSurfaceStillMatchesPress(press)) return false;
+    if (!currentSurfaceStillMatchesPress(press, kind, pressSession ?? undefined)) return false;
     // When the direct session was unavailable/ambiguous at the keypress, the
     // exact element+source token is the only positive proof that opening the
     // existing host sheet still belongs to the captured surface.
@@ -981,7 +1024,7 @@ async function trackFallbackStillOwnsPress(
     return isPlaybackCurrent(context, expectedGeneration)
         && JC.isVideoPage?.() === true
         && sameTrackSession(pressSession, currentSession)
-        && currentSurfaceStillMatchesPress(press);
+        && currentSurfaceStillMatchesPress(press, kind, pressSession);
 }
 
 function cycleTrack(kind: TrackSheetKind): void {
@@ -1008,19 +1051,20 @@ function cycleTrack(kind: TrackSheetKind): void {
     const sourceItemId = normalizeTrackItemId(parseItemIdFromVideosSrc(pressSrc));
     const pressItemHint = sourceItemId ?? normalizeTrackItemId(getCurrentVideoItemId());
     const pressMediaSourceId = getActiveMediaSourceId(pressVideo);
-    const pressSurface: Omit<TrackPressOwnership, 'session'> = {
+    const pressSurface: TrackSurfaceOwnership = {
         exactSurfaceRequired: sourceItemId === null || pressMediaSourceId === null,
         itemHint: pressItemHint,
         video: pressVideo,
         src: pressSrc,
         mediaSourceId: pressMediaSourceId,
+        commandGeneration: _trackSurfaceGeneration[kind],
     };
     const capturedSession = probeOwnSession(context).then((session) => {
         const identity = trackSessionIdentity(session);
         if (!identity) return null;
         if (pressSurface.itemHint !== null && identity.itemId !== pressSurface.itemHint) return null;
         if (pressSurface.mediaSourceId !== null && identity.mediaSourceId !== pressSurface.mediaSourceId) return null;
-        if (pressSurface.exactSurfaceRequired && !pressSurfaceUnchanged(pressSurface)) return null;
+        if (!currentSurfaceStillMatchesPress(pressSurface, kind, identity)) return null;
         return identity;
     }).catch(() => null);
     const press: TrackPressOwnership = { ...pressSurface, session: capturedSession };
@@ -1033,7 +1077,7 @@ function cycleTrack(kind: TrackSheetKind): void {
             console.warn('🪼 Jellyfin Canopy: API track cycle failed', err);
         }
         if (handled) return;
-        if (!await trackFallbackStillOwnsPress(context, expectedGeneration, press)) return;
+        if (!await trackFallbackStillOwnsPress(kind, context, expectedGeneration, press)) return;
         // Every DOM fallback invalidates the optimistic memory for this kind:
         // the menu is authoritative and its selection is not observed here.
         forgetCommandedTrack(kind);
@@ -1125,7 +1169,8 @@ let _playbackInfoOverlay: HTMLElement | null = null;
 let _playbackInfoTimer: number | null = null;
 let _playbackInfoVisibilityListener: (() => void) | null = null;
 let _playbackInfoRefreshEpoch = 0;
-let _playbackInfoInFlightEpoch: number | null = null;
+let _playbackInfoRefreshInFlight: Promise<void> | null = null;
+let _playbackInfoPendingRefresh: { context: IdentityContext; overlay: HTMLElement } | null = null;
 
 interface PlaybackInfoSurface {
     readonly video: HTMLVideoElement;
@@ -1201,7 +1246,7 @@ function destroyPlaybackInfoOverlay(): void {
         document.removeEventListener('visibilitychange', _playbackInfoVisibilityListener);
         _playbackInfoVisibilityListener = null;
     }
-    _playbackInfoInFlightEpoch = null;
+    _playbackInfoPendingRefresh = null;
     _playbackInfoOverlay?.remove();
     _playbackInfoOverlay = null;
     _playbackInfoSurface = null;
@@ -1307,12 +1352,21 @@ function playbackInfoRefreshIsCurrent(overlay: HTMLElement, epoch: number): bool
 
 function beginPlaybackInfoRefresh(context: IdentityContext, overlay: HTMLElement): void {
     const epoch = _playbackInfoRefreshEpoch;
-    if (!playbackInfoRefreshIsCurrent(overlay, epoch)
-        || _playbackInfoInFlightEpoch === epoch) return;
-    _playbackInfoInFlightEpoch = epoch;
-    void refreshPlaybackInfo(context, overlay, epoch).finally(() => {
-        if (_playbackInfoInFlightEpoch === epoch) _playbackInfoInFlightEpoch = null;
-    });
+    if (!playbackInfoRefreshIsCurrent(overlay, epoch)) return;
+    if (_playbackInfoRefreshInFlight) {
+        _playbackInfoPendingRefresh = { context, overlay };
+        return;
+    }
+    const refresh = refreshPlaybackInfo(context, overlay, epoch);
+    _playbackInfoRefreshInFlight = refresh;
+    const settle = (): void => {
+        if (_playbackInfoRefreshInFlight !== refresh) return;
+        _playbackInfoRefreshInFlight = null;
+        const pending = _playbackInfoPendingRefresh;
+        _playbackInfoPendingRefresh = null;
+        if (pending) beginPlaybackInfoRefresh(pending.context, pending.overlay);
+    };
+    void refresh.then(settle, settle);
 }
 
 function schedulePlaybackInfoRefresh(
@@ -1425,6 +1479,7 @@ const togglePlaybackInfo = (): void => {
             _playbackInfoRefreshEpoch += 1;
             cancelPlaybackTimer(_playbackInfoTimer);
             _playbackInfoTimer = null;
+            _playbackInfoPendingRefresh = null;
             return;
         }
         if (_playbackInfoTimer === null) beginPlaybackInfoRefresh(context, overlay);
@@ -2070,6 +2125,9 @@ function resetPlaybackState(): void {
     _autoSkipContext = null;
 
     _lastCommandedTrack = {};
+    _trackSurfaceGeneration.subtitle = 0;
+    _trackSurfaceGeneration.audio = 0;
+    _trackOwnedSurface = {};
     _trackCycleChains.subtitle = Promise.resolve();
     _trackCycleChains.audio = Promise.resolve();
     destroyPlaybackInfoOverlay();

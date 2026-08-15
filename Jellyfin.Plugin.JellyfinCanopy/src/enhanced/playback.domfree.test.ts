@@ -521,6 +521,36 @@ describe('DOM-free player shortcuts', () => {
             expect(triggerClick).not.toHaveBeenCalled();
         });
 
+        it('a queued blob press follows the preceding successful command-owned restart', async () => {
+            const video = document.createElement('video');
+            let src = 'blob:before-owned-restart';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const commands: Array<Record<string, unknown>> = [];
+            let resolveCommand!: (value: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) return Promise.resolve([sessionForItem(ITEM_A)]);
+                commands.push({ path, ...options });
+                return new Promise((resolve) => { resolveCommand = resolve; });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+
+            JC.cycleSubtitleTrack!(); // captures the first blob surface before joining the chain
+            await Promise.resolve();
+            await Promise.resolve();
+            src = 'blob:after-owned-restart';
+            const resolveFirst = resolveCommand;
+            resolveFirst({});
+            await flushPromises();
+
+            expect(commands).toHaveLength(2);
+            expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
+        });
+
         it('BLOB source: a queued press is swallowed when the session item changes before it runs', async () => {
             mountVideo(); // blob source — item id only derivable via the press-time probe
             const commands: Array<Record<string, unknown>> = [];
@@ -1213,23 +1243,38 @@ describe('DOM-free player shortcuts', () => {
                 () => hidden ? 'hidden' : 'visible',
             );
             mountVideo();
-            const { jf } = installApi([ownSession()]);
+            let resolveOpeningProbe!: (value: unknown) => void;
+            let probeCount = 0;
+            const jf = vi.fn((path: string) => {
+                if (!path.startsWith('/Sessions?')) return Promise.resolve({});
+                probeCount += 1;
+                if (probeCount === 1) {
+                    return new Promise((resolve) => { resolveOpeningProbe = resolve; });
+                }
+                return Promise.resolve([ownSession()]);
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
 
             JC.togglePlaybackInfo!();
-            await flushPromises();
+            await Promise.resolve();
+            await Promise.resolve();
             expect(jf).toHaveBeenCalledTimes(1);
 
             hidden = true;
             document.dispatchEvent(new Event('visibilitychange'));
-            vi.advanceTimersByTime(5_000);
-            await flushPromises();
-            expect(jf).toHaveBeenCalledTimes(1);
-
             hidden = false;
             document.dispatchEvent(new Event('visibilitychange'));
+            hidden = true;
             document.dispatchEvent(new Event('visibilitychange'));
+            hidden = false;
+            document.dispatchEvent(new Event('visibilitychange'));
+            vi.advanceTimersByTime(5_000);
             await flushPromises();
-            expect(jf).toHaveBeenCalledTimes(2);
+            expect(jf).toHaveBeenCalledTimes(1); // resumes coalesce behind the physical in-flight probe
+
+            resolveOpeningProbe([ownSession()]);
+            await flushPromises();
+            expect(jf).toHaveBeenCalledTimes(2); // exactly one current-epoch replacement
 
             vi.advanceTimersByTime(1_000);
             await flushPromises();
