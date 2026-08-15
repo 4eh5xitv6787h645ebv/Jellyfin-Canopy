@@ -72,7 +72,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new SeerrCache(provider),
                 provider,
                 _manager,
-                _libraryManager);
+                _libraryManager,
+                new RemoveFromHomePolicyService(
+                    _manager,
+                    NullLogger<RemoveFromHomePolicyService>.Instance));
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext

@@ -108,6 +108,8 @@ test('seed starts one explicit scan only after all seed-owned libraries exist', 
     const composeUp = seed.indexOf('"${COMPOSE[@]}" up -d');
     const movies = seed.indexOf('name=Movies&collectionType=movies&paths=%2Fmedia%2FMovies&refreshLibrary=false');
     const shows = seed.indexOf('name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=false');
+    const music = seed.indexOf('name=Music&collectionType=music&paths=%2Fmedia%2FMusic&refreshLibrary=false');
+    const books = seed.indexOf('name=Books&collectionType=books&paths=%2Fmedia%2FBooks&refreshLibrary=false');
     const collections = seed.indexOf('name=Collections&collectionType=boxsets&paths=%2Fconfig%2Fdata%2Fcollections&refreshLibrary=false');
     const trigger = seed.indexOf('LIBRARY_SCAN_TRIGGERED_AT="$(date -u');
     const refresh = seed.indexOf('api POST "/Library/Refresh"');
@@ -116,7 +118,9 @@ test('seed starts one explicit scan only after all seed-owned libraries exist', 
     assert.ok(composeUp > precreatedCollections);
     assert.ok(movies >= 0);
     assert.ok(shows > movies);
-    assert.ok(collections > shows);
+    assert.ok(music > shows);
+    assert.ok(books > music);
+    assert.ok(collections > books);
     assert.ok(trigger > collections);
     assert.ok(refresh > trigger);
     assert.equal((seed.match(/refreshLibrary=true/g) || []).length, 0);

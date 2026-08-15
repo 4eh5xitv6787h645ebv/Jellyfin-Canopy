@@ -31,6 +31,11 @@ const LAYOUT_STAMP: Record<Layout, string> = {
 
 const MOBILE = { width: 390, height: 844 } as const;
 const DESKTOP = { width: 1280, height: 800 } as const;
+// The fit-state case intentionally keeps the complete live admin tray (rather
+// than deleting real controls), so give its eleven-button fixture inventory a
+// genuinely positive free-space budget. The regular desktop case below stays
+// at 1280px and continues to exercise overflow there.
+const FIT_DESKTOP = { width: 1440, height: 800 } as const;
 // Wide enough to overflow the widest tested tray: 40 × 48px ≈ 1920px of
 // buttons exceeds the 1280px desktop viewport (and therefore any tray, which is
 // always ≤ the viewport), guaranteeing scrollWidth > clientWidth on every case.
@@ -433,7 +438,7 @@ test.describe('header button tray stays a single scrollable row (#459)', () => {
     // stranded at the tray's left edge, a visible split, not the native contiguous
     // right-packed tray. Prove the geometry on a roomy modern desktop tray.
     test('modern fit-state: the native-tabs order:-1 group stays right-packed and contiguous, not split to the left edge', async ({ page, consoleErrors }) => {
-        await page.setViewportSize(DESKTOP);
+        await page.setViewportSize(FIT_DESKTOP);
         await seedLayout(page, 'modern');
         await loginAs(page, 'admin', consoleErrors);
 

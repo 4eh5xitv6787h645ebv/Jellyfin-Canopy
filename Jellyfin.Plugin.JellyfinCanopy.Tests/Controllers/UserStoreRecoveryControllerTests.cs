@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using Jellyfin.Plugin.JellyfinCanopy.Configuration;
 using Jellyfin.Plugin.JellyfinCanopy.Controllers;
+using Jellyfin.Plugin.JellyfinCanopy.Services;
 using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -18,6 +19,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private readonly string _baseDir;
         private readonly string _userId = Guid.NewGuid().ToString("N");
         private readonly UserConfigurationManager _manager;
+        private readonly RemoveFromHomePolicyService _removePolicy;
 
         public UserStoreRecoveryControllerTests()
         {
@@ -26,6 +28,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             _manager = new UserConfigurationManager(
                 new StubAppPaths(_baseDir),
                 NullLogger<UserConfigurationManager>.Instance);
+            _removePolicy = new RemoveFromHomePolicyService(
+                _manager,
+                NullLogger<RemoveFromHomePolicyService>.Instance);
         }
 
         public void Dispose()
@@ -37,7 +42,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             => Path.Combine(_baseDir, "configurations", "Jellyfin.Plugin.JellyfinCanopy", _userId);
 
         private UserStoreRecoveryController Controller()
-            => new(_manager, NullLogger<UserStoreRecoveryController>.Instance);
+            => new(
+                _manager,
+                NullLogger<UserStoreRecoveryController>.Instance,
+                _removePolicy);
 
         private void QuarantineSettings()
         {

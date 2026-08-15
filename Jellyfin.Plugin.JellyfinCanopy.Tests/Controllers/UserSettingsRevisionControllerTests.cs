@@ -19,6 +19,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
         private readonly UserConfigurationManager _manager;
         private readonly User _user;
         private readonly FakePluginConfigProvider _provider;
+        private readonly RemoveFromHomePolicyService _removePolicy;
 
         public UserSettingsRevisionControllerTests()
         {
@@ -27,6 +28,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             _manager = new UserConfigurationManager(new StubAppPaths(_baseDir), NullLogger<UserConfigurationManager>.Instance);
             _user = new User("settings-user", "Provider", "PasswordProvider");
             _provider = new FakePluginConfigProvider(new PluginConfiguration());
+            _removePolicy = new RemoveFromHomePolicyService(
+                _manager,
+                NullLogger<RemoveFromHomePolicyService>.Instance);
         }
 
         private string UserId => _user.Id.ToString("N");
@@ -40,6 +44,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
 
         public void Dispose()
         {
+            _removePolicy.Invalidate(UserId);
             try { Directory.Delete(_baseDir, recursive: true); } catch { /* best effort */ }
         }
 
@@ -55,7 +60,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
                 new SeerrCache(configProvider),
                 configProvider,
                 _manager,
-                new CountingLibraryManager());
+                new CountingLibraryManager(),
+                _removePolicy);
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -156,6 +162,44 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             var ack = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(ok.Value);
             Assert.Equal(7, ack.Revision);
             Assert.Equal(7, _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").Revision);
+        }
+
+        [Fact]
+        public void SuccessfulSettingsPost_InvalidatesOnlyTheTargetUsersEffectiveRemovePolicy()
+        {
+            SeedSettings();
+            var otherUserId = Guid.NewGuid().ToString("N");
+            _removePolicy.SeedCacheForTest(UserId, enabled: false);
+            _removePolicy.SeedCacheForTest(otherUserId, enabled: true);
+
+            var result = Controller(0).SaveUserSettingsSettings(
+                UserId,
+                new UserSettings
+                {
+                    Revision = 0,
+                    WatchProgressMode = "percentage",
+                    RemoveContinueWatchingEnabled = true,
+                });
+
+            Assert.IsType<OkObjectResult>(result);
+            Assert.False(_removePolicy.IsCachedForTest(UserId));
+            Assert.True(_removePolicy.IsCachedForTest(otherUserId));
+
+            var filter = new HiddenContentResponseFilter(
+                _manager,
+                NullLogger<HiddenContentResponseFilter>.Instance,
+                _provider,
+                _removePolicy,
+                new HiddenContentHierarchyResolver(
+                    new CountingLibraryManager(),
+                    new StubUserManager(_user)));
+            Assert.True(_removePolicy.ShouldApply(
+                _user.Id,
+                hiddenContentEnabled: false,
+                administratorDefault: false));
+
+            _removePolicy.Invalidate(otherUserId);
+            _removePolicy.Invalidate(UserId);
         }
 
         [Fact]

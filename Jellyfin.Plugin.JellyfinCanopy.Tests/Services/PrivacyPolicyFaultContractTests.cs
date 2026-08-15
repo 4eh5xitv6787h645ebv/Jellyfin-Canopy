@@ -56,6 +56,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services
                 _mgr,
                 NullLogger<HiddenContentResponseFilter>.Instance,
                 new FakePluginConfigProvider(new PluginConfiguration()),
+                new RemoveFromHomePolicyService(
+                    _mgr,
+                    NullLogger<RemoveFromHomePolicyService>.Instance),
                 hierarchy);
         }
 

@@ -66,6 +66,60 @@ describe('Jellyfin 12 home-row scope resolver', () => {
         release();
     });
 
+    it.each([
+        [1, 'resume'],
+        [2, 'resumeaudio'],
+        [3, 'resumebook'],
+    ])('classifies default slot %i (%s) as Continue Watching without heading text', async (index: number, sectionType: string) => {
+        ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({ CustomPrefs: {} });
+        const { card } = homeSection(index, `localized-${sectionType}`);
+        const release = acquireHomeRowScopes(() => {});
+
+        primeHomeRowScopes();
+        await vi.waitFor(() => expect(resolveHomeRowScope(card)).toMatchObject({
+            kind: 'continuewatching',
+            signature: `home:${index}:${sectionType}`,
+        }));
+        release();
+    });
+
+    it.each(['resume', 'resumeaudio', 'resumebook'])(
+        'classifies custom %s ordering, including Jellyfin TV prepend',
+        async (sectionType) => {
+            ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({
+                CustomPrefs: { homesection0: sectionType },
+            });
+            const { container } = homeSection(0, 'misleading ordinary heading');
+            const shifted = document.createElement('div');
+            shifted.className = 'verticalSection section1';
+            shifted.innerHTML = '<div class="card" data-type="Audio"></div>';
+            const sentinel = document.createElement('div');
+            sentinel.className = 'verticalSection section10';
+            container.append(shifted, sentinel);
+            const release = acquireHomeRowScopes(() => {});
+
+            primeHomeRowScopes();
+            await vi.waitFor(() => expect(resolveHomeRowScope(shifted.querySelector('.card')!)).toMatchObject({
+                kind: 'continuewatching',
+                signature: `home:1:${sectionType}`,
+            }));
+            expect(resolveHomeRowScope(container.querySelector('.section0 .card')!).kind).toBe('collection');
+            release();
+        },
+    );
+
+    it('keeps an ordinary custom home row outside Continue Watching', async () => {
+        ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({
+            CustomPrefs: { homesection4: 'latestmedia' },
+        });
+        const { card } = homeSection(4, 'Continue Watching is deliberately misleading');
+        const release = acquireHomeRowScopes(() => {});
+
+        primeHomeRowScopes();
+        await vi.waitFor(() => expect(resolveHomeRowScope(card).kind).toBe('ordinary'));
+        release();
+    });
+
     it('uses custom ordering and Jellyfin TV prepend without reading the heading', async () => {
         ApiClient.getDisplayPreferences = vi.fn().mockResolvedValue({
             CustomPrefs: {

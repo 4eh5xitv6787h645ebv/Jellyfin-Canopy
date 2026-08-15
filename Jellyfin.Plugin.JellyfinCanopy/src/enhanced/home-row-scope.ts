@@ -50,6 +50,7 @@ const KNOWN_SECTIONS = new Set([
     'none', 'smalllibrarytiles', 'librarybuttons', 'activerecordings',
     'resume', 'resumeaudio', 'resumebook', 'latestmedia', 'nextup', 'livetv',
 ]);
+const CONTINUE_WATCHING_SECTIONS = new Set(['resume', 'resumeaudio', 'resumebook']);
 const COLLECTION_TYPES = new Set([
     'collectionfolder', 'userview', 'boxset', 'playlist', 'channel',
 ]);
@@ -389,7 +390,9 @@ function resolveHomeRowScopeWithPass(
         if (sectionType.startsWith('unknown:')) {
             return resolved('unresolved', true, `home:${index}:${sectionType}`, section);
         }
-        if (sectionType === 'resume') return resolved('continuewatching', true, `home:${index}:resume`, section);
+        if (CONTINUE_WATCHING_SECTIONS.has(sectionType)) {
+            return resolved('continuewatching', true, `home:${index}:${sectionType}`, section);
+        }
         if (sectionType === 'nextup') return resolved('nextup', true, `home:${index}:nextup`, section);
         if (sectionType === 'smalllibrarytiles' || sectionType === 'librarybuttons') {
             return resolved('collection', true, `home:${index}:${sectionType}`, section);

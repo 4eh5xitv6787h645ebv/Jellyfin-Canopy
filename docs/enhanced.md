@@ -567,7 +567,7 @@ Clean up the home screen without losing anything: this adds a lightweight, **non
 
 **What makes it convenient:**
 
-- Works on both **Continue Watching** and **Next Up** items, each removed from its own row.
+- Works on **Continue Watching** (including Jellyfin's video, audio, and book resume rows) and **Next Up** items, each removed from its own row.
 - Also appears in Jellyfin's **long-press / multi-select menu**, so touch devices with no "⋯" button can remove items. Selecting a mix of rows (and other items) only ever removes the Continue Watching / Next Up ones.
 - Removing several at once shows a confirmation listing each item and the row it will be removed from.
 - Hidden state is stored **server-side, per-user**, so it applies across all your devices and survives reloads.
@@ -576,7 +576,9 @@ Clean up the home screen without losing anything: this adds a lightweight, **non
 
 ![Bulk removal confirmation listing each item and its row](images/remove-confirm.png)
 
-**Enable it:** Canopy User Settings (press `?`) → **Settings** → **Add Remove from Continue Watching & Next Up Buttons**.
+**Enable it (per-user):** Canopy User Settings (press `?`) → **Settings** → **Add Remove from Continue Watching & Next Up Buttons**. This authenticated-user value controls both the menu actions and enforcement of that user's saved home-row removals when the full Hidden Content feature is off. One user's choice never changes another user's rows; Hidden Content keeps its own independent filtering policy.
+
+**Admin default:** Dashboard → **Plugins** → **Jellyfin Canopy** → **Display** → **Default: enable "Remove from Continue Watching & Next Up"** sets only the starting value for new users. Existing users keep their own saved choice.
 
 ### Hiding the Favorites tab
 

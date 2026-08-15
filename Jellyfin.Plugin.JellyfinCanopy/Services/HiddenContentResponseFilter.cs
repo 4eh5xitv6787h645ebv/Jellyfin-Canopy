@@ -146,17 +146,20 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly UserConfigurationManager _configManager;
         private readonly ILogger<HiddenContentResponseFilter> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly RemoveFromHomePolicyService _removeFromHomePolicy;
         private readonly HiddenContentHierarchyResolver _hierarchyResolver;
 
         public HiddenContentResponseFilter(
             UserConfigurationManager configManager,
             ILogger<HiddenContentResponseFilter> logger,
             IPluginConfigProvider configProvider,
+            RemoveFromHomePolicyService removeFromHomePolicy,
             HiddenContentHierarchyResolver hierarchyResolver)
         {
             _configManager = configManager;
             _logger = logger;
             _configProvider = configProvider;
+            _removeFromHomePolicy = removeFromHomePolicy;
             _hierarchyResolver = hierarchyResolver;
         }
 
@@ -168,26 +171,34 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 return;
             }
 
-            var hcEnabled = _configProvider.ConfigurationOrNull?.HiddenContentEnabled == true;
-            var rcwEnabled = _configProvider.ConfigurationOrNull?.RemoveContinueWatchingEnabled == true;
+            // Authentication owns the policy identity. Do not inspect global or
+            // per-user enforcement state until Jellyfin has supplied a request user.
+            var userId = UserHelper.GetCurrentUserId(context.HttpContext.User) ?? Guid.Empty;
+            if (userId == Guid.Empty)
+            {
+                await next().ConfigureAwait(false);
+                return;
+            }
+
+            var pluginConfiguration = _configProvider.ConfigurationOrNull;
+            var hcEnabled = pluginConfiguration?.HiddenContentEnabled == true;
 
             // /Items doubles as library list + search results — searchTerm wins, then fall back to library.
             var surface = (route.Surface == "library" && HasSearchTerm(context))
                 ? "search"
                 : route.Surface;
 
-            // RemoveContinueWatchingEnabled keeps the home-section Remove surfaces (Continue
-            // Watching + Next Up) filtering on even when HC's master switch is off.
+            // The authenticated user's persisted setting owns Remove-from-home
+            // enforcement. The administrator value is only the missing-file default.
+            // Hidden Content remains an independent master switch on every route.
             var isRemoveSurface = string.Equals(surface, "continuewatching", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(surface, "nextup", StringComparison.OrdinalIgnoreCase);
-            if (!hcEnabled && !(rcwEnabled && isRemoveSurface))
-            {
-                await next().ConfigureAwait(false);
-                return;
-            }
-
-            var userId = UserHelper.GetCurrentUserId(context.HttpContext.User) ?? Guid.Empty;
-            if (userId == Guid.Empty)
+            if (isRemoveSurface
+                ? !_removeFromHomePolicy.ShouldApply(
+                    userId,
+                    hcEnabled,
+                    pluginConfiguration?.RemoveContinueWatchingEnabled == true)
+                : !hcEnabled)
             {
                 await next().ConfigureAwait(false);
                 return;

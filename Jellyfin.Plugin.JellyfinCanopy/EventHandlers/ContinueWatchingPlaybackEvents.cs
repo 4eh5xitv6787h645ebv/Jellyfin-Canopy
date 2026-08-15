@@ -114,35 +114,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.EventHandlers
         private readonly UserConfigurationManager _configManager;
         private readonly ILogger<ContinueWatchingPlaybackConsumer> _logger;
         private readonly IPluginConfigProvider _configProvider;
+        private readonly RemoveFromHomePolicyService _removeFromHomePolicy;
 
-        public ContinueWatchingPlaybackConsumer(UserConfigurationManager configManager, ILogger<ContinueWatchingPlaybackConsumer> logger, IPluginConfigProvider configProvider)
+        public ContinueWatchingPlaybackConsumer(
+            UserConfigurationManager configManager,
+            ILogger<ContinueWatchingPlaybackConsumer> logger,
+            IPluginConfigProvider configProvider,
+            RemoveFromHomePolicyService removeFromHomePolicy)
         {
             _configManager = configManager;
             _logger = logger;
             _configProvider = configProvider;
+            _removeFromHomePolicy = removeFromHomePolicy;
         }
 
         public Task OnEvent(PlaybackStartEventArgs eventArgs)
         {
             try
             {
-                // Mirror the response filter's HC + RCW gate (HiddenContentResponseFilter.cs). When admin runs
-                // RCW=on / HC=off, the filter still strips continuewatching-scope entries; without this branch
-                // resume would never auto-clear those entries and the user would see them stay hidden forever.
-                var cfg = _configProvider.ConfigurationOrNull;
-                var hcEnabled = cfg?.HiddenContentEnabled == true;
-                var rcwEnabled = cfg?.RemoveContinueWatchingEnabled == true;
-                if (!hcEnabled && !rcwEnabled)
-                {
-                    return Task.CompletedTask;
-                }
-
                 var item = eventArgs?.Item;
                 var session = eventArgs?.Session;
                 if (item == null || session == null) return Task.CompletedTask;
 
                 var userId = session.UserId;
                 if (userId == Guid.Empty) return Task.CompletedTask;
+
+                // Resolve policy only after the playback session has supplied the
+                // owning user. The response filter and playback auto-unhide share
+                // this exact bounded per-user policy/cache owner.
+                var cfg = _configProvider.ConfigurationOrNull;
+                if (!_removeFromHomePolicy.ShouldApply(
+                    userId,
+                    cfg?.HiddenContentEnabled == true,
+                    cfg?.RemoveContinueWatchingEnabled == true))
+                {
+                    return Task.CompletedTask;
+                }
 
                 var itemIdStr = item.Id.ToString();
                 var seriesIdStr = item is Episode ep && ep.SeriesId != Guid.Empty

@@ -3,10 +3,10 @@
 #   1. install the freshly built plugin DLL into a clean config volume,
 #   2. generate a handful of tiny valid movies (including one regional-language
 #      Matroska fixture), one dedicated 40-second Auto-Skip movie, and a 2×2-
-#      episode TV series with ffmpeg (testsrc2 clips),
+#      episode TV series, one audio track, and one compact book fixture,
 #   3. boot the compose stack and complete the startup wizard via the API,
-#   4. create the Movies + Shows libraries and the two test users the specs
-#      expect,
+#   4. create the Movies, Shows, Music, and Books libraries and the two test
+#      users the specs expect,
 #   5. enable the plugin features the specs exercise (tags, random button,
 #      hidden content, Spoiler Guard), wait for the scan, seed movie/episode
 #      metadata plus an incomplete TMDB-anchored BoxSet, and mark S01E01 played
@@ -334,10 +334,13 @@ else
     }
 fi
 
-# Movies and Shows live in dedicated subfolders so the recursive Movies-library
-# scan never descends into the TV tree (and vice-versa) — a single /media root
-# shared by both collection types would misidentify episode files as movies.
-mkdir -p "${MEDIA_DIR}/Movies" "${MEDIA_DIR}/Shows"
+# Every collection type lives in a dedicated folder so recursive scans cannot
+# reclassify another fixture family.
+mkdir -p \
+    "${MEDIA_DIR}/Movies" \
+    "${MEDIA_DIR}/Shows" \
+    "${MEDIA_DIR}/Music" \
+    "${MEDIA_DIR}/Books"
 
 make_clip() { # <relative-path> <tone-hz> [duration-seconds] [audio-language]
     local duration="${3:-5}"
@@ -353,6 +356,13 @@ make_clip() { # <relative-path> <tone-hz> [duration-seconds] [audio-language]
         -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
         -threads "${JF_FFMPEG_THREADS}" \
         -metadata:s:a:0 language="${audio_language}" -y "$1"
+}
+
+make_audio_clip() { # <relative-path> <tone-hz>
+    run_ffmpeg \
+        -f lavfi -i "sine=frequency=$2:duration=5" \
+        -c:a aac -metadata title="Canopy Resume Audio" \
+        -metadata artist="Canopy Fixture" -y "$1"
 }
 
 make_multilingual_clip() { # <relative-path>
@@ -398,6 +408,33 @@ make_clip "${FILE_SOURCE_RELATIVE_PATH}" 825
 log "generating dedicated Auto-Skip movie (${AUTOSKIP_DURATION}s, seed ${SEED_NONCE})"
 mkdir -p "${MEDIA_DIR}/${AUTOSKIP_RELATIVE_DIR}"
 make_clip "${AUTOSKIP_RELATIVE_PATH}" 880 "${AUTOSKIP_DURATION}"
+
+# Real Audio and Book records protect the host-declared resumeaudio/resumebook
+# action boundary. The compact valid PDF contains no external fixture dependency.
+log "generating audio and book resume fixtures"
+make_audio_clip "Music/Canopy Resume Audio.m4a" 920
+printf '%s\n' \
+    '%PDF-1.4' \
+    '1 0 obj' \
+    '<< /Type /Catalog /Pages 2 0 R >>' \
+    'endobj' \
+    '2 0 obj' \
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>' \
+    'endobj' \
+    '3 0 obj' \
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>' \
+    'endobj' \
+    'xref' \
+    '0 4' \
+    '0000000000 65535 f ' \
+    '0000000009 00000 n ' \
+    '0000000058 00000 n ' \
+    '0000000115 00000 n ' \
+    'trailer' \
+    '<< /Size 4 /Root 1 0 R >>' \
+    'startxref' \
+    '186' \
+    '%%EOF' > "${MEDIA_DIR}/Books/Canopy Resume Book.pdf"
 
 # ── TV: one series, 2 seasons × 2 episodes, for the Spoiler Guard specs ───────
 # Series/Season NN/… S0xE0y naming so Jellyfin's naming resolver builds the
@@ -564,6 +601,14 @@ log "creating the Shows library"
 api POST "/Library/VirtualFolders?name=Shows&collectionType=tvshows&paths=%2Fmedia%2FShows&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 
+log "creating the Music library"
+api POST "/Library/VirtualFolders?name=Music&collectionType=music&paths=%2Fmedia%2FMusic&refreshLibrary=false" \
+    '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
+
+log "creating the Books library"
+api POST "/Library/VirtualFolders?name=Books&collectionType=books&paths=%2Fmedia%2FBooks&refreshLibrary=false" \
+    '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
+
 log "creating the Collections library without an implicit scan"
 api POST "/Library/VirtualFolders?name=Collections&collectionType=boxsets&paths=%2Fconfig%2Fdata%2Fcollections&refreshLibrary=false" \
     '{"LibraryOptions":{"EnableRealtimeMonitor":false,"SaveLocalMetadata":true}}'
@@ -708,6 +753,8 @@ MULTILINGUAL_AUDIO_MATCH_COUNT=0
 MULTILINGUAL_AUDIO_TRACKS='[]'
 FILE_SOURCE_MATCH_COUNT=0
 FILE_SOURCE_MEDIA_PATH_COUNT=0
+AUDIO_RESUME_ID=''
+BOOK_RESUME_ID=''
 for _ in $(seq 1 60); do
     AUTOSKIP_SCAN_JSON="$(api GET "/Items?IncludeItemTypes=Movie&Recursive=true&userId=${ADMIN_ID}&Fields=Path,MediaSources,MediaStreams")"
     MOVIES="$(printf '%s' "${AUTOSKIP_SCAN_JSON}" | jq -r '.TotalRecordCount // 0')"
@@ -758,6 +805,10 @@ for _ in $(seq 1 60); do
         '[first(.Items[]? | select(.Path == $path)) as $item
           | ($item.MediaSources // [])[]?
           | select(.Path == $path)] | length')"
+    AUDIO_RESUME_ID="$(api GET "/Items?IncludeItemTypes=Audio&Recursive=true&userId=${ADMIN_ID}&Limit=100" \
+        | jq -r 'first(.Items[]? | select(.Name == "Canopy Resume Audio") | .Id) // empty')"
+    BOOK_RESUME_ID="$(api GET "/Items?IncludeItemTypes=Book&Recursive=true&userId=${ADMIN_ID}&Limit=100" \
+        | jq -r 'first(.Items[]? | select(.Name == "Canopy Resume Book") | .Id) // empty')"
     if [ "${MOVIES}" -ge 7 ] 2>/dev/null \
         && [ "${AUTOSKIP_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${AUTOSKIP_SCAN_SOURCE_COUNT}" -ge 1 ] 2>/dev/null \
@@ -767,7 +818,9 @@ for _ in $(seq 1 60); do
         && [ "${MULTILINGUAL_AUDIO_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
         && [ "${MULTILINGUAL_AUDIO_TRACKS}" = '[{"language":"en-us","codec":"aac","channels":6,"isDefault":true},{"language":"pt-br","codec":"eac3","channels":2,"isDefault":false}]' ] \
         && [ "${FILE_SOURCE_MATCH_COUNT}" -eq 1 ] 2>/dev/null \
-        && [ "${FILE_SOURCE_MEDIA_PATH_COUNT}" -eq 1 ] 2>/dev/null; then
+        && [ "${FILE_SOURCE_MEDIA_PATH_COUNT}" -eq 1 ] 2>/dev/null \
+        && [ -n "${AUDIO_RESUME_ID}" ] \
+        && [ -n "${BOOK_RESUME_ID}" ]; then
         break
     fi
     sleep 5
@@ -793,6 +846,11 @@ log "verified multilingual-audio fixture tracks: ${MULTILINGUAL_AUDIO_TRACKS}"
     || fail "file-source fixture '${FILE_SOURCE_NAME}' was not indexed at ${FILE_SOURCE_CONTAINER_PATH}"
 [ "${FILE_SOURCE_MEDIA_PATH_COUNT}" -eq 1 ] \
     || fail "file-source fixture '${FILE_SOURCE_NAME}' did not expose its exact .disc media-source path"
+[ -n "${AUDIO_RESUME_ID}" ] \
+    || fail "library scan never indexed the Canopy Resume Audio fixture"
+[ -n "${BOOK_RESUME_ID}" ] \
+    || fail "library scan never indexed the Canopy Resume Book fixture"
+log "verified audio/book resume fixtures"
 log "verified file-source fixture: ${FILE_SOURCE_CANONICAL_VALUE} at ${FILE_SOURCE_CONTAINER_PATH}"
 
 log "waiting for the explicit library scan to complete before metadata writes"

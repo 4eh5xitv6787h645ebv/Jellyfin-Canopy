@@ -55,6 +55,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     {
         private readonly UserConfigurationManager _userConfigurationManager;
         private readonly ILibraryManager _libraryManager;
+        private readonly RemoveFromHomePolicyService _removeFromHomePolicy;
 
         public UserSettingsController(
             IHttpClientFactory httpClientFactory,
@@ -63,11 +64,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             ISeerrCache seerrCache,
             IPluginConfigProvider configProvider,
             UserConfigurationManager userConfigurationManager,
-            ILibraryManager libraryManager)
+            ILibraryManager libraryManager,
+            RemoveFromHomePolicyService removeFromHomePolicy)
             : base(httpClientFactory, logger, userManager, seerrCache, configProvider)
         {
             _userConfigurationManager = userConfigurationManager;
             _libraryManager = libraryManager;
+            _removeFromHomePolicy = removeFromHomePolicy;
         }
 
         [HttpGet("user-settings/{userId}/settings.json")]
@@ -138,6 +141,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
             var userConfig = read.Value;
             if (read.WasCreated)
             {
+                _removeFromHomePolicy.Invalidate(authorizedUserId);
                 if (!LogCrossUserFileMutationIfNeeded(
                         authorizedUserId,
                         "settings.json",
@@ -506,6 +510,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
                 if (result.Status == UserFileCommitStatus.Success)
                 {
+                    if (string.Equals(fileName, "settings.json", StringComparison.Ordinal))
+                    {
+                        _removeFromHomePolicy.Invalidate(authorizedUserId);
+                    }
+
                     if (!LogCrossUserFileMutationIfNeeded(
                             authorizedUserId,
                             fileName,
@@ -2195,6 +2204,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
                         StampServerManagedFields(userId, replacement);
                         _userConfigurationManager.SaveUserConfiguration(userId, "settings.json", replacement);
                     }
+                    _removeFromHomePolicy.Invalidate(userId);
                     userCount++;
                 }
                 catch (Exception ex)
