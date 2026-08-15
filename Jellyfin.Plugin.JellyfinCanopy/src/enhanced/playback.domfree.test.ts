@@ -551,6 +551,92 @@ describe('DOM-free player shortcuts', () => {
             expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
         });
 
+        it('a queued blob press follows a host restart that lands after the first POST resolves', async () => {
+            const video = document.createElement('video');
+            let src = 'blob:before-late-owned-restart';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const commands: Array<Record<string, unknown>> = [];
+            let sessionCall = 0;
+            let resolveFirstCommand!: (value: unknown) => void;
+            let resolveQueuedExecution!: (value: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    if (sessionCall === 4) {
+                        return new Promise((resolve) => { resolveQueuedExecution = resolve; });
+                    }
+                    return Promise.resolve([sessionForItem(ITEM_A)]);
+                }
+                commands.push({ path, ...options });
+                if (commands.length === 1) {
+                    return new Promise((resolve) => { resolveFirstCommand = resolve; });
+                }
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            expect(commands).toHaveLength(1);
+
+            JC.cycleSubtitleTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            resolveFirstCommand({}); // the HTTP response wins the race
+            await flushPromises();
+            expect(sessionCall).toBe(4); // B is now waiting on its operation-time proof
+
+            src = 'blob:after-late-owned-restart'; // host applies A after the response
+            resolveQueuedExecution([sessionForItem(ITEM_A)]);
+            await flushPromises();
+
+            expect(commands).toHaveLength(2);
+            expect(commands[1].body).toEqual({ Name: 'SetSubtitleStreamIndex', Arguments: { Index: '-1' } });
+        });
+
+        it('does not treat an unbounded late blob replacement as command-owned lineage', async () => {
+            const video = document.createElement('video');
+            let src = 'blob:bounded-lineage-origin';
+            Object.defineProperty(video, 'currentSrc', { configurable: true, get: () => src });
+            document.body.appendChild(video);
+            const commands: Array<Record<string, unknown>> = [];
+            let sessionCall = 0;
+            let resolveFirstCommand!: (value: unknown) => void;
+            let resolveQueuedExecution!: (value: unknown) => void;
+            const jf = vi.fn((path: string, options?: Record<string, unknown>) => {
+                if (path.startsWith('/Sessions?')) {
+                    sessionCall += 1;
+                    if (sessionCall === 4) {
+                        return new Promise((resolve) => { resolveQueuedExecution = resolve; });
+                    }
+                    return Promise.resolve([sessionForItem(ITEM_A)]);
+                }
+                commands.push({ path, ...options });
+                if (commands.length === 1) {
+                    return new Promise((resolve) => { resolveFirstCommand = resolve; });
+                }
+                return Promise.resolve({});
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.cycleSubtitleTrack!();
+            await flushPromises();
+            JC.cycleSubtitleTrack!();
+            await Promise.resolve();
+            await Promise.resolve();
+            resolveFirstCommand({});
+            await flushPromises();
+            expect(sessionCall).toBe(4);
+
+            vi.advanceTimersByTime(10_001);
+            src = 'blob:unowned-after-lineage-window';
+            resolveQueuedExecution([sessionForItem(ITEM_A)]);
+            await flushPromises();
+
+            expect(commands).toHaveLength(1);
+        });
+
         it('BLOB source: a queued press is swallowed when the session item changes before it runs', async () => {
             mountVideo(); // blob source — item id only derivable via the press-time probe
             const commands: Array<Record<string, unknown>> = [];
@@ -1279,6 +1365,44 @@ describe('DOM-free player shortcuts', () => {
             vi.advanceTimersByTime(1_000);
             await flushPromises();
             expect(jf).toHaveBeenCalledTimes(3); // exactly one resumed timer chain
+        });
+
+        it('times out a stuck session probe and retries without overlapping transport work', async () => {
+            mountVideo();
+            let active = 0;
+            let maximumActive = 0;
+            const jf = vi.fn((path: string, options?: { signal?: AbortSignal }) => {
+                if (!path.startsWith('/Sessions?')) return Promise.resolve({});
+                active += 1;
+                maximumActive = Math.max(maximumActive, active);
+                return new Promise((_resolve, reject) => {
+                    const finishAbort = (): void => {
+                        active -= 1;
+                        reject(new DOMException('aborted', 'AbortError'));
+                    };
+                    if (options?.signal?.aborted) finishAbort();
+                    else options?.signal?.addEventListener('abort', finishAbort, { once: true });
+                });
+            });
+            JC.core.api = { jf } as unknown as NonNullable<typeof JC.core.api>;
+
+            JC.togglePlaybackInfo!();
+            await Promise.resolve();
+            expect(jf).toHaveBeenCalledTimes(1);
+
+            vi.advanceTimersByTime(5_000); // bounded probe owner aborts the stuck transport
+            await flushPromises();
+            expect(active).toBe(0);
+            expect(jf).toHaveBeenCalledTimes(1);
+
+            vi.advanceTimersByTime(1_000); // one lifecycle-owned retry
+            await Promise.resolve();
+            expect(jf).toHaveBeenCalledTimes(2);
+            expect(maximumActive).toBe(1);
+
+            JC.togglePlaybackInfo!();
+            await flushPromises();
+            expect(active).toBe(0);
         });
 
         it('retains the last coherent rows and retries after a refresh failure', async () => {

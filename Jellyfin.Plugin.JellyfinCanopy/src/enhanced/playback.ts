@@ -824,8 +824,12 @@ interface TrackOwnedSurface {
     readonly session: TrackSessionIdentity;
     readonly video: HTMLVideoElement | null;
     readonly src: string;
+    readonly originVideo: HTMLVideoElement | null;
+    readonly originSrc: string;
+    readonly pendingHostTransitionUntil: number | null;
 }
 
+const TRACK_OWNED_SURFACE_TRANSITION_MS = 10_000;
 const _trackSurfaceGeneration: Record<TrackSheetKind, number> = { subtitle: 0, audio: 0 };
 let _trackOwnedSurface: Partial<Record<TrackSheetKind, TrackOwnedSurface>> = {};
 
@@ -864,11 +868,26 @@ function currentSurfaceStillMatchesPress(
     if (!kind || !session) return false;
     const owned = _trackOwnedSurface[kind];
     const video = getVideo();
-    return !!owned
-        && owned.generation > press.commandGeneration
-        && sameTrackSession(session, owned.session)
-        && video === owned.video
-        && (video?.currentSrc || video?.src || '') === owned.src;
+    if (!owned
+        || owned.generation <= press.commandGeneration
+        || !sameTrackSession(session, owned.session)
+        || press.video !== owned.originVideo
+        || press.src !== owned.originSrc) return false;
+    const src = video?.currentSrc || video?.src || '';
+    if (video === owned.video && src === owned.src) return true;
+    // The host can apply a successful remote-control command after the POST
+    // response settles. Allow exactly one bounded descendant transition for
+    // presses that were already queued on that command's origin surface, then
+    // pin every later check to the promoted element/source pair.
+    if (owned.pendingHostTransitionUntil === null
+        || performance.now() > owned.pendingHostTransitionUntil) return false;
+    _trackOwnedSurface[kind] = {
+        ...owned,
+        video,
+        src,
+        pendingHostTransitionUntil: null,
+    };
+    return true;
 }
 
 function pressSurfaceUnchanged(
@@ -881,15 +900,22 @@ function pressSurfaceUnchanged(
 function recordOwnedTrackSurfaceTransition(
     kind: TrackSheetKind,
     session: TrackSessionIdentity,
+    press: TrackSurfaceOwnership,
 ): void {
     const video = getVideo();
+    const src = video?.currentSrc || video?.src || '';
     const generation = _trackSurfaceGeneration[kind] + 1;
     _trackSurfaceGeneration[kind] = generation;
     _trackOwnedSurface[kind] = {
         generation,
         session,
         video,
-        src: video?.currentSrc || video?.src || '',
+        src,
+        originVideo: press.video,
+        originSrc: press.src,
+        pendingHostTransitionUntil: video === press.video && src === press.src
+            ? performance.now() + TRACK_OWNED_SURFACE_TRANSITION_MS
+            : null,
     };
 }
 
@@ -975,7 +1001,7 @@ async function cycleTrackViaApi(
     // toast or the command memory. The memory is keyed by session+item, so a
     // write after a genuine item change self-invalidates on the next press.
     if (baselineStale()) return true;
-    recordOwnedTrackSurfaceTransition(kind, pressSession);
+    recordOwnedTrackSurfaceTransition(kind, pressSession, press);
     const priorMemory = _lastCommandedTrack[kind];
     const laggingReportedIndices = new Set<number>(priorMemory?.laggingReportedIndices ?? []);
     if (typeof reported === 'number') laggingReportedIndices.add(reported);
@@ -1165,11 +1191,13 @@ const cycleAspect = (): void => {
 // TranscodingInfo / MediaStreams). All values land via textContent — no HTML
 // sink. One 1 s refresh timer exists only while the overlay is visible.
 const PLAYBACK_INFO_REFRESH_MS = 1_000;
+const PLAYBACK_INFO_PROBE_TIMEOUT_MS = 5_000;
 let _playbackInfoOverlay: HTMLElement | null = null;
 let _playbackInfoTimer: number | null = null;
 let _playbackInfoVisibilityListener: (() => void) | null = null;
 let _playbackInfoRefreshEpoch = 0;
 let _playbackInfoRefreshInFlight: Promise<void> | null = null;
+let _playbackInfoRefreshController: AbortController | null = null;
 let _playbackInfoPendingRefresh: { context: IdentityContext; overlay: HTMLElement } | null = null;
 
 interface PlaybackInfoSurface {
@@ -1247,6 +1275,7 @@ function destroyPlaybackInfoOverlay(): void {
         _playbackInfoVisibilityListener = null;
     }
     _playbackInfoPendingRefresh = null;
+    _playbackInfoRefreshController?.abort();
     _playbackInfoOverlay?.remove();
     _playbackInfoOverlay = null;
     _playbackInfoSurface = null;
@@ -1357,11 +1386,16 @@ function beginPlaybackInfoRefresh(context: IdentityContext, overlay: HTMLElement
         _playbackInfoPendingRefresh = { context, overlay };
         return;
     }
-    const refresh = refreshPlaybackInfo(context, overlay, epoch);
+    const controller = new AbortController();
+    _playbackInfoRefreshController = controller;
+    const deadline = window.setTimeout(() => controller.abort(), PLAYBACK_INFO_PROBE_TIMEOUT_MS);
+    const refresh = refreshPlaybackInfo(context, overlay, epoch, controller.signal);
     _playbackInfoRefreshInFlight = refresh;
     const settle = (): void => {
         if (_playbackInfoRefreshInFlight !== refresh) return;
+        clearTimeout(deadline);
         _playbackInfoRefreshInFlight = null;
+        if (_playbackInfoRefreshController === controller) _playbackInfoRefreshController = null;
         const pending = _playbackInfoPendingRefresh;
         _playbackInfoPendingRefresh = null;
         if (pending) beginPlaybackInfoRefresh(pending.context, pending.overlay);
@@ -1386,6 +1420,7 @@ async function refreshPlaybackInfo(
     context: IdentityContext,
     overlay: HTMLElement,
     epoch: number,
+    signal: AbortSignal,
 ): Promise<void> {
     // `overlay` identity-guards the loop: a toggle-off/on while a probe is in
     // flight must not let the stale refresh adopt the new overlay and fork a
@@ -1406,7 +1441,7 @@ async function refreshPlaybackInfo(
         destroyPlaybackInfoOverlay();
         return;
     }
-    const session = await probeOwnSession(context);
+    const session = await probeOwnSession(context, signal);
     if (!playbackInfoRefreshIsCurrent(overlay, epoch) || !JC.identity.isCurrent(context)) return;
     const currentVideo = getVideo();
     if (!currentVideo) {
@@ -1480,6 +1515,7 @@ const togglePlaybackInfo = (): void => {
             cancelPlaybackTimer(_playbackInfoTimer);
             _playbackInfoTimer = null;
             _playbackInfoPendingRefresh = null;
+            _playbackInfoRefreshController?.abort();
             return;
         }
         if (_playbackInfoTimer === null) beginPlaybackInfoRefresh(context, overlay);
@@ -1580,11 +1616,12 @@ interface OwnSession {
 /**
  * Resolve the caller's OWN playing session (the same-remote-control target the
  * DOM-free shortcuts command). Same fail-open rule as auto-skip: an ambiguous
- * DeviceId match (multiple playing sessions) returns null.
+ * DeviceId match (multiple playing sessions) returns null. Overlay callers
+ * supply their lifecycle-owned abort signal; shortcut probes remain unchanged.
  */
-async function probeOwnSession(context: IdentityContext): Promise<OwnSession | null> {
+async function probeOwnSession(context: IdentityContext, signal?: AbortSignal): Promise<OwnSession | null> {
     try {
-        if (!JC.identity.isCurrent(context)) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         const api = JC.core?.api;
         const ac = window.ApiClient;
         if (!api || typeof api.jf !== 'function' || !ac) return null;
@@ -1592,9 +1629,9 @@ async function probeOwnSession(context: IdentityContext): Promise<OwnSession | n
         if (!context.userId || !deviceId) return null;
         const sessions = await api.jf(
             `/Sessions?ControllableByUserId=${encodeURIComponent(context.userId)}`,
-            { skipCache: true }
+            { skipCache: true, ...(signal ? { signal } : {}) }
         ) as OwnSession[] | undefined;
-        if (!JC.identity.isCurrent(context)) return null;
+        if (signal?.aborted || !JC.identity.isCurrent(context)) return null;
         if (!Array.isArray(sessions)) return null;
         // Same-browser tabs share a deviceId (the server usually merges them
         // into one session). If more than one playing session still matches,
