@@ -112,13 +112,15 @@ describe('ratings.css lint guards', () => {
         }
     });
 
-    it('uses the official FSK identities with contrast-safe foregrounds', () => {
+    it('uses the official FSK web-pictogram palette with contrast-safe foregrounds', () => {
+        // Provenance: the lossless 500 px PNGs in the official web-pictogram
+        // archive linked from https://www.fsk.de/fskkennzeichen/.
         const official = new Map([
             ['FSK-0', '#FFFFFF'],
-            ['FSK-6', '#FFEB00'],
-            ['FSK-12', '#12B53F'],
-            ['FSK-16', '#1597D4'],
-            ['FSK-18', '#ED0016'],
+            ['FSK-6', '#FFE800'],
+            ['FSK-12', '#33B540'],
+            ['FSK-16', '#38A7E4'],
+            ['FSK-18', '#ED1C24'],
         ]);
         const luminance = (hex: string): number => {
             const channels = hex.match(/[0-9a-f]{2}/gi)!.map((part) => parseInt(part, 16) / 255)

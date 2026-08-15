@@ -284,6 +284,46 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.dataset.jcColoredRating).toBeUndefined();
     });
 
+    it('drains equal canonical host metadata before immediate detached identity teardown', () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.getAttribute('rating')).toBe('FSK-12');
+
+        // These same-value writes still transfer ownership to the host. No
+        // microtask/timer yield occurs before the retained node is detached.
+        rating.firstChild!.nodeValue = 'FSK-12';
+        rating.setAttribute('rating', 'FSK-12');
+        rating.setAttribute('aria-label', 'Content rated FSK-12');
+        rating.setAttribute('title', 'Rating: FSK-12');
+        rating.remove();
+        switchIdentity('ratings-server-b', 'ratings-user-b');
+
+        expect(rating.textContent).toBe('FSK-12');
+        expect(rating.getAttribute('rating')).toBe('FSK-12');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated FSK-12');
+        expect(rating.getAttribute('title')).toBe('Rating: FSK-12');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
+    it('retains delayed equal canonical host metadata through reset', async () => {
+        const rating = addRating('DE-16');
+        JC.initializeColoredRatings!();
+        await vi.advanceTimersByTimeAsync(600);
+
+        rating.firstChild!.nodeValue = 'FSK-16';
+        rating.setAttribute('rating', 'FSK-16');
+        rating.setAttribute('aria-label', 'Content rated FSK-16');
+        rating.setAttribute('title', 'Rating: FSK-16');
+        await vi.advanceTimersByTimeAsync(100);
+
+        resetColoredRatings();
+        expect(rating.textContent).toBe('FSK-16');
+        expect(rating.getAttribute('rating')).toBe('FSK-16');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated FSK-16');
+        expect(rating.getAttribute('title')).toBe('Rating: FSK-16');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
     it('preserves host accessibility metadata on predecessor-marker cleanup', () => {
         const rating = addRating('PG-13');
         rating.setAttribute('rating', 'stale-plugin-rating');
@@ -293,7 +333,7 @@ describe('colored ratings identity lifecycle', () => {
 
         resetColoredRatings();
 
-        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.getAttribute('rating')).toBe('stale-plugin-rating');
         expect(rating.getAttribute('aria-label')).toBe('Host rating label');
         expect(rating.getAttribute('title')).toBe('Host rating title');
         expect(rating.dataset.jcColoredRating).toBeUndefined();
@@ -315,6 +355,25 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.hasAttribute('rating')).toBe(false);
         expect(rating.hasAttribute('aria-label')).toBe(false);
         expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingAria).toBeUndefined();
+        expect(rating.dataset.jcColoredRatingTitle).toBeUndefined();
+    });
+
+    it('preserves host-replaced metadata despite predecessor ownership markers', () => {
+        const rating = addRating('PG-13');
+        rating.setAttribute('rating', 'host-rating');
+        rating.setAttribute('aria-label', 'Host replacement label');
+        rating.setAttribute('title', 'Host replacement title');
+        rating.dataset.jcColoredRating = 'true';
+        rating.dataset.jcColoredRatingAria = 'true';
+        rating.dataset.jcColoredRatingTitle = 'true';
+
+        resetColoredRatings();
+
+        expect(rating.getAttribute('rating')).toBe('host-rating');
+        expect(rating.getAttribute('aria-label')).toBe('Host replacement label');
+        expect(rating.getAttribute('title')).toBe('Host replacement title');
         expect(rating.dataset.jcColoredRating).toBeUndefined();
         expect(rating.dataset.jcColoredRatingAria).toBeUndefined();
         expect(rating.dataset.jcColoredRatingTitle).toBeUndefined();

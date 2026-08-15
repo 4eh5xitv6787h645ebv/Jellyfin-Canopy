@@ -442,7 +442,10 @@
 }
 
 
-/* === GERMANY: Official FSK color identities === */
+/* === GERMANY: Official FSK digital pictogram colors ===
+ * Source: FSK's lossless web-pictogram archive linked from
+ * https://www.fsk.de/fskkennzeichen/ (500 px PNG dominant opaque pixels).
+ */
 .mediaInfoOfficialRating[rating='FSK-0'] {
     background-color: #FFFFFF !important;
     border-color: #BDBDBD !important;
@@ -451,28 +454,28 @@
 }
 
 .mediaInfoOfficialRating[rating='FSK-6'] {
-    background-color: #FFEB00 !important;
+    background-color: #FFE800 !important;
     border-color: #D6C600 !important;
     color: #000000 !important;
     text-shadow: none !important;
 }
 
 .mediaInfoOfficialRating[rating='FSK-12'] {
-    background-color: #12B53F !important;
+    background-color: #33B540 !important;
     border-color: #07912E !important;
     color: #000000 !important;
     text-shadow: none !important;
 }
 
 .mediaInfoOfficialRating[rating='FSK-16'] {
-    background-color: #1597D4 !important;
+    background-color: #38A7E4 !important;
     border-color: #0875AB !important;
     color: #000000 !important;
     text-shadow: none !important;
 }
 
 .mediaInfoOfficialRating[rating='FSK-18'] {
-    background-color: #ED0016 !important;
+    background-color: #ED1C24 !important;
     border-color: #B90011 !important;
     color: #000000 !important;
     text-shadow: none !important;

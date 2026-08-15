@@ -73,13 +73,15 @@ describe('mutationsTouchRatings', () => {
 });
 
 describe('normalizeRating', () => {
-    it.each([
-        ['DE-0', 'FSK-0'],
-        ['de-6', 'FSK-6'],
-        ['FSK12', 'FSK-12'],
-        ['fsk 16', 'FSK-16'],
-        ['FSK-18', 'FSK-18'],
-    ])('canonicalizes supported German alias %s', (input, expected) => {
+    const ages = ['0', '6', '12', '16', '18'] as const;
+    const supportedAliases = ages.flatMap((age) => [
+        [`DE-${age}`, `FSK-${age}`],
+        [`FSK${age}`, `FSK-${age}`],
+        [`FSK ${age}`, `FSK-${age}`],
+        [`FSK-${age}`, `FSK-${age}`],
+    ] as const);
+
+    it.each(supportedAliases)('canonicalizes supported German alias %s', (input, expected) => {
         expect(normalizeRating(input)).toBe(expected);
         expect(normalizeRating(expected)).toBe(expected);
     });
