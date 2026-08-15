@@ -20,24 +20,24 @@
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #718 adds ordered, canonical language-tag filter support to the shared media-language core after the #709 effective-region resolver, including bounded fail-closed policy parsing, explicit regional identity, authoritative Original selection, and compatibility-default handling. Two coordinated clean post-rebase full client runs on this exact 3,362-line core scope passed every test and measured 2,976/3,362 (88.519%) with no instrumentation spread. The three new instrumented lines are reviewed feature scope rather than coverage loss, and the covered-line high-water advances by two. The reviewed observed high-water and exact observed floor are therefore both 2,976/3,362 with zero tolerance. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Issue #717 adds a lazy identity- and navigation-fenced awards details module and its focused tests outside the fixed Jellyfin.Plugin.JellyfinCanopy/src/core/** instrumentation scope, rebased on the combined #718/#732/#733 main tree. Two clean full client runs on this exact 273-file and 2,629-test tree passed every test and both measured 2,976/3,362 core lines (88.519%) without instrumentation spread. The reviewed observed high-water and exact observed floor therefore remain 2,976/3,362 with zero tolerance; the prior #718 evidence established this core source scope, while these runs establish the same exact ratchet against the expanded issue #717 tree. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
       }
     },
     "server": {
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 46183,
-        "totalLines": 55954
+        "coveredLines": 46975,
+        "totalLines": 56891
       },
       "observations": {
-        "cleanRuns": 3,
-        "minimumCoveredLines": 46174,
-        "maximumCoveredLines": 46183
+        "cleanRuns": 2,
+        "minimumCoveredLines": 46971,
+        "maximumCoveredLines": 46975
       },
       "tolerance": {
-        "missingCoveredLines": 9,
-        "rationale": "Issues #732 and #733 now use one bounded exact-user effective Continue Watching removal policy owner across response filtering and playback auto-unhide, with scoped write invalidation, fail-closed cold reads, retained last-known-good state, and authoritative resume, resumeaudio, and resumebook Home-row identity. Two clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite coverage runs on the identical reviewed R2 source tree passed all 4,421 tests and measured 46,174/55,954 (82.521357%) and 46,177/55,954 (82.526718%). Hosted GitHub Actions Unit job 95069621727 then passed all 4,421 tests on PR synthetic merge 86b2adc6de9812fc86529696ffc8dbcf451ef49b of exact reviewed head 7f17666ced16c9a92c5dc57af918b99d0e248feb into its unchanged base 5e71908021c67cabd7dea88db0ff84a65de1c3d5; that merge tree is byte-identical to the reviewed head tree. It measured 46,183/55,954 (82.537441%) before failing solely because that clean gain exceeded the prior reviewed high-water. The reviewed observed high-water is therefore 46,183/55,954 and the exact observed floor remains 46,174/55,954; the nine-line instrumentation spread is 0.016085 percentage points, within the 0.15-point policy maximum. Earlier attempts with one or more unrelated pre-existing allocation-budget failures were excluded; the unchanged allocation ratchet then passed both clean measurements, and no evidence from a non-clean attempt entered this envelope. The prior issues #718 and initial #732/#733 observations remain evidence for their earlier scopes and are not mixed into this R2 scope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
+        "missingCoveredLines": 4,
+        "rationale": "Issue #717 adds the disabled-by-default atomic Wikidata awards index, bounded serialized keyset pagination and resumable checkpoints, authorized minimal controller, scheduled/manual execution ownership, and identity- and navigation-fenced details UI on top of the combined #718/#732/#733 main tree. Two clean local .NET SDK 10.0.109/runtime 10.0.9 full-suite coverage runs on this exact 56,891-line source and 4,463-test scope passed every test and measured 46,975/56,891 (82.570178%) and 46,971/56,891 (82.563147%). The reviewed observed high-water is therefore 46,975/56,891 and the exact observed floor is 46,971/56,891; the four-line instrumentation spread is 0.007031 percentage points, within the 0.15-point policy maximum. The earlier #732/#733 observations belong to the prior 55,954-line scope and are not mixed into this changed-scope envelope. One pre-test command with an incorrect project path is excluded because no tests ran; no non-clean test result entered this envelope. coverage-baseline.test.js retains the exact scope-drift, regression, stale-baseline, observed-high-water, spread, single-run, and broad-tolerance negative boundaries."
       }
     }
   }
