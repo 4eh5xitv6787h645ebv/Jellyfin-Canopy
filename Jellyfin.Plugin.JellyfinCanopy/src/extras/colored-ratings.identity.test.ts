@@ -170,6 +170,58 @@ describe('colored ratings identity lifecycle', () => {
         expect(rating.hasAttribute('title')).toBe(false);
     });
 
+    it('restores and re-observes a rating removed then re-attached by the host', async () => {
+        const rating = addRating('DE-12');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        rating.firstChild!.nodeValue = 'DE-16';
+        rating.remove();
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(rating.textContent).toBe('DE-16');
+        expect(rating.hasAttribute('rating')).toBe(false);
+        expect(rating.hasAttribute('aria-label')).toBe(false);
+        expect(rating.hasAttribute('title')).toBe(false);
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+
+        document.body.appendChild(rating);
+        await vi.advanceTimersByTimeAsync(100);
+        expect(rating.textContent).toBe('FSK-16');
+
+        rating.firstChild!.nodeValue = 'DE-18';
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(rating.textContent).toBe('FSK-18');
+        expect(rating.getAttribute('rating')).toBe('FSK-18');
+        expect(rating.getAttribute('aria-label')).toBe('Content rated FSK-18');
+        expect(rating.getAttribute('title')).toBe('Rating: FSK-18');
+    });
+
+    it('restores a detached rating during identity teardown before re-attachment', async () => {
+        const rating = addRating('DE-12');
+        rating.setAttribute('rating', 'host-rating');
+        rating.setAttribute('aria-label', 'Host DE-12 label');
+        rating.setAttribute('title', 'Host DE-12 title');
+        JC.initializeColoredRatings!();
+        expect(rating.textContent).toBe('FSK-12');
+
+        rating.remove();
+        switchIdentity('ratings-server-b', 'ratings-user-b');
+
+        expect(rating.textContent).toBe('DE-12');
+        expect(rating.getAttribute('rating')).toBe('host-rating');
+        expect(rating.getAttribute('aria-label')).toBe('Host DE-12 label');
+        expect(rating.getAttribute('title')).toBe('Host DE-12 title');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+
+        document.body.appendChild(rating);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(rating.textContent).toBe('DE-12');
+        expect(rating.getAttribute('rating')).toBe('host-rating');
+        expect(rating.dataset.jcColoredRating).toBeUndefined();
+    });
+
     it('preserves host metadata for unsupported FSK-prefixed values', () => {
         const rating = addRating('FSK-21');
         rating.setAttribute('aria-label', 'Host unknown FSK label');

@@ -46,7 +46,7 @@ interface RatingElementState {
     ownsAriaLabel: boolean;
     ownsTitle: boolean;
 }
-let elementStates = new WeakMap<HTMLElement, RatingElementState>();
+let elementStates = new Map<HTMLElement, RatingElementState>();
 let generation = 0;
 
 function isActive(context: IdentityContext, expectedGeneration: number): boolean {
@@ -98,12 +98,51 @@ function pruneRatingTextObservers(liveElements: Set<HTMLElement>): void {
         if (liveElements.has(element) && element.isConnected) return;
         observer.disconnect();
         ratingTextObservers.delete(element);
+        const state = elementStates.get(element);
+        if (state) {
+            captureHostChanges(element, state);
+            restoreRatingElement(element, state);
+            elementStates.delete(element);
+        }
     });
 }
 
 function writeOptionalAttribute(element: HTMLElement, name: string, value: string | null): void {
     if (value === null) element.removeAttribute(name);
     else element.setAttribute(name, value);
+}
+
+function restoreRatingElement(element: HTMLElement, state: RatingElementState): void {
+    element.textContent = state.sourceText;
+    writeOptionalAttribute(element, CONFIG.attributeName, state.sourceRating);
+    writeOptionalAttribute(element, 'aria-label', state.sourceAriaLabel);
+    writeOptionalAttribute(element, 'title', state.sourceTitle);
+    delete element.dataset.jcColoredRating;
+}
+
+function captureHostChanges(element: HTMLElement, state: RatingElementState): boolean {
+    const currentText = element.textContent;
+    const currentRating = element.getAttribute(CONFIG.attributeName);
+    const currentAriaLabel = element.getAttribute('aria-label');
+    const currentTitle = element.getAttribute('title');
+    if (currentText === state.renderedText && currentRating === state.renderedRating
+        && currentAriaLabel === state.renderedAriaLabel && currentTitle === state.renderedTitle) {
+        return false;
+    }
+    // A retained host node can be populated with a different item on
+    // navigation. Values that no longer match our last render are the latest
+    // host-owned state, including updates made immediately before detachment.
+    if (currentText !== state.renderedText) state.sourceText = currentText;
+    if (currentRating !== state.renderedRating) state.sourceRating = currentRating;
+    if (currentAriaLabel !== state.renderedAriaLabel) {
+        state.sourceAriaLabel = currentAriaLabel;
+        state.ownsAriaLabel = false;
+    }
+    if (currentTitle !== state.renderedTitle) {
+        state.sourceTitle = currentTitle;
+        state.ownsTitle = false;
+    }
+    return true;
 }
 
 
@@ -117,27 +156,7 @@ function processRatingElements(context: IdentityContext, expectedGeneration: num
             if (!isActive(context, expectedGeneration)) return;
             let state = elementStates.get(element);
             if (state) {
-                const currentText = element.textContent;
-                const currentRating = element.getAttribute(CONFIG.attributeName);
-                const currentAriaLabel = element.getAttribute('aria-label');
-                const currentTitle = element.getAttribute('title');
-                if (currentText === state.renderedText && currentRating === state.renderedRating
-                    && currentAriaLabel === state.renderedAriaLabel && currentTitle === state.renderedTitle) {
-                    return;
-                }
-                // A retained host node can be populated with a different item on
-                // navigation. Treat values that no longer match our last render
-                // as the new host-owned state so teardown restores the right item.
-                if (currentText !== state.renderedText) state.sourceText = currentText;
-                if (currentRating !== state.renderedRating) state.sourceRating = currentRating;
-                if (currentAriaLabel !== state.renderedAriaLabel) {
-                    state.sourceAriaLabel = currentAriaLabel;
-                    state.ownsAriaLabel = false;
-                }
-                if (currentTitle !== state.renderedTitle) {
-                    state.sourceTitle = currentTitle;
-                    state.ownsTitle = false;
-                }
+                if (!captureHostChanges(element, state)) return;
             } else {
                 state = {
                     sourceText: element.textContent,
@@ -343,21 +362,18 @@ function cleanup(): void {
 export function resetColoredRatings(): void {
     generation += 1;
     cleanup();
+    // The state map is deliberately enumerable so teardown can restore a
+    // host-cached element even while it is detached from document.
+    elementStates.forEach((state, element) => restoreRatingElement(element, state));
     document.querySelectorAll<HTMLElement>('[data-jc-colored-rating="true"]').forEach((element) => {
-        const state = elementStates.get(element);
-        if (state) {
-            element.textContent = state.sourceText;
-            writeOptionalAttribute(element, CONFIG.attributeName, state.sourceRating);
-            writeOptionalAttribute(element, 'aria-label', state.sourceAriaLabel);
-            writeOptionalAttribute(element, 'title', state.sourceTitle);
-        } else {
-            element.removeAttribute(CONFIG.attributeName);
-            element.removeAttribute('aria-label');
-            element.removeAttribute('title');
-        }
+        // Defensive cleanup for annotations left by an interrupted/older
+        // activation that has no entry in this module instance's state map.
+        element.removeAttribute(CONFIG.attributeName);
+        element.removeAttribute('aria-label');
+        element.removeAttribute('title');
         delete element.dataset.jcColoredRating;
     });
-    elementStates = new WeakMap();
+    elementStates = new Map();
     ratingTextObservers = new Map();
     document.getElementById(CONFIG.cssId)?.remove();
 }
