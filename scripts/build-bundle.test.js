@@ -143,8 +143,12 @@ test('production CSS literals and later installer statements map to their readab
     }
     for (const [name, original] of sources) {
         assert.equal(original.checkedLiterals.size, original.literals.size, name);
-        assert.deepEqual(original.tokens.sort(), name.includes('/ui/')
-            ? ['appendChild', 'appendChild', 'remove'] : ['injectCss', 'removeCss']);
+        const expectedTokens = {
+            'seerr/ui/styles.ts': ['appendChild', 'appendChild', 'remove'],
+            'seerr/more-info-modal/styles.ts': ['injectCss', 'removeCss'],
+            'enhanced/hidden-content-page/styles.ts': ['appendChild'],
+        };
+        assert.deepEqual(original.tokens.sort(), expectedTokens[name.replace('Jellyfin.Plugin.JellyfinCanopy/src/', '')]);
     }
 });
 
@@ -173,7 +177,7 @@ test('development builds preserve the original CSS template values', async () =>
         };
         visit(ast);
     }
-    assert.equal(expected.length, 3);
+    assert.equal(expected.length, 4);
     for (const css of expected) assert.ok(emitted.has(css), 'dev keeps the readable original CSS value');
 });
 

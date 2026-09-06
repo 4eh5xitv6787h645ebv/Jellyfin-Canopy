@@ -139,6 +139,57 @@ export const load = () => import('./lazy');`;
     assert.match(output, /import\(['"]\.\/lazy['"]\)/);
 });
 
+test('hidden page CSS retains its rules, lazy idempotent installer and original source map', async () => {
+    const filename = path.resolve(__dirname, '../Jellyfin.Plugin.JellyfinCanopy/src/enhanced/hidden-content-page/styles.ts');
+    const source = fs.readFileSync(filename, 'utf8');
+    const transformed = transformStaticCss(source, filename, 1);
+    const original = await esbuild.transform(source, { loader: 'ts', format: 'iife', globalName: 'owner' });
+    const compact = await esbuild.transform(transformed.contents, {
+        loader: 'js', sourcefile: filename, format: 'iife', globalName: 'owner',
+        sourcemap: 'external', sourcesContent: true, minify: true,
+    });
+    const map = JSON.parse(compact.map);
+    assert.deepEqual(map.sourcesContent, [source]);
+    const sourceMap = new SourceMap(map);
+    const token = 'jc-hidden-content-page-styles';
+    const prefix = compact.code.slice(0, compact.code.indexOf(token));
+    const mapped = sourceMap.findEntry(prefix.split('\n').length - 1, prefix.length - prefix.lastIndexOf('\n') - 1);
+    assert.match(source.split('\n')[mapped.originalLine], /document\.getElementById/);
+
+    // Parse both actual sheets into the compiler's non-minified CSS form. jsdom's
+    // color-mix parser rejects some valid compact var() values, so it cannot be
+    // the CSS compatibility oracle here. Native Chromium separately confirmed
+    // all computed declarations with default/custom variables at both breakpoints.
+    const canonicalCss = (css) => {
+        const result = esbuild.transformSync(css, {
+            loader: 'css', minifyWhitespace: false, minifySyntax: false, minifyIdentifiers: false,
+        });
+        assert.deepEqual(result.warnings, []);
+        return result.code;
+    };
+    const inspect = (code) => {
+        const dom = new JSDOM('<!doctype html><head></head><body></body>');
+        try {
+            const context = { document: dom.window.document };
+            vm.runInNewContext(code, context);
+            assert.equal(context.document.querySelectorAll('style').length, 0);
+            context.owner.injectStyles();
+            context.owner.injectStyles();
+            const styles = context.document.querySelectorAll('style');
+            assert.equal(styles.length, 1);
+            assert.equal(styles[0].id, token);
+            return styles[0].textContent;
+        } finally {
+            dom.window.close();
+        }
+    };
+    const before = inspect(original.code);
+    const after = inspect(compact.code);
+    assert.ok(after.length < before.length);
+    assert.equal(canonicalCss(after), canonicalCss(before));
+    for (const unit of ['100vh', '100dvh']) assert.ok(after.includes(unit));
+});
+
 test('plugin touches only its exact module inventory and retains resolution and input census', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-static-css-'));
     try {
@@ -163,7 +214,11 @@ export const imported = value;`);
         assert.equal(result.outputFiles.length, 1);
         assert.match(result.outputFiles[0].text, /untouched/);
         assert.doesNotMatch(result.outputFiles[0].text, /@canopy-static-css/);
-        assert.deepEqual(STATIC_CSS_MODULES, { 'seerr/ui/styles.ts': 2, 'seerr/more-info-modal/styles.ts': 1 });
+        assert.deepEqual(STATIC_CSS_MODULES, {
+            'seerr/ui/styles.ts': 2,
+            'seerr/more-info-modal/styles.ts': 1,
+            'enhanced/hidden-content-page/styles.ts': 1,
+        });
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

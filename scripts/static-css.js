@@ -10,6 +10,7 @@ const STATIC_CSS_MARKER = '/* @canopy-static-css */';
 const STATIC_CSS_MODULES = Object.freeze({
     'seerr/ui/styles.ts': 2,
     'seerr/more-info-modal/styles.ts': 1,
+    'enhanced/hidden-content-page/styles.ts': 1,
 });
 
 /** Find exact annotations in parsed trivia, never inside string/template text. */
