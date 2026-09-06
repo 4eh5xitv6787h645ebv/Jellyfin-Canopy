@@ -111,7 +111,18 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private readonly object _saveLock = new();
         private long _version;
         private long _lastModified;
-        private Timer? _debounceSaveTimer;
+        private readonly TimeProvider _saveTimeProvider;
+        private ITimer? _debounceSaveTimer;
+        // O(1), lifecycle-gated persistence ownership. Keep the first unsaved timestamp until
+        // a successful snapshot owns the current dirty version; newer work may inherit an earlier
+        // deadline, but can never have its deadline reset by an older snapshot's completion.
+        private long? _firstUnsavedTimestamp;
+        private long? _lastSaveChangeTimestamp;
+        private long? _saveRetryTimestamp;
+        private bool _saveCallbackActive;
+        private int _debouncedSaveAttempts;
+        private static readonly TimeSpan SaveDebounce = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan SaveMaxWait = TimeSpan.FromMinutes(5);
         private volatile bool _dirty;
         // Monotonic counter bumped every time the cache is marked dirty. SaveToDisk captures it
         // BEFORE its snapshot and only clears _dirty if it is unchanged afterwards, so a flush that
@@ -279,6 +290,17 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             ILogger<TagCacheService> logger,
             ILinkedChildrenService? linkedChildrenService,
             int contentJournalCapacity)
+            : this(libraryManager, applicationPaths, logger, linkedChildrenService, contentJournalCapacity, TimeProvider.System)
+        {
+        }
+
+        internal TagCacheService(
+            ILibraryManager libraryManager,
+            IApplicationPaths applicationPaths,
+            ILogger<TagCacheService> logger,
+            ILinkedChildrenService? linkedChildrenService,
+            int contentJournalCapacity,
+            TimeProvider saveTimeProvider)
         {
             if (contentJournalCapacity <= 0)
             {
@@ -289,6 +311,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _applicationPaths = applicationPaths;
             _logger = logger;
             _linkedChildrenService = linkedChildrenService;
+            _saveTimeProvider = saveTimeProvider;
             _contentJournal = new ContentChange[contentJournalCapacity];
         }
 
@@ -358,6 +381,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal int LoadFromDiskCallsForTest => Volatile.Read(ref _loadFromDiskCalls);
 
         internal int SaveToDiskCallsForTest => Volatile.Read(ref _saveToDiskCalls);
+
+        internal int DebouncedSaveAttemptsForTest => Volatile.Read(ref _debouncedSaveAttempts);
 
         internal long RemovedDependencyEntriesVisitedForTest
             => Interlocked.Read(ref _removedDependencyEntriesVisited);
@@ -589,8 +614,15 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         var priorJournalStart = _contentJournalStart;
                         var priorJournalCount = _contentJournalCount;
                         var priorJournal = (ContentChange?[])_contentJournal.Clone();
-                        var priorDirty = _dirty;
-                        var priorDirtyVersion = Interlocked.Read(ref _dirtyVersion);
+                        bool priorDirty;
+                        long priorDirtyVersion;
+                        long saveGeneration;
+                        lock (_lifecycleGate)
+                        {
+                            priorDirty = _dirty;
+                            priorDirtyVersion = _dirtyVersion;
+                            saveGeneration = _lifecycleGeneration;
+                        }
                         var priorCollectionMembers = _collectionMembers;
                         var priorCollectionParents = _collectionParents;
                         var priorUnindexedCollections = _unindexedCollections;
@@ -649,7 +681,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             if (!SaveToDisk(
                                     writerGuardHeld: true,
                                     canCommit: canPublish,
-                                    clearRepairMarker: true))
+                                    clearRepairMarker: true,
+                                    expectedGeneration: saveGeneration,
+                                    rollbackOnFailure: true))
                             {
                                 if (canPublish != null && !canPublish())
                                 {
@@ -673,8 +707,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             _contentJournalStart = priorJournalStart;
                             _contentJournalCount = priorJournalCount;
                             Array.Copy(priorJournal, _contentJournal, _contentJournal.Length);
-                            _dirty = priorDirty;
-                            Interlocked.Exchange(ref _dirtyVersion, priorDirtyVersion);
+                            lock (_lifecycleGate)
+                            {
+                                // A failed provisional replacement never owns the previous save
+                                // window. Preserve its deadline and any contention retry, but never
+                                // restore a retired generation's dirty state after disable/resume.
+                                if (_lifecycleGeneration == saveGeneration)
+                                {
+                                    _dirty = priorDirty;
+                                    _dirtyVersion = priorDirtyVersion;
+                                    if (!_dirty) ClearSaveWindowLocked();
+                                    ArmSaveTimerLocked();
+                                }
+                            }
                             RestoreDrainedPendingBatch(pendingBatch, handoffGeneration);
 
                             throw;
@@ -1202,13 +1247,13 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // a dirty cache with no live debounce timer.
                     if (Volatile.Read(ref _disposed) != 0)
                     {
-                        SaveToDisk(writerGuardHeld: true);
+                        SaveToDisk(writerGuardHeld: true, allowShutdown: true);
                     }
                 }
                 else if (Volatile.Read(ref _disposed) != 0
                     && Volatile.Read(ref _repairIncomplete) != 0)
                 {
-                    SaveToDisk(writerGuardHeld: true);
+                    SaveToDisk(writerGuardHeld: true, allowShutdown: true);
                 }
             }
             finally
@@ -3032,27 +3077,40 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private bool SaveToDisk(
             bool writerGuardHeld,
             TagCachePublicationFence? canCommit = null,
-            bool clearRepairMarker = false)
+            bool clearRepairMarker = false,
+            long? expectedGeneration = null,
+            bool allowShutdown = false,
+            bool rollbackOnFailure = false)
         {
+            long generation;
+            lock (_lifecycleGate)
+            {
+                generation = expectedGeneration ?? _lifecycleGeneration;
+                if (!CanSaveLocked(generation, allowShutdown)) return false;
+            }
+
             var acquired = false;
             if (!writerGuardHeld)
             {
                 acquired = AcquireFlushGuard(maxSpins: _rebuildFlushGuardSpins, spinMs: 10);
                 if (!acquired)
                 {
-                    MarkDirty();
+                    if (!rollbackOnFailure) CompleteSave(generation, 0, committed: false, allowShutdown);
                     _logger.LogWarning("[TagCache] Could not acquire the writer guard for a stable disk snapshot.");
                     return false;
                 }
             }
 
+            var committed = false;
+            long versionAtSnapshot = 0;
             try
             {
                 lock (_saveLock)
                 {
-                    if (Volatile.Read(ref _suspended) != 0)
+                    lock (_lifecycleGate)
                     {
-                        return false;
+                        if (!CanSaveLocked(generation, allowShutdown)) return false;
+                        versionAtSnapshot = _dirtyVersion;
                     }
 
                     Interlocked.Increment(ref _saveToDiskCalls);
@@ -3063,7 +3121,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
 
                         // The writer guard stays held for streaming so this reference is
                         // an immutable cache/metadata snapshot without an O(N) clone.
-                        var versionAtSnapshot = Interlocked.Read(ref _dirtyVersion);
                         var cacheSnapshot = _cache;
                         var collectionMembersSnapshot = _collectionMembers;
                         var unindexedCollectionsSnapshot = _unindexedCollections;
@@ -3077,7 +3134,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     // Dictionary clone + complete JSON string briefly retained two
                     // additional O(N) representations beside old/new cache snapshots.
                         OnBeforeCachePersistForTest?.Invoke();
-                        var committed = AtomicFile.WriteVia(CacheFilePath, stream =>
+                        committed = AtomicFile.WriteVia(CacheFilePath, stream =>
                         {
                             using var writer = new Utf8JsonWriter(stream);
                             writer.WriteStartObject();
@@ -3093,10 +3150,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             JsonSerializer.Serialize(writer, unindexedCollectionsSnapshot);
                             writer.WriteEndObject();
                             writer.Flush();
-                        }, () => AcquireCommitLease(canCommit));
+                        }, () => AcquireCommitLease(canCommit, generation, allowShutdown));
                         if (!committed)
                         {
-                            MarkDirty();
                             _logger.LogInformation("[TagCache] Discarded a completed disk temp file because its lifecycle generation is no longer enabled.");
                             return false;
                         }
@@ -3106,39 +3162,64 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                             AtomicFile.DeleteIfExists(RepairMarkerPath);
                         }
 
-                    // Only clear the dirty bit if no flush recorded a change after our snapshot. If a
-                    // concurrent flush bumped _dirtyVersion in the snapshot→persist window, leave _dirty
-                    // set so the debounced timer persists the newer state — never wipe an unpersisted
-                    // change. (Also write-failure-safe: a throw above skips the clear entirely.)
-                        if (Interlocked.Read(ref _dirtyVersion) == versionAtSnapshot)
-                        {
-                            _dirty = false;
-                        }
-
                         _logger.LogInformation($"[TagCache] Saved {cacheSnapshot.Count} entries to disk");
                         return true;
                     }
                     catch (Exception ex)
                     {
-                        MarkDirty();
-                        _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
-                        return false;
+                        // Atomic commit is authoritative. A diagnostic failure after the rename
+                        // cannot report failure and roll memory back while completion retires the
+                        // committed snapshot's save window.
+                        if (!committed)
+                        {
+                            try
+                            {
+                                _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
+                            }
+                            catch
+                            {
+                                // A broken logging provider must not interrupt failure reporting,
+                                // reconcile rollback, or the outstanding automatic retry.
+                            }
+                        }
+
+                        return committed;
                     }
                 }
             }
             finally
             {
-                if (acquired)
+                // Reconcile restores its provisional state on failure. Until that rollback has
+                // completed, it must not replace or retire the old cache's persistence window.
+                // Settle before releasing the writer guard: otherwise a subsequent reconcile can
+                // capture prior dirty state just before this completion retires its window, then
+                // restore that now-windowless dirty state if its own transaction fails.
+                try
                 {
-                    Interlocked.Exchange(ref _flushing, 0);
+                    if (!rollbackOnFailure || committed)
+                    {
+                        CompleteSave(generation, versionAtSnapshot, committed, allowShutdown);
+                    }
+                }
+                finally
+                {
+                    if (acquired) Interlocked.Exchange(ref _flushing, 0);
                 }
             }
         }
 
-        private IDisposable? AcquireCommitLease(TagCachePublicationFence? canCommit)
+        private bool CanSaveLocked(long generation, bool allowShutdown)
+            => _lifecycleGeneration == generation
+                && _suspended == 0
+                && (_disposed == 0 || allowShutdown);
+
+        private IDisposable? AcquireCommitLease(
+            TagCachePublicationFence? canCommit,
+            long generation,
+            bool allowShutdown)
         {
             Monitor.Enter(_lifecycleGate);
-            if (Volatile.Read(ref _suspended) != 0
+            if (!CanSaveLocked(generation, allowShutdown)
                 || (canCommit != null && !canCommit()))
             {
                 Monitor.Exit(_lifecycleGate);
@@ -3146,6 +3227,36 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             }
 
             return new MonitorLease(_lifecycleGate);
+        }
+
+        /// <summary>
+        /// Settle only the lifecycle and dirty version owned by this snapshot. A retry retains the
+        /// original deadline and has a positive floor, even after continuous changes exhaust the cap.
+        /// </summary>
+        private void CompleteSave(long generation, long snapshotVersion, bool committed, bool allowShutdown)
+        {
+            lock (_lifecycleGate)
+            {
+                if (!CanSaveLocked(generation, allowShutdown)) return;
+                if (committed && _dirtyVersion == snapshotVersion)
+                {
+                    _dirty = false;
+                    ClearSaveWindowLocked();
+                }
+                else
+                {
+                    if (!committed) MarkDirty();
+                    if (_dirty)
+                    {
+                        var now = _saveTimeProvider.GetTimestamp();
+                        _firstUnsavedTimestamp ??= now;
+                        _lastSaveChangeTimestamp ??= now;
+                        _saveRetryTimestamp = now;
+                    }
+                }
+
+                ArmSaveTimerLocked();
+            }
         }
 
         private bool PersistIncompleteRepairMarker()
@@ -3172,8 +3283,11 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         // a flush that dirtied the cache after its snapshot (see #3), so every dirty-mark must bump it.
         private void MarkDirty()
         {
-            Interlocked.Increment(ref _dirtyVersion);
-            _dirty = true;
+            lock (_lifecycleGate)
+            {
+                _dirtyVersion++;
+                _dirty = true;
+            }
         }
 
         // Test seams (Tests has InternalsVisibleTo) for the dirty-bit-preservation contract.
@@ -3187,27 +3301,95 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             {
                 if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _suspended) != 0) return;
                 MarkDirty();
-                // Reuse existing timer if possible, otherwise create a new one.
-                // Change() resets the countdown without creating a new object.
-                var existing = _debounceSaveTimer;
-                if (existing != null)
+                var now = _saveTimeProvider.GetTimestamp();
+                _firstUnsavedTimestamp ??= now;
+                _lastSaveChangeTimestamp = now;
+                ArmSaveTimerLocked();
+            }
+        }
+
+        private void ClearSaveWindowLocked()
+        {
+            _firstUnsavedTimestamp = null;
+            _lastSaveChangeTimestamp = null;
+            _saveRetryTimestamp = null;
+            _debounceSaveTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+
+        private TimeSpan ComputeSaveDelayLocked()
+        {
+            var now = _saveTimeProvider.GetTimestamp();
+            var trailing = SaveDebounce - _saveTimeProvider.GetElapsedTime(_lastSaveChangeTimestamp!.Value, now);
+            var cap = SaveMaxWait - _saveTimeProvider.GetElapsedTime(_firstUnsavedTimestamp!.Value, now);
+            var due = trailing < cap ? trailing : cap;
+            if (_saveRetryTimestamp is { } retry)
+            {
+                var retryDelay = SaveDebounce - _saveTimeProvider.GetElapsedTime(retry, now);
+                if (retryDelay > due) due = retryDelay;
+            }
+
+            return due > TimeSpan.Zero ? due : TimeSpan.Zero;
+        }
+
+        private void ArmSaveTimerLocked()
+        {
+            if (_disposed != 0 || _suspended != 0 || !_dirty
+                || _firstUnsavedTimestamp == null || _saveCallbackActive) return;
+            if (_debounceSaveTimer == null)
+            {
+                var generation = _lifecycleGeneration;
+                // Publish a disabled timer before arming it: even an immediately due callback
+                // must see its concrete owner. Suspend/resume retires this generation's timer.
+                _debounceSaveTimer = _saveTimeProvider.CreateTimer(
+                    _ => OnSaveTimer(generation), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
+
+            _debounceSaveTimer.Change(ComputeSaveDelayLocked(), Timeout.InfiniteTimeSpan);
+        }
+
+        private void OnSaveTimer(long generation)
+        {
+            lock (_lifecycleGate)
+            {
+                if (!CanSaveLocked(generation, allowShutdown: false) || !_dirty
+                    || _firstUnsavedTimestamp == null || _saveCallbackActive) return;
+                // Change/Dispose cannot recall a callback already queued by System.Threading.Timer.
+                // Re-check the current due time so an old invocation cannot shorten a later burst.
+                if (ComputeSaveDelayLocked() > TimeSpan.Zero)
                 {
-                    try
-                    {
-                        existing.Change(TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
-                        return;
-                    }
-                    catch (ObjectDisposedException) { }
+                    ArmSaveTimerLocked();
+                    return;
                 }
 
-                var timer = new Timer(_ =>
+                _saveCallbackActive = true;
+                _debounceSaveTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                Interlocked.Increment(ref _debouncedSaveAttempts);
+            }
+
+            // Automatic saves make one bounded acquisition attempt. A rebuild may own the guard
+            // for much longer than the save deadline; never queue more blocking disk workers.
+            var acquired = Interlocked.CompareExchange(ref _flushing, 1, 0) == 0;
+            try
+            {
+                if (acquired)
                 {
-                    if (_dirty && Volatile.Read(ref _suspended) == 0) SaveToDisk();
-                }, null, TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
-                var old = Interlocked.Exchange(ref _debounceSaveTimer, timer);
-                if (old != null && !ReferenceEquals(old, timer))
+                    SaveToDisk(writerGuardHeld: true, expectedGeneration: generation);
+                }
+                else
                 {
-                    old.Dispose();
+                    CompleteSave(generation, 0, committed: false, allowShutdown: false);
+                }
+            }
+            finally
+            {
+                if (acquired) Interlocked.Exchange(ref _flushing, 0);
+                lock (_lifecycleGate)
+                {
+                    if (_lifecycleGeneration == generation)
+                    {
+                        _saveCallbackActive = false;
+                        ArmSaveTimerLocked();
+                    }
                 }
             }
         }
@@ -3219,12 +3401,19 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         /// </summary>
         internal void Resume()
         {
+            ITimer? save;
             lock (_lifecycleGate)
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 Interlocked.Increment(ref _lifecycleGeneration);
                 Volatile.Write(ref _suspended, 0);
+                save = Interlocked.Exchange(ref _debounceSaveTimer, null);
+                _saveCallbackActive = false;
+                _dirty = false;
+                ClearSaveWindowLocked();
             }
+
+            save?.Dispose();
         }
 
         /// <summary>
@@ -3235,7 +3424,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         internal void Suspend()
         {
             Timer? flush;
-            Timer? save;
+            ITimer? save;
             lock (_lifecycleGate)
             {
                 if (Volatile.Read(ref _disposed) != 0)
@@ -3247,6 +3436,9 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 Volatile.Write(ref _suspended, 1);
                 flush = Interlocked.Exchange(ref _flushTimer, null);
                 save = Interlocked.Exchange(ref _debounceSaveTimer, null);
+                _saveCallbackActive = false;
+                _dirty = false;
+                ClearSaveWindowLocked();
                 SwapPendingContainerLocked(retireDetached: true);
                 Interlocked.Exchange(ref _firstPendingTicks, 0);
                 Interlocked.Exchange(ref _retryBackoffTicks, 0);
@@ -3321,12 +3513,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             _userAccessCache.Clear();
             _userAccessInFlight.Clear();
             _servedContentStates.Clear();
-            _dirty = false;
+            lock (_lifecycleGate)
+            {
+                if (_suspended != 0) _dirty = false;
+            }
         }
 
         public void Dispose()
         {
             TagCachePendingChanges shutdownPending;
+            ITimer? saveTimer;
             lock (_lifecycleGate)
             {
                 if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -3335,12 +3531,16 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 }
 
                 Interlocked.Increment(ref _lifecycleGeneration);
+                saveTimer = Interlocked.Exchange(ref _debounceSaveTimer, null);
+                _saveCallbackActive = false;
+                ClearSaveWindowLocked();
                 // Keep the detached container writable until the in-flight writer releases
                 // _flushing. A restore that captured it before disposal then completes before
                 // the final drain below; a timeout is already covered by the repair marker.
                 shutdownPending = SwapPendingContainerLocked(retireDetached: false);
             }
 
+            saveTimer?.Dispose();
             var flush = Interlocked.Exchange(ref _flushTimer, null);
             flush?.Dispose(); // stops future callbacks; an in-flight one may still be applying
 
@@ -3388,9 +3588,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 if (acquired) Interlocked.Exchange(ref _flushing, 0);
             }
 
-            var timer = Interlocked.Exchange(ref _debounceSaveTimer, null);
-            timer?.Dispose();
-            if (_dirty && !writerTimedOut) SaveToDisk();
+            if (_dirty && !writerTimedOut) SaveToDisk(writerGuardHeld: false, allowShutdown: true);
         }
 
         /// <summary>

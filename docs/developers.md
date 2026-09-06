@@ -1094,6 +1094,18 @@ private void OnItemChanged(object? sender, ItemChangeEventArgs e)
 
 Use a short debounce with a hard max-wait cap so a continuous scan still flushes periodically. The work owner must also define shutdown semantics: state caches may synchronously drain in-memory changes, while remote-mutation workers must cancel and join active I/O and discard late queued calls.
 
+Tag-cache maintenance has two independent windows. Library events coalesce into an
+in-memory flush after 3 quiet seconds, capped at 30 seconds from the first pending
+event. Changed cache batches then coalesce into a disk-save opportunity after 30
+quiet seconds, capped at 5 minutes from the first unsaved change. The disk deadline
+uses monotonic elapsed time and bounds the scheduling opportunity, not filesystem
+completion time. A busy writer or failed disk write retains dirty state and retries
+after at least 30 seconds; new events cannot bypass that retry floor. A successful
+snapshot clears only the dirty version it captured. Disabling server cache mode
+revokes its timers and commit generation; re-enabling starts fresh windows. Normal
+shutdown still drains pending changes and saves them, with the existing incomplete
+repair marker preserving restart safety when the bounded writer wait times out.
+
 **Enforced.** `LibraryScanEventGuardTests` fails the build when a new file subscribes to these events without being reviewed onto its allowlist. It also checks the **synchronous body of *every* reviewed subscriber** — not just `TagCacheMonitor` — against a broadened denylist of DB queries and I/O sinks (`GetItem(s)` / `GetPeople` / `QueryItems` / `GetMediaSources` / `GetImageInfo` / `GetChildren`, plus `File.*`, `SaveChanges`, `ToListAsync`, and LINQ materialization like `.First(...)`). Legitimately deferred work — the code inside a `Task.Run(...)` lambda or a named off-thread worker — is stripped before matching, so only work that would actually run on the scan thread trips the guard. A subscriber that regains inline heavy work in its synchronous prefix fails with the file and offending call named. Grep the record-and-defer sites:
 
 ```bash
