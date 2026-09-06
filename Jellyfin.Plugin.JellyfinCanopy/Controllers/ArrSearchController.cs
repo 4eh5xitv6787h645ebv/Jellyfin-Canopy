@@ -23,6 +23,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [Route("JellyfinCanopy")]
     [ApiController]
     [Authorize(Policy = Policies.RequiresElevation)]
+    [PrivateResponse]
     public sealed class ArrSearchController : JellyfinCanopyControllerBase
     {
         private readonly IArrItemResolver _resolver;

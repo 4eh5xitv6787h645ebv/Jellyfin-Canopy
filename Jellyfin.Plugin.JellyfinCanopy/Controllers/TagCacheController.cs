@@ -49,6 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class TagCacheController : JellyfinCanopyControllerBase
     {
         private const int MaxProjectionStabilizationPasses = 3;

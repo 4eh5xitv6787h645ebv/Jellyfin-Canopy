@@ -76,6 +76,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("studio/{studioId}")]
         [Authorize]
+        [PrivateResponse]
         public IActionResult GetStudioInfo(Guid studioId)
         {
             try
@@ -111,6 +112,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("boxset/{boxsetId}")]
         [Authorize]
+        [PrivateResponse]
         public IActionResult GetBoxSetInfo(Guid boxsetId)
         {
             try
@@ -146,6 +148,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("person/{personId}")]
         [Authorize]
+        [PrivateResponse]
         public async Task<IActionResult> GetPersonInfo(Guid personId, [FromQuery] Guid? itemId = null)
         {
             try
@@ -355,6 +358,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("genre/{genreId}")]
         [Authorize]
+        [PrivateResponse]
         public IActionResult GetGenreInfo(Guid genreId)
         {
             try
@@ -519,6 +523,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [Authorize]
         [HttpGet("items/by-providers")]
+        [PrivateResponse]
         public ActionResult<Guid?> GetItemIdByProviders([FromQuery] Dictionary<string, string>? providers)
         {
             // Scope the provider lookup to the caller's libraries so a non-admin can't

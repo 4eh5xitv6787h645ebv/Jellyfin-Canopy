@@ -1,3 +1,4 @@
+using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -60,6 +61,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
         /// </summary>
         [HttpGet("negotiate")]
         [PlatformCacheable]
+        [PrivateResponse]
         public async Task<ActionResult<PlatformNegotiationResponse>> Negotiate(
             [FromQuery] int? protocolMinimum,
             [FromQuery] int? protocolMaximum)

@@ -33,6 +33,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class SpoilerGuardController : JellyfinCanopyControllerBase
     {
         private readonly UserConfigurationManager _userConfigurationManager;

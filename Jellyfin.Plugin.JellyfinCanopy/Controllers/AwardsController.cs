@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [Route("JellyfinCanopy/awards")]
     [ApiController]
     [Authorize]
+    [PrivateResponse]
     public sealed class AwardsController : ControllerBase
     {
         private readonly IUserManager _userManager;

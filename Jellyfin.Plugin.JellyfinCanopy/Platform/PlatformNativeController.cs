@@ -1,3 +1,4 @@
+using Jellyfin.Plugin.JellyfinCanopy.Controllers;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Platform
 {
     /// <summary>The complete authenticated HTTP surface for the native item-detail pilot.</summary>
     [Route(PlatformConstants.RoutePrefix)]
+    [PrivateResponse]
     public sealed class PlatformNativeController : PlatformControllerBase
     {
         private readonly PlatformNativeCatalogService _catalog;
