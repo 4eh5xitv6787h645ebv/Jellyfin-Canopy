@@ -1461,22 +1461,41 @@ test.describe('Seerr modal history ownership', () => {
                 onClose: () => proof.push('m2'),
             });
             inner.show();
-            (window as any).__jcNestedLateProof = { outer, proof, arrivals };
+            const owner = (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2;
+            const nestedProof = { outer, proof, arrivals, phaseAtBack: null as string | null, pushRuns: 0 };
+            (window as any).__jcNestedLateProof = nestedProof;
+            const ownBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+            const originalBack = history.back.bind(history);
+            // Place the host write after Back is issued, before its browser
+            // traversal completes. A separate zero-delay timer can run after
+            // the pop and exercise a different history ordering altogether.
+            Object.defineProperty(history, 'back', {
+                configurable: true,
+                writable: true,
+                value: () => {
+                    if (ownBackDescriptor) {
+                        Object.defineProperty(history, 'back', ownBackDescriptor);
+                    } else {
+                        delete (history as { back?: () => void }).back;
+                    }
+                    nestedProof.phaseAtBack = owner.pendingOwnedTraversal?.phase ?? null;
+                    originalBack();
+                    nestedProof.pushRuns += 1;
+                    History.prototype.pushState.call(
+                        history,
+                        { jcHistoryProof: 'nested-late-route-b' },
+                        '',
+                        stableHref
+                    );
+                    owner.historyObserver?.({
+                        source: 'pushState',
+                        action: 'PUSH',
+                        state: history.state,
+                        href: location.href,
+                    });
+                },
+            });
             inner.close();
-            setTimeout(() => {
-                History.prototype.pushState.call(
-                    history,
-                    { jcHistoryProof: 'nested-late-route-b' },
-                    '',
-                    stableHref
-                );
-                (window as any).__jellyfinCanopySeerrModalHistoryOwnerV2.historyObserver?.({
-                    source: 'pushState',
-                    action: 'PUSH',
-                    state: history.state,
-                    href: location.href,
-                });
-            }, 0);
         });
 
         const modals = page.locator('.seerr-season-modal');
@@ -1485,6 +1504,10 @@ test.describe('Seerr modal history ownership', () => {
             return (window as any).__jcNestedLateProof.arrivals.at(-1) === 'nested-late-route-b'
                 && !owner.pendingOwnedTraversal;
         }, undefined, { polling: 50, timeout: 30_000 });
+        expect(await page.evaluate(() => ({
+            phaseAtBack: (window as any).__jcNestedLateProof.phaseAtBack,
+            pushRuns: (window as any).__jcNestedLateProof.pushRuns,
+        }))).toEqual({ phaseAtBack: 'issued', pushRuns: 1 });
         await expect(modals).toHaveCount(1);
         await expect(modals).toHaveAccessibleName('Nested late outer M1');
         expect(await page.evaluate(
