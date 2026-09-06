@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyfinCanopy.Tests.TestDoubles;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Model.Dto;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -17,6 +18,103 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Services;
 /// </summary>
 public sealed class TagCacheSaveDeadlineTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Reconcile_PostCommitLoggerFailure_PublishesDurableReplacementAndPreservesNextWindow(bool throwOnError)
+    {
+        var logger = new ThrowingSaveLogger();
+        using var fixture = new Fixture(logger);
+        fixture.Change("durable");
+        Assert.True(fixture.Cache.SaveToDisk());
+        fixture.Change("unsaved original");
+        var revision = fixture.Cache.ContentRevision;
+        fixture.Clock.Advance(20);
+        // The library can change independently of an incremental event: rollback must not rely
+        // on a later pending-event replay to repair a post-commit memory/disk disagreement.
+        fixture.UpdateLibrary("replacement");
+        logger.ThrowOnSaved = true;
+        logger.ThrowOnError = throwOnError;
+
+        fixture.Cache.BuildFullCache(null, default);
+
+        Assert.Equal(1, logger.SavedFailures);
+        Assert.Equal("replacement", fixture.Cache.GetEntryForTest(fixture.Key)!.Genres![0]);
+        Assert.Equal("replacement", fixture.DiskGenre());
+        Assert.True(fixture.Cache.ContentRevision > revision);
+        Assert.False(fixture.Cache.IsDirtyForTest);
+        fixture.Clock.Advance(600);
+        Assert.Equal(0, fixture.Cache.DebouncedSaveAttemptsForTest);
+        Assert.Equal("replacement", fixture.DiskGenre());
+
+        fixture.Change("next window");
+        fixture.Clock.Advance(29);
+        Assert.Equal("replacement", fixture.DiskGenre());
+        fixture.Clock.Advance(1);
+        Assert.Equal("next window", fixture.DiskGenre());
+        Assert.Equal("next window", fixture.Cache.GetEntryForTest(fixture.Key)!.Genres![0]);
+        Assert.False(fixture.Cache.IsDirtyForTest);
+        Assert.Equal(1, fixture.Cache.DebouncedSaveAttemptsForTest);
+    }
+
+    [Fact]
+    public void ExplicitSave_PostCommitLoggerFailure_ReportsCommittedSuccessAndRetiresWindow()
+    {
+        var logger = new ThrowingSaveLogger { ThrowOnSaved = true, ThrowOnError = true };
+        using var fixture = new Fixture(logger);
+        fixture.Change("committed");
+
+        Assert.True(fixture.Cache.SaveToDisk());
+
+        Assert.Equal(1, logger.SavedFailures);
+        Assert.Equal("committed", fixture.DiskGenre());
+        Assert.Equal("committed", fixture.Cache.GetEntryForTest(fixture.Key)!.Genres![0]);
+        Assert.False(fixture.Cache.IsDirtyForTest);
+        fixture.Clock.Advance(600);
+        Assert.Equal(0, fixture.Cache.DebouncedSaveAttemptsForTest);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PreCommitFailure_WithThrowingErrorLogger_PreservesFailureAndAutomaticRecovery(bool reconcile)
+    {
+        var logger = new ThrowingSaveLogger();
+        using var fixture = new Fixture(logger);
+        fixture.Change("durable");
+        Assert.True(fixture.Cache.SaveToDisk());
+        var durable = File.ReadAllBytes(fixture.Path);
+        fixture.Change("unsaved original");
+        var original = fixture.Cache.GetEntryForTest(fixture.Key);
+        var revision = fixture.Cache.ContentRevision;
+        fixture.Clock.Advance(20);
+        logger.ThrowOnError = true;
+        fixture.Cache.OnBeforeCachePersistForTest = () => throw new IOException("write failed before commit");
+        if (reconcile)
+        {
+            fixture.UpdateLibrary("uncommitted replacement");
+            Assert.Throws<IOException>(() => fixture.Cache.BuildFullCache(null, default));
+        }
+        else
+        {
+            Assert.False(fixture.Cache.SaveToDisk());
+        }
+
+        Assert.Equal(1, logger.ErrorFailures);
+        Assert.Equal(durable, File.ReadAllBytes(fixture.Path));
+        Assert.Same(original, fixture.Cache.GetEntryForTest(fixture.Key));
+        Assert.Equal(revision, fixture.Cache.ContentRevision);
+        Assert.True(fixture.Cache.IsDirtyForTest);
+        fixture.Cache.OnBeforeCachePersistForTest = null;
+        // Failed reconcile retains the old window; a failed ordinary save has a +30s retry floor.
+        fixture.Clock.Advance(reconcile ? 9 : 29);
+        Assert.Equal(durable, File.ReadAllBytes(fixture.Path));
+        fixture.Clock.Advance(1);
+        Assert.Equal("unsaved original", fixture.DiskGenre());
+        Assert.False(fixture.Cache.IsDirtyForTest);
+        Assert.Equal(1, fixture.Cache.DebouncedSaveAttemptsForTest);
+    }
+
     [Fact]
     public void ContinuousRealChanges_AttemptAndCommitByFiveMinutes_ThenStartAFreshWindow()
     {
@@ -512,9 +610,15 @@ public sealed class TagCacheSaveDeadlineTests
         private readonly string _directory = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "canopy-save-deadline-" + Guid.NewGuid().ToString("N"));
         private TestMovie _movie = new() { Id = Guid.NewGuid() };
+        private readonly ILogger<TagCacheService>? _logger;
 
-        public Fixture()
+        public Fixture() : this(null)
         {
+        }
+
+        public Fixture(ILogger<TagCacheService>? logger)
+        {
+            _logger = logger;
             var library = new CountingLibraryManager
             {
                 GetItemByIdHook = id => id == _movie.Id ? _movie : null,
@@ -523,7 +627,7 @@ public sealed class TagCacheSaveDeadlineTests
                     : Array.Empty<BaseItem>(),
             };
             Cache = new TagCacheService(library, new StubAppPaths(_directory),
-                NullLogger<TagCacheService>.Instance, new StubLinkedChildrenService(),
+                logger ?? NullLogger<TagCacheService>.Instance, new StubLinkedChildrenService(),
                 TagCacheService.DefaultContentJournalCapacity, Clock);
         }
 
@@ -534,13 +638,18 @@ public sealed class TagCacheSaveDeadlineTests
 
         public void Queue(string genre)
         {
+            UpdateLibrary(genre);
+            Cache.EnqueueItemChange(_movie, removed: false);
+        }
+
+        public void UpdateLibrary(string genre)
+        {
             _movie = new TestMovie
             {
                 Id = _movie.Id,
                 Genres = new[] { genre },
                 DateLastSaved = _movie.DateLastSaved.AddTicks(1),
             };
-            Cache.EnqueueItemChange(_movie, removed: false);
         }
 
         public void Change(string genre)
@@ -557,6 +666,12 @@ public sealed class TagCacheSaveDeadlineTests
 
         public void Dispose()
         {
+            if (_logger is ThrowingSaveLogger logger)
+            {
+                logger.ThrowOnSaved = false;
+                logger.ThrowOnError = false;
+            }
+
             Cache.OnAfterSnapshotForTest = null;
             Cache.OnBeforeCachePersistForTest = null;
             Cache.OnAfterFlushApplyForTest = null;
@@ -570,6 +685,31 @@ public sealed class TagCacheSaveDeadlineTests
         public override string GetClientTypeName() => "Movie";
         public override IReadOnlyList<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
             => Array.Empty<MediaSourceInfo>();
+    }
+
+    private sealed class ThrowingSaveLogger : ILogger<TagCacheService>
+    {
+        public bool ThrowOnSaved { get; set; }
+        public bool ThrowOnError { get; set; }
+        public int SavedFailures { get; private set; }
+        public int ErrorFailures { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (ThrowOnSaved && formatter(state, exception).StartsWith("[TagCache] Saved ", StringComparison.Ordinal))
+            {
+                SavedFailures++;
+                throw new InvalidOperationException("success logger failed after commit");
+            }
+
+            if (ThrowOnError && logLevel == LogLevel.Error)
+            {
+                ErrorFailures++;
+                throw new InvalidOperationException("error logger failed");
+            }
+        }
     }
 
     private sealed class ManualSaveClock : TimeProvider

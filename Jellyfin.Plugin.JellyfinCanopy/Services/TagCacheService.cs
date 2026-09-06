@@ -3134,8 +3134,23 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
-                        return false;
+                        // Atomic commit is authoritative. A diagnostic failure after the rename
+                        // cannot report failure and roll memory back while completion retires the
+                        // committed snapshot's save window.
+                        if (!committed)
+                        {
+                            try
+                            {
+                                _logger.LogError($"[TagCache] Failed to save cache to disk: {ex.Message}");
+                            }
+                            catch
+                            {
+                                // A broken logging provider must not interrupt failure reporting,
+                                // reconcile rollback, or the outstanding automatic retry.
+                            }
+                        }
+
+                        return committed;
                     }
                 }
             }
