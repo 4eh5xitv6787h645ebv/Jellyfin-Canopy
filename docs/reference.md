@@ -144,19 +144,32 @@ Genre tags collapse to an icon until you hover over them. To keep the text alway
 
 #### Language tags
 
-Language tags render as a flag carrying a `data-lang` attribute. Resize the flag:
+Each language tag uses a `.language-tag-presentation` wrapper. Its `data-lang-tags` attribute contains a JSON array of canonical language tags, such as `["ja-JP"]`. When the media specifies a supported country region, the wrapper has an uppercase `data-region` value (for example, `JP`) and contains a `.language-flag` image. Otherwise, it shows a neutral language label with an empty `data-region` value.
+
+Resize the flag images:
 
 ```css
-.language-flag {
+.language-tag-presentation .language-flag {
     width: 30px !important;
     height: auto !important;
 }
 ```
 
-Hide a specific language by its `data-lang` code:
+Hide Japanese tags, including generic `ja` and variants such as `ja-JP`, by targeting the wrapper:
 
 ```css
-.language-flag[data-lang="jp"] {
+.language-tag-presentation[data-lang-tags*='"ja"'],
+.language-tag-presentation[data-lang-tags*='"ja-'] {
+    display: none !important;
+}
+```
+
+The quotes and hyphen match a complete language code or its subtag boundary within the JSON array. A flag can group several languages that share a region; hiding its wrapper hides the whole group.
+
+To hide tags by country region instead, use `data-region`. This example hides all groups represented by Japan's flag, regardless of language:
+
+```css
+.language-tag-presentation[data-region="JP"] {
     display: none !important;
 }
 ```

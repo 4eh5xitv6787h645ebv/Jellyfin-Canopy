@@ -6,6 +6,7 @@ import {
     showRoute,
     waitForHash,
     assertNoRuntimeErrors,
+    USERS,
 } from './fixtures/auth';
 import { api, apiRaw, authenticate, PLUGIN_ID } from './fixtures/api';
 import {
@@ -153,8 +154,8 @@ test.describe('Remove-from-home policy and resume row ownership', () => {
         baseURL,
         consoleErrors,
     }) => {
-        const admin = await authenticate(baseURL!, 'jc_arradmin', 'Test669Pw!x');
-        const user = await authenticate(baseURL!, 'jc_arruser', 'Test669Pw!x');
+        const admin = await authenticate(baseURL!, USERS.admin.username, USERS.admin.password);
+        const user = await authenticate(baseURL!, USERS.user.username, USERS.user.password);
         const originalConfig = await api<Record<string, unknown>>(
             baseURL!, CONFIG_PATH, admin.token
         );
