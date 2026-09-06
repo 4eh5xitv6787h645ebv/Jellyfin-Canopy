@@ -1600,7 +1600,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         private IReadOnlyList<TagCacheChange> ExpandDependencies(
             IReadOnlyList<TagCacheChange> batch,
             ISet<Guid> expandedSeries,
-            IDictionary<Guid, TagCacheEntry> preparedEntries,
+            Dictionary<Guid, TagCacheEntry> preparedEntries,
             IReadOnlyDictionary<string, TagCacheEntry> cacheSnapshot,
             IReadOnlyDictionary<Guid, Guid[]> collectionParentsSnapshot,
             IReadOnlySet<Guid> unindexedCollectionsSnapshot)
@@ -1918,6 +1918,10 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     var formattedSeriesId = FormatId(change.Id);
                     var snapshotIds = descendantSnapshot.Select(static item => item.Id).ToHashSet();
                     var oldSeriesRepairIds = new HashSet<Guid>();
+                    var discoveredDescendantIds = new HashSet<Guid>();
+                    var targetReservationCount = 0;
+                    var entryReservationCount = 0;
+                    const int MaximumRelationshipReservation = 4_096;
                     foreach (var descendant in descendantSnapshot)
                     {
                         if (descendant is not MediaBrowser.Controller.Entities.TV.Episode
@@ -1935,8 +1939,38 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                     && season.SeriesId == change.Id))
                         {
                             oldSeriesRepairIds.Add(oldSeriesId);
+                            // Count distinct, relationship-verified stale rows only. Reuse the
+                            // completeness set below so this hint adds no temporary collection.
+                            // A coalesced multi-item batch keeps ordinary geometric growth:
+                            // per-Series hints cover only part of its eventual target set.
+                            if (batch.Count == 1
+                                && discoveredDescendantIds.Count < MaximumRelationshipReservation
+                                && discoveredDescendantIds.Add(descendant.Id)
+                                && !targets.ContainsKey(descendant.Id))
+                            {
+                                targetReservationCount = Math.Min(targetReservationCount + 1, MaximumRelationshipReservation);
+                                if (cachedDescendant.SourceRevision == descendant.DateLastSaved.Ticks
+                                    && !preparedEntries.ContainsKey(descendant.Id))
+                                {
+                                    entryReservationCount = Math.Min(entryReservationCount + 1, MaximumRelationshipReservation);
+                                }
+                            }
                         }
                     }
+
+                    // Bound speculative reservation independently of snapshot size. Ordinary
+                    // dictionary growth still handles actual work beyond this small ceiling.
+                    if (targetReservationCount != 0 && targets.Count < MaximumRelationshipReservation)
+                    {
+                        targets.EnsureCapacity(targets.Count + Math.Min(
+                            targetReservationCount, MaximumRelationshipReservation - targets.Count));
+                    }
+                    if (entryReservationCount != 0 && preparedEntries.Count < MaximumRelationshipReservation)
+                    {
+                        preparedEntries.EnsureCapacity(preparedEntries.Count + Math.Min(
+                            entryReservationCount, MaximumRelationshipReservation - preparedEntries.Count));
+                    }
+                    discoveredDescendantIds.Clear();
 
                     // A partial new-Series snapshot can omit an item whose cache still points at
                     // an old owner, so it is absent from the new owner's expected set. Once any
@@ -2009,7 +2043,6 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                     }
 
                     var firstEpisodesBySeason = new Dictionary<Guid, BaseItem>();
-                    var discoveredDescendantIds = new HashSet<Guid>();
                     var inconsistentSeriesRelationship = false;
                     foreach (var episode in descendantSnapshot.OfType<MediaBrowser.Controller.Entities.TV.Episode>())
                     {
