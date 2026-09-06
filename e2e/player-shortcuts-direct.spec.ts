@@ -29,6 +29,12 @@ interface ShortcutCommand {
     Arguments?: { Index?: string };
 }
 
+interface PlaybackClientManifest {
+    schemaVersion: number;
+    buildId: string;
+    entries: Record<string, { kind: string; role: string; path: string }>;
+}
+
 function queryString(options: Record<string, unknown>): string {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(options)) {
@@ -106,7 +112,35 @@ test.describe('direct player shortcuts', () => {
         await page.addInitScript(() => window.localStorage.setItem('layout', 'experimental'));
         let bodyError: unknown;
         const cleanupErrors: unknown[] = [];
+        let releasePlaybackImport!: () => void;
+        const playbackImportReleased = new Promise<void>((resolve) => {
+            releasePlaybackImport = resolve;
+        });
+        let playbackImportHeld = false;
         try {
+            const manifest = await api<PlaybackClientManifest>(
+                baseURL, '/JellyfinCanopy/dist/client-manifest.json', session.token
+            );
+            expect(manifest?.schemaVersion, 'supported client manifest').toBe(2);
+            expect(manifest?.buildId, 'manifest build generation').toMatch(/^[a-f0-9]{64}$/);
+            const entry = manifest?.entries['playback-controls'];
+            expect(entry?.kind, 'playback controls use a module entry').toBe('module');
+            expect(entry?.role, 'playback controls are a lazy feature').toBe('feature');
+            expect(entry?.path, 'safe manifest-owned playback path').toMatch(/^[A-Za-z0-9._/-]+$/);
+            const base = new URL(baseURL);
+            const prefix = `${base.pathname.replace(/\/$/, '')}/JellyfinCanopy/dist/${manifest!.buildId}/attempts/`;
+            const playbackPaths = new Set([0, 1, 2].map((attempt) => `${prefix}${attempt}/${entry!.path}`));
+            // Hold the real lazy entry until the native player is ready. This
+            // deterministically exposes the first-activation window that a
+            // media-only readiness check previously raced.
+            await page.route(
+                (url) => url.origin === base.origin && playbackPaths.has(url.pathname),
+                async (route) => {
+                    playbackImportHeld = true;
+                    await playbackImportReleased;
+                    await route.continue();
+                }
+            );
             await loginAs(page, 'admin', consoleErrors);
             await showRoute(page, `/details?id=${resolved.id}`);
             const playButton = page.locator('.btnPlay:visible').first();
@@ -120,6 +154,24 @@ test.describe('direct player shortcuts', () => {
                 undefined,
                 { timeout: 30_000 }
             );
+            await expect.poll(() => playbackImportHeld, {
+                message: 'native playback requests the lazy controls entry',
+            }).toBe(true);
+            expect(await page.evaluate(() => {
+                const JC = (window as unknown as {
+                    JellyfinCanopy?: {
+                        isPlaybackControlsReady?: () => boolean;
+                        cycleSubtitleTrack?: () => void;
+                    };
+                }).JellyfinCanopy;
+                return {
+                    ready: JC?.isPlaybackControlsReady?.() === true,
+                    subtitleAction: typeof JC?.cycleSubtitleTrack,
+                };
+            }), 'native media readiness precedes first playback activation').toEqual({
+                ready: false,
+                subtitleAction: 'undefined',
+            });
             const surface = await page.evaluate(() => {
                 const video = document.querySelector('video')!;
                 const src = video.currentSrc || video.src;
@@ -166,6 +218,16 @@ test.describe('direct player shortcuts', () => {
                 await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
             });
 
+            releasePlaybackImport();
+            // A retained facade can outlive its delegate. Require the current
+            // identity and navigation owner, not merely a callable method.
+            await page.waitForFunction(
+                () => (window as unknown as {
+                    JellyfinCanopy?: { isPlaybackControlsReady?: () => boolean };
+                }).JellyfinCanopy?.isPlaybackControlsReady?.() === true,
+                undefined,
+                { timeout: 30_000 }
+            );
             await page.evaluate(() => {
                 (window as unknown as { JellyfinCanopy: { cycleSubtitleTrack(): void } })
                     .JellyfinCanopy.cycleSubtitleTrack();
@@ -210,6 +272,10 @@ test.describe('direct player shortcuts', () => {
             expect(pluginFourxx, 'no 4xx from plugin endpoints').toEqual([]);
         } catch (error) {
             bodyError = error;
+        } finally {
+            // A failed assertion must never strand an intercepted import while
+            // the existing browser and playback-state cleanup runs.
+            releasePlaybackImport();
         }
 
         try {
