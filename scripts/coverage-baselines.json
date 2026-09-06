@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 47134,
+        "coveredLines": 47135,
         "totalLines": 57061
       },
       "observations": {
-        "cleanRuns": 3,
+        "cleanRuns": 4,
         "minimumCoveredLines": 47131,
-        "maximumCoveredLines": 47134
+        "maximumCoveredLines": 47135
       },
       "tolerance": {
-        "missingCoveredLines": 3,
-        "rationale": "The singleton-Series relationship reservation adds 17 net instrumented lines to TagCacheService; every added line is covered in both retained local reports. Two clean full SDK 10.0.302/runtime 10.0.10 runs each passed all 4,667 tests and measured 47,131/57,061 lines. Canopy PR #752 Build & Test run 34055847826, Unit tests job 101547486584, then passed all 4,667 tests on SDK 10.0.400/runtime 10.0.11 and measured 47,134/57,061; only the stale-high-water gate failed afterward. The CI merge tree is identical to the locally tested branch tree, and all 599 recorded production/test/build-input hashes still match. These three clean test runs establish the directly observed high-water 47,134 and unchanged floor 47,131, requiring exactly three lines of tolerance (about 0.0053 percentage points). No prior-scope or changed-test fixture measurement is included. The two local Cobertura reports have identical class/file/line sets and identical changed-service coverage; their existing provider cancellation/lifecycle hit-state differences have zero net effect. CI retains the exact successful test count and measured coverage in its job log but does not upload its Cobertura report, so the three-line CI gain is not attributed to specific lines. The original 1,650,000-byte worker allocation limit and both coalesced-Series guards remain unchanged. Existing coverage-baseline.test.js boundaries reject 47,130, require review above 47,134, and reject scope drift or an unevidenced broader envelope."
+        "missingCoveredLines": 4,
+        "rationale": "The singleton-Series relationship reservation adds 17 net instrumented lines to TagCacheService; every added line is covered in both retained local reports. Two clean full SDK 10.0.302/runtime 10.0.10 runs each passed all 4,667 tests and measured 47,131/57,061 lines. Canopy PR #752 Build & Test run 34055847826, Unit tests job 101547486584, then passed all 4,667 tests on SDK 10.0.400/runtime 10.0.11 and measured 47,134/57,061; only the stale-high-water gate failed afterward. The CI merge tree is identical to the locally tested branch tree, and all 599 recorded production/test/build-input hashes still match. A subsequent same-source/test run, Build & Test 34056832537 / Unit tests 101550154583, again passed all 4,667 tests and measured 47,135/57,061; only the stale-high-water gate failed. These four clean test runs establish the directly observed high-water 47,135 and unchanged floor 47,131, requiring exactly four lines of tolerance (about 0.0071 percentage points). No prior-scope or changed-test fixture measurement is included. The two local Cobertura reports have identical class/file/line sets and identical changed-service coverage; their existing provider cancellation/lifecycle hit-state differences have zero net effect. CI retains the exact successful test count and measured coverage in its job log but does not upload its Cobertura report, so the CI gains is not attributed to specific lines. The original 1,650,000-byte worker allocation limit and both coalesced-Series guards remain unchanged. Existing coverage-baseline.test.js boundaries reject 47,130, require review above 47,135, and reject scope drift or an unevidenced broader envelope."
       }
     }
   }
