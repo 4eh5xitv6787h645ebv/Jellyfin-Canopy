@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 47135,
+        "coveredLines": 47137,
         "totalLines": 57061
       },
       "observations": {
-        "cleanRuns": 4,
+        "cleanRuns": 6,
         "minimumCoveredLines": 47131,
-        "maximumCoveredLines": 47135
+        "maximumCoveredLines": 47137
       },
       "tolerance": {
-        "missingCoveredLines": 4,
-        "rationale": "The singleton-Series relationship reservation adds 17 net instrumented lines to TagCacheService; every added line is covered in both retained local reports. Two clean full SDK 10.0.302/runtime 10.0.10 runs each passed all 4,667 tests and measured 47,131/57,061 lines. Canopy PR #752 Build & Test run 34055847826, Unit tests job 101547486584, then passed all 4,667 tests on SDK 10.0.400/runtime 10.0.11 and measured 47,134/57,061; only the stale-high-water gate failed afterward. The CI merge tree is identical to the locally tested branch tree, and all 599 recorded production/test/build-input hashes still match. A subsequent same-source/test run, Build & Test 34056832537 / Unit tests 101550154583, again passed all 4,667 tests and measured 47,135/57,061; only the stale-high-water gate failed. These four clean test runs establish the directly observed high-water 47,135 and unchanged floor 47,131, requiring exactly four lines of tolerance (about 0.0071 percentage points). No prior-scope or changed-test fixture measurement is included. The two local Cobertura reports have identical class/file/line sets and identical changed-service coverage; their existing provider cancellation/lifecycle hit-state differences have zero net effect. CI retains the exact successful test count and measured coverage in its job log but does not upload its Cobertura report, so the CI gains is not attributed to specific lines. The original 1,650,000-byte worker allocation limit and both coalesced-Series guards remain unchanged. Existing coverage-baseline.test.js boundaries reject 47,130, require review above 47,135, and reject scope drift or an unevidenced broader envelope."
+        "missingCoveredLines": 6,
+        "rationale": "Canopy PR #752 established identical-source/test observations of 47,131, 47,131, 47,134 and 47,135 covered lines over 57,061 instrumented lines. Its final pre-merge Build & Test run 34057306033 / Unit tests job 101551434398 passed all 4,667 tests and the gate at 47,135/57,061. Post-merge Build & Test run 34057811119 / Unit tests job 101552803905 passed all 4,667 tests at merge commit 97862ef30b296406173712b1cc7e26a84e9139a2 and measured 47,137/57,061; only the stale-high-water gate failed afterward. All 599 recorded production/test/build-input hashes match that exact merge and this branch. These six clean test observations establish the directly observed high-water 47,137 and unchanged floor 47,131, requiring exactly six lines of tolerance (about 0.0106 percentage points). The two local runs used SDK 10.0.302/runtime 10.0.10; the hosted observations used SDK 10.0.400/runtime 10.0.11. No prior-scope, changed-test, or failing-test measurement is included. Local raw Cobertura reports are retained; CI retains exact successful test counts and measured coverage in its job logs but does not upload its Cobertura report, so no specific line or runtime cause is attributed to the CI gains. The policy, coverage implementation, production code, tests, allocation budgets and client baseline remain unchanged. coverage-baseline.test.js rejects 47,130, requires review above 47,137, and rejects scope drift or an unevidenced broader envelope."
       }
     }
   }
