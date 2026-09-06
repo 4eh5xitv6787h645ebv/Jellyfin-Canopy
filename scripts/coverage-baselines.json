@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 47131,
+        "coveredLines": 47134,
         "totalLines": 57061
       },
       "observations": {
-        "cleanRuns": 2,
+        "cleanRuns": 3,
         "minimumCoveredLines": 47131,
-        "maximumCoveredLines": 47131
+        "maximumCoveredLines": 47134
       },
       "tolerance": {
-        "missingCoveredLines": 0,
-        "rationale": "The singleton-Series relationship reservation adds 17 net instrumented lines to TagCacheService; every added line is covered. The existing discovered-ID set construction moves earlier and remains covered. Two clean full .NET SDK 10.0.302/runtime 10.0.10 runs on identical production source and 4,667 tests both passed every test and measured 47,131/57,061 lines. Only the intentionally stale 57,044-line scope gate failed afterward. Both raw Cobertura reports have identical class/file/line sets. Eight hit-state differences between the runs are confined to existing provider invocation and registry cancellation/lifecycle branches and have zero net effect; the changed TagCacheService coverage is identical. The new scope therefore records its directly observed high-water and floor as 47,131/57,061 with zero tolerance. Prior-scope measurements are not mixed into this envelope. The original strict 1,650,000-byte worker budget remains unchanged; two coalesced-Series guards also preserve ordinary-growth allocation and reject repeated per-Series capacity reservation. Raw scope hashes, reports and comparisons are retained for independent review. coverage-baseline.test.js retains exact below-floor, above-high-water, scope-drift, observation-envelope and broad-tolerance negative boundaries."
+        "missingCoveredLines": 3,
+        "rationale": "The singleton-Series relationship reservation adds 17 net instrumented lines to TagCacheService; every added line is covered in both retained local reports. Two clean full SDK 10.0.302/runtime 10.0.10 runs each passed all 4,667 tests and measured 47,131/57,061 lines. Canopy PR #752 Build & Test run 34055847826, Unit tests job 101547486584, then passed all 4,667 tests on SDK 10.0.400/runtime 10.0.11 and measured 47,134/57,061; only the stale-high-water gate failed afterward. The CI merge tree is identical to the locally tested branch tree, and all 599 recorded production/test/build-input hashes still match. These three clean test runs establish the directly observed high-water 47,134 and unchanged floor 47,131, requiring exactly three lines of tolerance (about 0.0053 percentage points). No prior-scope or changed-test fixture measurement is included. The two local Cobertura reports have identical class/file/line sets and identical changed-service coverage; their existing provider cancellation/lifecycle hit-state differences have zero net effect. CI retains the exact successful test count and measured coverage in its job log but does not upload its Cobertura report, so the three-line CI gain is not attributed to specific lines. The original 1,650,000-byte worker allocation limit and both coalesced-Series guards remain unchanged. Existing coverage-baseline.test.js boundaries reject 47,130, require review above 47,134, and reject scope drift or an unevidenced broader envelope."
       }
     }
   }
