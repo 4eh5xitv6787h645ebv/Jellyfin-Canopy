@@ -84,8 +84,8 @@ function hasValidConcurrentLogoutResponses(responses) {
 /**
  * Exact read-only Home requests Jellyfin Web can leave in flight while logout
  * revokes the old owner token. Every query field is part of the contract; the
- * only variable values are the proven prior user, a library parent ID, and the
- * host-generated Next Up cutoff date.
+ * variable values are the proven prior user, a library parent ID, the native
+ * Latest row's bounded limit, and the host-generated Next Up cutoff date.
  *
  * @param {URL} parsed
  * @param {string} oldUserId
@@ -112,6 +112,12 @@ function isExpectedSignedOutHomeRead(parsed, oldUserId) {
     if (parsed.pathname === '/Items/Latest') {
         const parentId = parsed.searchParams.get('parentId') || '';
         if (!/^[A-Fa-f0-9]{32}$/.test(parentId)) return false;
+        // Compose's pinned Jellyfin Web (image digest f961d7bd9f38...) sets
+        // enableOverflow=true for Home. In 65126.b64ec6c62d0f2e2f3186.chunk.js,
+        // LatestMedia uses 30 for Music and 16 otherwise. Preserve the exact
+        // query multiset below, including rejection of duplicate limit fields.
+        const limit = parsed.searchParams.get('limit') || '';
+        if (!['16', '30'].includes(limit)) return false;
         return hasExactSearch(parsed.searchParams, [
             ['userId', oldUserId],
             ['parentId', parentId],
@@ -119,7 +125,7 @@ function isExpectedSignedOutHomeRead(parsed, oldUserId) {
             ['fields', 'Path'],
             ['imageTypeLimit', '1'],
             ...commonImages,
-            ['limit', '16'],
+            ['limit', limit],
         ]);
     }
     if (parsed.pathname === '/Shows/NextUp') {
