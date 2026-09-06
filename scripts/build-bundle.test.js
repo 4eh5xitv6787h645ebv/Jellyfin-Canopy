@@ -5,6 +5,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { SourceMap } = require('node:module');
+const esbuild = require('esbuild');
+const ts = require('typescript');
+const { STATIC_CSS_MODULES } = require('./static-css');
 const budget = require('./bundle-budgets.json');
 const {
     assertBudgets,
@@ -83,7 +87,94 @@ test('generated JavaScript links portable adjacent external sourcemaps', async (
         const map = JSON.parse(artifacts.get(`${name}.map`).toString('utf8'));
         assert.equal(map.sources.length, map.sourcesContent.length);
         assert.ok(map.sources.every((source) => assertSafeRelativePath(source) === source));
+        for (const [index, source] of map.sources.entries()) {
+            assert.equal(map.sourcesContent[index], fs.readFileSync(path.join(__dirname, '..', source), 'utf8'));
+        }
     }
+});
+
+test('production CSS literals and later installer statements map to their readable original positions', async () => {
+    const { artifacts } = await createBuildArtifacts();
+    const sources = new Map(Object.entries(STATIC_CSS_MODULES).map(([name, count]) => {
+        const sourceName = `Jellyfin.Plugin.JellyfinCanopy/src/${name}`;
+        const source = fs.readFileSync(path.join(__dirname, '..', sourceName), 'utf8');
+        const ast = ts.createSourceFile(sourceName, source, ts.ScriptTarget.Latest, true);
+        const literals = new Map();
+        const visit = (node) => {
+            if (ts.isNoSubstitutionTemplateLiteral(node)) {
+                const position = ast.getLineAndCharacterOfPosition(node.getStart(ast));
+                literals.set(`${position.line}:${position.character}`, node.text);
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+        assert.equal(literals.size, count);
+        return [sourceName, { source, literals, checkedLiterals: new Set(), tokens: [] }];
+    }));
+    for (const [name, bytes] of artifacts) {
+        if (!name.endsWith('.js')) continue;
+        const map = new SourceMap(JSON.parse(artifacts.get(`${name}.map`)));
+        const ast = ts.createSourceFile(name, bytes.toString('utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+        const visit = (node) => {
+            const isToken = ts.isIdentifier(node)
+                && ['appendChild', 'injectCss', 'removeCss', 'remove'].includes(node.text);
+            if (isToken || ts.isStringLiteralLike(node)) {
+                const position = ast.getLineAndCharacterOfPosition(node.getStart(ast));
+                const entry = map.findEntry(position.line, position.character);
+                const original = sources.get(entry.originalSource);
+                if (original) {
+                    if (isToken) {
+                        const line = original.source.split('\n')[entry.originalLine];
+                        assert.equal(line.slice(entry.originalColumn, entry.originalColumn + node.text.length), node.text);
+                        original.tokens.push(node.text);
+                    } else {
+                        const key = `${entry.originalLine}:${entry.originalColumn}`;
+                        const css = original.literals.get(key);
+                        if (css !== undefined) {
+                            assert.ok(node.text.length < css.length, 'production CSS is compact');
+                            original.checkedLiterals.add(key);
+                        }
+                    }
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+    }
+    for (const [name, original] of sources) {
+        assert.equal(original.checkedLiterals.size, original.literals.size, name);
+        assert.deepEqual(original.tokens.sort(), name.includes('/ui/')
+            ? ['appendChild', 'appendChild', 'remove'] : ['injectCss', 'removeCss']);
+    }
+});
+
+test('development builds preserve the original CSS template values', async () => {
+    const options = esmOptions(true, path.join(__dirname, '..', '.jc-bundle-output'));
+    options.entryPoints = Object.fromEntries(Object.keys(STATIC_CSS_MODULES).map((name, index) => [
+        `styles-${index}`, path.join(__dirname, '..', 'Jellyfin.Plugin.JellyfinCanopy/src', name),
+    ]));
+    const expected = [];
+    for (const filename of Object.values(options.entryPoints)) {
+        const ast = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true);
+        const visit = (node) => {
+            if (ts.isNoSubstitutionTemplateLiteral(node)) expected.push(node.text);
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+    }
+    const result = await esbuild.build(options);
+    const emitted = new Set();
+    for (const output of result.outputFiles) {
+        if (!output.path.endsWith('.js')) continue;
+        const ast = ts.createSourceFile(output.path, output.text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+        const visit = (node) => {
+            if (ts.isStringLiteralLike(node)) emitted.add(node.text);
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+    }
+    assert.equal(expected.length, 3);
+    for (const css of expected) assert.ok(emitted.has(css), 'dev keeps the readable original CSS value');
 });
 
 test('atomic publication removes stale nested chunks and writes the exact inventory', () => {

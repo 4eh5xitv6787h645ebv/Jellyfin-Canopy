@@ -7,7 +7,7 @@ import { JC } from '../../globals';
 
 
 // Add styles to the page (CSS text is verbatim from the pre-split module)
-const css = `
+const css = /* @canopy-static-css */ `
     .jc-more-info-modal {
         position: fixed;
         top: 0;

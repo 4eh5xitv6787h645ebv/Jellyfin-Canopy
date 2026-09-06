@@ -14,7 +14,7 @@ ui.addMainStyles = function () {
     if (document.getElementById(styleId)) return;
     const style = document.createElement('style');
     style.id = styleId;
-    style.textContent = `
+    style.textContent = /* @canopy-static-css */ `
         /* LAYOUT & ICONS */
         .seerr-section { margin-bottom: 1em; }
         .seerr-section .itemsContainer { }
@@ -288,7 +288,7 @@ ui.addSeasonModalStyles = function () {
     if (document.getElementById(seasonStyleId)) return;
     const style = document.createElement('style');
     style.id = seasonStyleId;
-    style.textContent = `
+    style.textContent = /* @canopy-static-css */ `
         /* MODAL STYLES */
         .seerr-season-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 10, 20, 0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 10000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
         .seerr-season-modal.show { opacity: 1; pointer-events: all; }
