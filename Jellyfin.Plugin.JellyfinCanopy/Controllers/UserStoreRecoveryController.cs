@@ -18,6 +18,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     [Route("JellyfinCanopy/admin/user-store-recovery")]
     [ApiController]
     [Authorize(Policy = Policies.RequiresElevation)]
+    [PrivateResponse]
     public sealed class UserStoreRecoveryController : ControllerBase
     {
         private readonly UserConfigurationManager _manager;

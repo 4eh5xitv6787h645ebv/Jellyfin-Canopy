@@ -46,6 +46,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class ArrCalendarController : JellyfinCanopyControllerBase
     {
         private readonly ILibraryManager _libraryManager;

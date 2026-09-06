@@ -228,6 +228,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpGet("private-config")]
         [Authorize]
+        [PrivateResponse]
         public ActionResult GetPrivateConfig()
         {
             var config = _configProvider.ConfigurationOrNull;
@@ -269,6 +270,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
         // EnableLoginImage. Authenticated callers (any Jellyfin user) get the full
         // payload so client-side "Open in Seerr" deep links still work.
         [HttpGet("public-config")]
+        [PrivateResponse]
         public ActionResult GetPublicConfig()
         {
             var config = _configProvider.ConfigurationOrNull;

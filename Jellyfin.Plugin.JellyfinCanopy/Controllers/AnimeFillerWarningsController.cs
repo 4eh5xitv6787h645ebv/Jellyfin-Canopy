@@ -18,6 +18,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers;
 
 [Route("JellyfinCanopy/anime-filler")]
 [ApiController]
+[PrivateResponse]
 public sealed class AnimeFillerWarningsController : JellyfinCanopyControllerBase
 {
     // PERF(S2): recursive per-series enumeration is page-bounded. Only one page is

@@ -21,6 +21,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [ApiController]
     [Route("JellyfinCanopy")]
+    [PrivateResponse]
     public sealed class ServiceDiscoveryController : JellyfinCanopyControllerBase
     {
         private readonly ServiceDiscoveryService _discovery;

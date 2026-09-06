@@ -49,6 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class SeerrUserController : JellyfinCanopyControllerBase
     {
         private readonly IUserDataManager _userDataManager;

@@ -100,6 +100,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpPost("UploadBrandingImage")]
         [Authorize(Policy = Policies.RequiresElevation)]
+        [PrivateResponse]
         public async Task<IActionResult> UploadBrandingImage()
         {
             try
@@ -184,6 +185,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
 
         [HttpPost("DeleteBrandingImage")]
         [Authorize(Policy = Policies.RequiresElevation)]
+        [PrivateResponse]
         public IActionResult DeleteBrandingImage()
         {
             try

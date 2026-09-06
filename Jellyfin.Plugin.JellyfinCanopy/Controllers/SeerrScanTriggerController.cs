@@ -16,6 +16,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public sealed class SeerrScanTriggerController : ControllerBase
     {
         private readonly SeerrScanTriggerService _scanTrigger;

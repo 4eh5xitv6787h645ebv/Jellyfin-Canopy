@@ -51,6 +51,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class ArrRequestsController : JellyfinCanopyControllerBase
     {
         // Process-wide because a per-request gate still permits N concurrent
