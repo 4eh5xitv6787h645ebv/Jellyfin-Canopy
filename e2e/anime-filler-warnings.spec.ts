@@ -134,7 +134,17 @@ test.describe.serial('anime filler warnings', () => {
         await expect(detailBadge).toHaveAttribute('role', 'note');
         await expect(detailBadge).toHaveAttribute('aria-label', /filler/i);
 
+        // An empty marker set can be the outgoing view's cleanup. Wait for
+        // the canon detail request to finish before asserting its result.
+        const canonClassification = page.waitForResponse((response) => {
+            if (!response.url().endsWith('/JellyfinCanopy/anime-filler/classifications')) return false;
+            const body = response.request().postDataJSON() as { itemIds?: string[] };
+            return body.itemIds?.includes(target!.canonId) === true;
+        });
         await showDetails(page, target!.canonId);
+        const canonResponse = await canonClassification;
+        expect(canonResponse.ok()).toBe(true);
+        await canonResponse.finished();
         await expect(page.locator(`#itemDetailPage ${MARKER}`)).toHaveCount(0);
         expect(requests.value).toBeGreaterThanOrEqual(3);
         expect(await page.evaluate(() => localStorage.getItem('layout'))).toBe('experimental');
