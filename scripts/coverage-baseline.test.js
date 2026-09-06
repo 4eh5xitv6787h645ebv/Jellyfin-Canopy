@@ -26,19 +26,19 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
     );
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2976, totalLines: 3362 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 47135, totalLines: 57061 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 47241, totalLines: 57155 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 2,
         minimumCoveredLines: 2976,
         maximumCoveredLines: 2976,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
-        cleanRuns: 4,
-        minimumCoveredLines: 47131,
-        maximumCoveredLines: 47135,
+        cleanRuns: 2,
+        minimumCoveredLines: 47236,
+        maximumCoveredLines: 47241,
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 0);
-    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 4);
+    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 5);
 });
 
 for (const name of ['client', 'server']) {
