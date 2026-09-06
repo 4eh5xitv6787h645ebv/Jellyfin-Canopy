@@ -3187,6 +3187,91 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal("new-series-tmdb", entry.SeriesTmdbId);
     }
 
+    private delegate bool ApplyCapacityBatch(IReadOnlyList<TagCacheChange> batch, out bool removed);
+
+    [Theory]
+    [InlineData(40, 100, 5_800_000)]
+    [InlineData(4, 1000, 5_600_000)]
+    public void CoalescedSeriesAllocationGuard(int seriesCount, int childrenPerSeries, long allocationBudget)
+    {
+        var allocated = RunCoalescedSeriesCapacityFixture(seriesCount, childrenPerSeries);
+        Assert.True(allocated < allocationBudget,
+            $"Coalesced Series worker allocated {allocated:N0} bytes (budget: {allocationBudget:N0})");
+    }
+
+    private static long RunCoalescedSeriesCapacityFixture(int seriesCount, int childrenPerSeries)
+    {
+        var probeCount = 0;
+        var series = Enumerable.Range(0, seriesCount).Select(_ => new StubSeries
+        {
+            Id = Guid.NewGuid(),
+            DateLastSaved = SavedAt,
+            ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Tmdb"] = "stable" },
+        }).ToArray();
+        var seriesById = series.ToDictionary(item => item.Id);
+        var oldSeriesIds = series.Select(_ => Guid.NewGuid()).ToArray();
+        var children = series.Select(owner => Enumerable.Range(0, childrenPerSeries)
+            .Select(_ => new CountingEpisode
+            {
+                Id = Guid.NewGuid(), SeriesId = owner.Id, CommunityRating = 5, CriticRating = 50,
+                DateLastSaved = SavedAt, OnProbe = () => probeCount++,
+            }).ToArray()).ToArray();
+        var childrenBySeries = series.Select((owner, index) => (owner.Id, Children: children[index]))
+            .ToDictionary(pair => pair.Id, pair => pair.Children);
+        var observedDiscoveryOrder = new List<Guid>();
+        var library = new CountingLibraryManager
+        {
+            GetItemByIdHook = id => seriesById.TryGetValue(id, out var found)
+                ? found : throw new InvalidOperationException("no scalar descendant or absent old-owner lookup expected"),
+            GetItemListHook = query =>
+            {
+                if (query.AncestorIds?.Length == 1 && childrenBySeries.TryGetValue(query.AncestorIds[0], out var descendants))
+                {
+                    observedDiscoveryOrder.Add(query.AncestorIds[0]);
+                    return descendants;
+                }
+                if (childrenBySeries.TryGetValue(query.ParentId, out var firstChildren)) return firstChildren;
+                throw new InvalidOperationException("unexpected coalesced relationship query");
+            },
+        };
+        using var service = NewService(library);
+        for (var i = 0; i < seriesCount; i++)
+        {
+            service.SeedEntryForTest(Key(series[i].Id), new TagCacheEntry { Type = "Series", TmdbId = "stable" });
+            foreach (var episode in children[i]) service.SeedEntryForTest(Key(episode.Id), new TagCacheEntry
+            {
+                Type = "Episode", SeriesId = Key(oldSeriesIds[i]), SeriesTmdbId = "stable",
+                CommunityRating = 5, CriticRating = 50, StreamSourceId = Key(episode.Id), SourceRevision = SavedAt.Ticks,
+            });
+        }
+        var batch = series.Select(owner => new TagCacheChange(owner.Id, BaseItemKind.Series,
+            Guid.Empty, Guid.Empty, Guid.Empty, Guid.Empty, false)).ToArray();
+        var method = typeof(TagCacheService).GetMethod("ApplyPendingBatch",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var apply = (ApplyCapacityBatch)method.CreateDelegate(typeof(ApplyCapacityBatch), service);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var changed = apply(batch, out var removed);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(changed);
+        Assert.False(removed);
+        Assert.Equal(series.Select(owner => owner.Id), observedDiscoveryOrder);
+        Assert.Equal(seriesCount * 2, library.GetItemByIdCallCount);
+        Assert.Equal(seriesCount * 2, library.GetItemListCallCount);
+        Assert.Equal(seriesCount, probeCount);
+        Assert.Equal(0, service.PendingChangeCountForTest);
+        for (var i = 0; i < seriesCount; i++) foreach (var episode in children[i])
+        {
+            var entry = service.GetEntryForTest(Key(episode.Id));
+            Assert.NotNull(entry);
+            Assert.Equal(Key(series[i].Id), entry.SeriesId);
+            Assert.Equal("stable", entry.SeriesTmdbId);
+            Assert.Equal(SavedAt.Ticks, entry.SourceRevision);
+            Assert.Equal(5, entry.CommunityRating);
+            Assert.Equal(50, entry.CriticRating);
+        }
+        return allocated;
+    }
+
     private sealed class ControlledEpisode : MediaBrowser.Controller.Entities.TV.Episode
     {
         public bool ThrowOnProbe { get; init; }
