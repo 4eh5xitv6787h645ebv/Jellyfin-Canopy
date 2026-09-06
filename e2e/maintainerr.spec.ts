@@ -554,9 +554,8 @@ test.describe.serial('Maintainerr integration', () => {
             ).length,
         ).toBe(1);
 
-        // Jellyfin rewrites the metadata host after item data settles. The
-        // integration must restore its cached projection without a second
-        // upstream request or stale markup.
+        // Removing Canopy-owned decoration must restore its cached projection
+        // without a second upstream request or stale markup.
         await page.evaluate((currentItemId) => {
             const chip = document.querySelector(
                 `.jc-maintainerr-item-status[data-item-id="${currentItemId}"]`,
@@ -587,11 +586,58 @@ test.describe.serial('Maintainerr integration', () => {
         // The details activation is torn down on /video and rebuilt on back.
         const play = page.locator('.page:not(.hide) .mainDetailButtons .btnPlay').first();
         await expect(play).toBeVisible({ timeout: 30_000 });
-        await play.click();
-        await waitForHash(page, '/video');
-        await expect(page.locator('.page:not(.hide) .jc-maintainerr-item-status')).toHaveCount(0);
+        // The URL changes before Jellyfin finishes showing its player view.
+        // Observe that native lifecycle before Back, and pause the short fixture
+        // so natural completion cannot issue another navigation during recovery.
+        const playerView = await page.evaluateHandle(() => {
+            const state = { shown: false };
+            const onShow = (event: Event): void => {
+                if ((event.target as Element | null)?.id === 'videoOsdPage') state.shown = true;
+            };
+            document.addEventListener('viewshow', onShow, true);
+            return {
+                state,
+                dispose: () => document.removeEventListener('viewshow', onShow, true),
+            };
+        });
+        let playbackError: unknown;
+        try {
+            await play.click();
+            await waitForHash(page, '/video');
+            await page.waitForFunction(owner => {
+                const root = document.querySelector('#videoOsdPage:not(.hide)');
+                const video = document.querySelector('video');
+                return owner.state.shown && !!root && !!video
+                    && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+            }, playerView, { timeout: 30_000 });
+            expect(await page.evaluate(() => {
+                const video = document.querySelector('video')!;
+                video.pause();
+                return { paused: video.paused, ended: video.ended };
+            }), 'the real player is paused before the short fixture ends').toEqual({
+                paused: true,
+                ended: false,
+            });
+            await expect(page.locator('.page:not(.hide) .jc-maintainerr-item-status')).toHaveCount(0);
+        } catch (error) {
+            playbackError = error;
+            throw error;
+        } finally {
+            const cleanupErrors: unknown[] = [];
+            try { await playerView.evaluate(owner => owner.dispose()); }
+            catch (error) { cleanupErrors.push(error); }
+            try { await playerView.dispose(); }
+            catch (error) { cleanupErrors.push(error); }
+            if (cleanupErrors.length) {
+                throw new AggregateError(
+                    [...(playbackError ? [playbackError] : []), ...cleanupErrors],
+                    'native player readiness observer cleanup failed',
+                );
+            }
+        }
         await page.evaluate(() => history.back());
         await waitForHash(page, secondItemId!);
+        await expect(page.locator('video'), 'Back tears down the native player').toHaveCount(0);
         await expect(
             page.locator(`.jc-maintainerr-item-status[data-item-id="${secondItemId}"]`),
         ).toHaveCount(2);
