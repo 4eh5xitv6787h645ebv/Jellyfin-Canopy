@@ -225,12 +225,6 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
             oldSection.remove();
         } else {
             oldSection.replaceChildren(...Array.from(sectionToInject.childNodes));
-            // Keep the localized no-results message in sync (the full-render path
-            // does this at placement time).
-            const noResultsMessage = searchPage.querySelector('.noItemsMessage');
-            if (noResultsMessage) {
-                noResultsMessage.textContent = JC.t!('seerr_no_results_jellyfin', { query });
-            }
             return;
         }
     }
@@ -261,7 +255,9 @@ ui.renderSeerrResults = function (results: any, query: any, isSeerrOnlyMode: any
         if (!JC.identity.isCurrent(context) || !searchPage.isConnected) return false;
         const noResultsMessage = searchPage.querySelector('.noItemsMessage');
         if (noResultsMessage) {
-            noResultsMessage.textContent = JC.t!('seerr_no_results_jellyfin', { query });
+            // React owns this message's children. Use it only as an anchor;
+            // rewriting text detaches nodes its next reconciliation still uses.
+            // See docs/developers.md#react-re-render-survival.
             noResultsMessage.parentElement!.insertBefore(sectionToInject, noResultsMessage.nextSibling);
             return true;
         }

@@ -124,6 +124,13 @@ Injected UI has to survive the host's React re-renders and its legacy view cache
 
 The universal strategy is **idempotent keyed injectors** re-driven by (1) `HISTORY_UPDATE`/`jc:navigate` for every URL change, (2) `viewshow` for legacy views, and (3) the multiplexed body `MutationObserver` as a catch-all. React pages tolerate foreign appended children through any in-place re-render; only unmount kills them, and no React errors were produced by injected markers.
 
+Keep React-owned child nodes intact when using native elements as anchors.
+For example, Seerr results sit beside Search's `.noItemsMessage`; they must not
+rewrite its `textContent` or replace its children. React retains those node
+references for later query updates, so replacing them can cause a `removeChild`
+error when cached empty and populated searches alternate. Update only the
+Canopy-owned result section and leave the native message to Jellyfin.
+
 The item-detail view cache has three specific traps (the "loads only on revisit" bug class):
 
 - **Up to three `#itemDetailPage` elements coexist** (`pageContainerCount = 3`, fixed round-robin slots). `document.getElementById('itemDetailPage')` returns whichever occupies the **lowest** slot — visible or not — so a visibility gate built on it goes permanently dead once two details views exist. Resolve the page through `core/details-view` (`isDetailsPageVisible()` / `getVisibleDetailsPage()`), never `getElementById`.
