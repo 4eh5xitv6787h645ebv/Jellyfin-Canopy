@@ -262,6 +262,7 @@ const OBSERVED_SIGNED_OUT_HOME_401S = [
     '/UserItems/Resume?userId=92bdc95c7381435689451ad246198f74&limit=12&fields=PrimaryImageAspectRatio&mediaTypes=Book&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Backdrop&enableImageTypes=Thumb&enableTotalRecordCount=false',
     '/Shows/NextUp?userId=92bdc95c7381435689451ad246198f74&limit=24&fields=PrimaryImageAspectRatio&fields=DateCreated&fields=Path&fields=MediaSourceCount&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Backdrop&enableImageTypes=Thumb&nextUpDateCutoff=2025-07-14&enableTotalRecordCount=false&enableResumable=false&enableRewatching=false',
     '/Items/Latest?userId=92bdc95c7381435689451ad246198f74&parentId=f137a2dd21bbc1b99aa5c0f6bf02a805&fields=PrimaryImageAspectRatio&fields=Path&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Backdrop&enableImageTypes=Thumb&limit=16',
+    '/Items/Latest?userId=92bdc95c7381435689451ad246198f74&parentId=7e64e319657a9516ec78490da03edccb&fields=PrimaryImageAspectRatio&fields=Path&imageTypeLimit=1&enableImageTypes=Primary&enableImageTypes=Backdrop&enableImageTypes=Thumb&limit=30',
 ];
 
 test('scroll-handler host race requires the exact pageerror and a hashed stock-web frame', () => {
@@ -565,6 +566,71 @@ test('signed-out response classifier accepts only exact observed Jellyfin Home r
             true,
             path
         );
+    }
+});
+
+test('Latest logout reads reject nearby limits and altered query shapes', () => {
+    const latestPaths = OBSERVED_SIGNED_OUT_HOME_401S.filter((path) => path.startsWith('/Items/Latest?'));
+    for (const path of latestPaths) {
+        const observed = new URL(path, LOGOUT_ORIGIN);
+        const invalidQueries = [];
+        for (const limit of ['', '0', '5', '8', '9', '15', '17', '29', '31', '100', '030', '30.0']) {
+            const changed = new URL(observed);
+            changed.searchParams.set('limit', limit);
+            invalidQueries.push(changed);
+        }
+        for (const key of ['limit', 'parentId', 'fields', 'enableImageTypes', 'imageTypeLimit']) {
+            const changed = new URL(observed);
+            changed.searchParams.delete(key);
+            invalidQueries.push(changed);
+        }
+        for (const [key, value] of [
+            ['limit', '16'], ['limit', '30'],
+            ['fields', 'Path'], ['fields', 'MediaSourceCount'],
+            ['enableImageTypes', 'Primary'],
+            ['includeItemTypes', 'MusicAlbum'], ['extra', 'true'],
+        ]) {
+            const changed = new URL(observed);
+            changed.searchParams.append(key, value);
+            invalidQueries.push(changed);
+        }
+        const malformedParent = new URL(observed);
+        malformedParent.searchParams.set('parentId', 'not-a-library-id');
+        invalidQueries.push(malformedParent);
+
+        for (const url of invalidQueries) {
+            assert.equal(isExpectedSignedOutHostLogout4xx(
+                { url: url.href, status: 401, method: 'GET' }, COMPLETE_SIGNED_OUT
+            ), false, url.href);
+        }
+    }
+});
+
+test('Music Latest logout read retains owner, origin, response and sign-out guards', () => {
+    const path = OBSERVED_SIGNED_OUT_HOME_401S.find((path) => path.endsWith('limit=30'));
+    assert.ok(path);
+    const observed = { url: `${LOGOUT_ORIGIN}${path}`, status: 401, method: 'GET' };
+    const rejectedResponses = [
+        { ...observed, url: observed.url.replace(OLD_USER_ID, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') },
+        { ...observed, url: observed.url.replace(LOGOUT_ORIGIN, 'http://attacker.invalid') },
+        { ...observed, url: observed.url.replace('/Items/Latest', '/JellyfinCanopy/Items/Latest') },
+        { ...observed, url: `${observed.url}#fragment` },
+        { ...observed, status: 403 },
+        { ...observed, method: 'POST' },
+    ];
+    for (const response of rejectedResponses) {
+        assert.equal(isExpectedSignedOutHostLogout4xx(response, COMPLETE_SIGNED_OUT), false, JSON.stringify(response));
+    }
+    for (const mutation of [
+        { identityCleared: false }, { userId: OLD_USER_ID }, { oldUserId: '' },
+        { route: '/web/#/home' }, { cookie: 'jc-spoiler-uid=old-user' },
+        { initialized: true }, { pendingInitializations: 1 },
+        { initializationControllers: 1 }, { oldTokenStatus: 200 },
+    ]) {
+        assert.equal(isExpectedSignedOutHostLogout4xx(observed, {
+            ...COMPLETE_SIGNED_OUT,
+            signedOut: { ...COMPLETE_SIGNED_OUT.signedOut, ...mutation },
+        }), false, JSON.stringify(mutation));
     }
 });
 
