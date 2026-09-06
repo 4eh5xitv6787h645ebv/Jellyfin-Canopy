@@ -499,7 +499,7 @@ public sealed class PlatformInstalledManifestWindowsReaderTests
     }
 
     [Fact]
-    public async Task WindowsActiveOverlappedReadHonorsCancellationAndCompletesCleanup()
+    public void WindowsActiveOverlappedReadHonorsCancellationAndCompletesCleanup()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -507,41 +507,70 @@ public sealed class PlatformInstalledManifestWindowsReaderTests
         }
 
         var pipeName = "jc-manifest-cancel-" + Guid.NewGuid().ToString("N");
-        using var server = new NamedPipeServerStream(
-            pipeName,
-            PipeDirection.InOut,
+        // The reader owns native OVERLAPPED memory. Its handle must not be bound
+        // to the managed thread pool, which expects its own completion allocations.
+        using var server = CreateNamedPipeW(
+            @"\\.\pipe\" + pipeName,
+            0x40000003, // FILE_FLAG_OVERLAPPED | PIPE_ACCESS_DUPLEX
+            0, // PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT
             1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
+            4096,
+            4096,
+            0,
+            IntPtr.Zero);
+        Assert.False(server.IsInvalid, $"CreateNamedPipeW failed: {Marshal.GetLastPInvokeError()}");
         using var client = new NamedPipeClientStream(
             ".",
             pipeName,
             PipeDirection.InOut,
-            PipeOptions.Asynchronous);
-        var clientConnect = client.ConnectAsync();
-        await server.WaitForConnectionAsync();
-        await clientConnect;
+            PipeOptions.None);
+        // Opening the client establishes the connection, including before a
+        // server calls ConnectNamedPipe (the documented ERROR_PIPE_CONNECTED case).
+        client.Connect(5000);
 
-        using var borrowedHandle = new SafeFileHandle(
-            server.SafePipeHandle.DangerousGetHandle(),
-            ownsHandle: false);
         var buffer = Marshal.AllocHGlobal(1);
         try
         {
-            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
             var method = typeof(PlatformInstalledManifestWindowsReader).GetMethod(
                 "ReadOverlappedChunk",
                 BindingFlags.Static | BindingFlags.NonPublic)!;
-            var wrapper = Assert.Throws<TargetInvocationException>(() => method.Invoke(
-                null,
-                new object[] { borrowedHandle, buffer, 1U, 0UL, cancellation.Token }));
-            Assert.IsType<OperationCanceledException>(wrapper.InnerException);
+            for (var iteration = 0; iteration < 3; iteration++)
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+                var wrapper = Assert.Throws<TargetInvocationException>(() => method.Invoke(
+                    null,
+                    new object[] { server, buffer, 1U, 0UL, cancellation.Token }));
+                Assert.IsType<OperationCanceledException>(wrapper.InnerException);
+
+                // A cancelled read must be drained before its buffer is released:
+                // the next read on the same handle must receive this byte itself.
+                var expected = (byte)(0x31 + iteration);
+                client.WriteByte(expected);
+                var result = method.Invoke(
+                    null,
+                    new object[] { server, buffer, 1U, 0UL, CancellationToken.None })!;
+                Assert.Equal(PlatformInstalledManifestOutcome.Acquired,
+                    result.GetType().GetProperty("Outcome")!.GetValue(result));
+                Assert.Equal(1U, result.GetType().GetProperty("BytesRead")!.GetValue(result));
+                Assert.Equal(expected, Marshal.ReadByte(buffer));
+            }
         }
         finally
         {
             Marshal.FreeHGlobal(buffer);
         }
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern SafeFileHandle CreateNamedPipeW(
+        string name,
+        uint openMode,
+        uint pipeMode,
+        uint maximumInstances,
+        uint outBufferSize,
+        uint inBufferSize,
+        uint defaultTimeout,
+        IntPtr securityAttributes);
 
     private static string[] Forbidden(string source) => ForbiddenTokens
         .Where(token => source.Contains(token, StringComparison.OrdinalIgnoreCase))
