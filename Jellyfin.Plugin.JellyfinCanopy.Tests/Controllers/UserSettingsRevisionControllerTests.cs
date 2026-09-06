@@ -103,6 +103,42 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Tests.Controllers
             });
 
         [Fact]
+        public void PrivateResponsePolicy_PreservesReadSaveAndConflictRevisionContract()
+        {
+            SeedSettings(revision: 4);
+            var reader = Controller();
+            var read = reader.GetUserSettingsSettings(UserId);
+            PrivateResponseTests.ApplyToAction(reader, nameof(UserSettingsController.GetUserSettingsSettings), read);
+            Assert.Equal("\"4\"", reader.Response.Headers.ETag.ToString());
+
+            var writer = Controller(4);
+            var saved = writer.SaveUserSettingsSettings(UserId, new UserSettings { Revision = 4, WatchProgressMode = "time" });
+            PrivateResponseTests.ApplyToAction(writer, nameof(UserSettingsController.SaveUserSettingsSettings), saved);
+            var ack = Assert.IsType<UserSettingsController.UserFileMutationResponse<UserSettings>>(Assert.IsType<OkObjectResult>(saved).Value);
+            Assert.Equal(5, ack.Revision);
+            Assert.Equal("time", ack.Data!.WatchProgressMode);
+            Assert.Equal("\"5\"", writer.Response.Headers.ETag.ToString());
+
+            var staleWriter = Controller(4);
+            var conflict = staleWriter.SaveUserSettingsSettings(UserId, new UserSettings { Revision = 4, WatchProgressMode = "percentage" });
+            PrivateResponseTests.ApplyToAction(staleWriter, nameof(UserSettingsController.SaveUserSettingsSettings), conflict);
+            Assert.IsType<ConflictObjectResult>(conflict);
+            Assert.Equal("\"5\"", staleWriter.Response.Headers.ETag.ToString());
+            Assert.Equal("time", _manager.GetUserConfigurationStrict<UserSettings>(UserId, "settings.json").WatchProgressMode);
+        }
+
+        [Fact]
+        public void PrivateResponsePolicy_DoesNotTurnCrossUserDenialIntoSettingsData()
+        {
+            var controller = Controller();
+            var result = controller.GetUserSettingsSettings(Guid.NewGuid().ToString("N"));
+            Assert.IsType<ForbidResult>(result);
+            PrivateResponseTests.ApplyToAction(controller, nameof(UserSettingsController.GetUserSettingsSettings), result);
+            Assert.IsType<ForbidResult>(result);
+            Assert.False(controller.Response.Headers.ContainsKey("ETag"));
+        }
+
+        [Fact]
         public void SettingsSave_RequiresMatchingStrongRevision()
         {
             SeedSettings();

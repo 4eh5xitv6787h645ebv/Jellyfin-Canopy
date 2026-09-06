@@ -18,6 +18,7 @@ import {
     assertNoRuntimeErrors,
     USERS,
 } from './fixtures/auth';
+import { withObservedJsonResponse } from './fixtures/observe-json-response';
 import {
     apiRaw,
     authenticate,
@@ -2036,135 +2037,176 @@ async function exerciseHiddenManagement(
     await unhide.click();
     const confirmation = page.locator('.jc-hide-confirm-overlay');
     await expect(confirmation).toBeVisible();
-    const staleUnhideResponse = page.waitForResponse(response =>
-        response.request().method() === 'POST'
-        && pathOf(response.url())
-            === `/JellyfinCanopy/admin/hidden-content/${users.target.id}/unhide`,
-    { timeout: 30_000 });
-    const conflictRecoveryRead = page.waitForResponse(response =>
-        response.request().method() === 'GET'
-        && pathOf(response.url())
-            === `/JellyfinCanopy/admin/hidden-content/${users.target.id}`,
-    { timeout: 30_000 });
-    await confirmation.locator('.jc-hide-confirm-hide').click();
-    const conflictResponse = await staleUnhideResponse;
-    expect(conflictResponse.status(), 'stale exact-key unhide conflicts').toBe(409);
-    expect(
-        conflictResponse.request().headers()['if-match'],
-        'stale exact-key unhide uses the revision loaded by the page'
-    ).toBe(`"${fixture.itemsRevision}"`);
-    expect(
-        conflictResponse.request().postDataJSON(),
-        'stale target mutation contains only the selected key'
-    ).toEqual([fixture.itemId]);
-    expect(conflictResponse.headers()['etag']).toBe(
-        `"${externallyReaddedRevision}"`
-    );
-    const conflict = recordOf(
-        await conflictResponse.json(),
-        'stale target item conflict'
-    );
-    expect(field(conflict, 'Success', 'success')).toBe(false);
-    expect(field(conflict, 'Conflict', 'conflict')).toBe(true);
-    expect(field(conflict, 'Code', 'code')).toBe('hidden_content_items_conflict');
-    expect(
-        normalizeId(field(conflict, 'TargetUserId', 'targetUserId'))
-    ).toBe(users.target.id);
-    expect(
-        hiddenItemsRevision(conflict, 'stale target item conflict')
-    ).toBe(externallyReaddedRevision);
-    expect(
-        Object.keys(conflict)
-            .map(key => key.toLowerCase())
-            .filter(key => ['hiddencontent', 'items', 'data'].includes(key)),
-        'privacy-minimal conflict omits the target item dictionary'
-    ).toEqual([]);
+    const targetUrl = new URL(targetResponse.url());
+    targetUrl.pathname = `${targetUrl.pathname.replace(/\/$/, '')}/unhide`;
+    targetUrl.search = '';
+    const unhideUrl = targetUrl.href;
+    let unhideRequests = 0;
+    const collectUnhide = (request: Request): void => {
+        if (request.method() === 'POST' && request.url() === unhideUrl) {
+            unhideRequests++;
+        }
+    };
+    page.on('request', collectUnhide);
+    try {
+        const conflictRecoveryRead = page.waitForResponse(response =>
+            response.request().method() === 'GET'
+            && pathOf(response.url())
+                === `/JellyfinCanopy/admin/hidden-content/${users.target.id}`,
+        { timeout: 30_000 }).then(
+            response => ({ ok: true as const, response }),
+            error => ({ ok: false as const, error }),
+        );
+        await withObservedJsonResponse(page, unhideUrl, async (readObservedBody) => {
+            const staleUnhideResponse = page.waitForResponse(response =>
+                response.request().method() === 'POST'
+                && pathOf(response.url())
+                    === `/JellyfinCanopy/admin/hidden-content/${users.target.id}/unhide`,
+            { timeout: 30_000 });
+            const [conflictResponse] = await Promise.all([
+                staleUnhideResponse,
+                confirmation.locator('.jc-hide-confirm-hide').click(),
+            ]);
+            expect(conflictResponse.status(), 'stale exact-key unhide conflicts').toBe(409);
+            expect(
+                conflictResponse.request().headers()['if-match'],
+                'stale exact-key unhide uses the revision loaded by the page'
+            ).toBe(`"${fixture.itemsRevision}"`);
+            expect(
+                conflictResponse.request().postDataJSON(),
+                'stale target mutation contains only the selected key'
+            ).toEqual([fixture.itemId]);
+            expect(conflictResponse.headers()['etag']).toBe(
+                `"${externallyReaddedRevision}"`
+            );
+            expect(conflictResponse.headers()['cache-control']).toBe('private, no-store, no-cache');
+            expect(conflictResponse.headers()['pragma']).toBe('no-cache');
+            expect(conflictResponse.headers()['expires']).toBe('0');
+            const observedBody = await readObservedBody(conflictResponse);
+            const conflict = recordOf(
+                await conflictResponse.json(),
+                'stale target item conflict'
+            );
+            expect(conflict, 'browser clone and Playwright observe the same conflict').toEqual(observedBody);
+            expect(field(conflict, 'Success', 'success')).toBe(false);
+            expect(field(conflict, 'Conflict', 'conflict')).toBe(true);
+            expect(field(conflict, 'Code', 'code')).toBe('hidden_content_items_conflict');
+            expect(
+                normalizeId(field(conflict, 'TargetUserId', 'targetUserId'))
+            ).toBe(users.target.id);
+            expect(
+                hiddenItemsRevision(conflict, 'stale target item conflict')
+            ).toBe(externallyReaddedRevision);
+            expect(
+                Object.keys(conflict)
+                    .map(key => key.toLowerCase())
+                    .filter(key => ['hiddencontent', 'items', 'data'].includes(key)),
+                'privacy-minimal conflict omits the target item dictionary'
+            ).toEqual([]);
+        });
 
-    const recoveryResponse = await conflictRecoveryRead;
-    expect(recoveryResponse.status(), 'conflict recovery target GET').toBe(200);
-    expect(recoveryResponse.headers()['etag']).toBe(
-        `"${externallyReaddedRevision}"`
-    );
-    const recoveryPayload = recordOf(
-        await recoveryResponse.json(),
-        'conflict recovery target GET'
-    );
-    const recoveredState = recordOf(
-        field(recoveryPayload, 'HiddenContent', 'hiddenContent'),
-        'conflict recovery target state'
-    );
-    expect(
-        hiddenItemsRevision(recoveredState, 'conflict recovery target state')
-    ).toBe(externallyReaddedRevision);
-    const conflictText = await translatedText(
-        page,
-        'panel_admin_target_conflict_error'
-    );
-    const mutationStatus = container.locator('.jc-hidden-admin-mutation-status');
-    await expect(mutationStatus, 'stale edit reports localized conflict guidance')
-        .toHaveText(conflictText);
-    await expect(exactCard, 'stale edit never falsely removes the re-added row')
-        .toHaveCount(1);
+        const recovery = await conflictRecoveryRead;
+        if (!recovery.ok) throw recovery.error;
+        const recoveryResponse = recovery.response;
+        expect(recoveryResponse.status(), 'conflict recovery target GET').toBe(200);
+        expect(recoveryResponse.headers()['etag']).toBe(
+            `"${externallyReaddedRevision}"`
+        );
+        const recoveryPayload = recordOf(
+            await recoveryResponse.json(),
+            'conflict recovery target GET'
+        );
+        const recoveredState = recordOf(
+            field(recoveryPayload, 'HiddenContent', 'hiddenContent'),
+            'conflict recovery target state'
+        );
+        expect(
+            hiddenItemsRevision(recoveredState, 'conflict recovery target state')
+        ).toBe(externallyReaddedRevision);
+        const conflictText = await translatedText(
+            page,
+            'panel_admin_target_conflict_error'
+        );
+        const mutationStatus = container.locator('.jc-hidden-admin-mutation-status');
+        await expect(mutationStatus, 'stale edit reports localized conflict guidance')
+            .toHaveText(conflictText);
+        await expect(exactCard, 'stale edit never falsely removes the re-added row')
+            .toHaveCount(1);
 
-    const afterConflictState = await readSelfFile(
-        baseURL,
-        users.adminSession,
-        'hidden-content.json',
-        users.target.id
-    );
-    expect(
-        hiddenItemsRevision(afterConflictState, 'target after stale unhide'),
-        'the rejected stale edit does not advance target state'
-    ).toBe(externallyReaddedRevision);
-    expect(
-        nestedRecord(afterConflictState, 'Items', 'items'),
-        'the rejected stale edit leaves the exact target dictionary unchanged'
-    ).toEqual(nestedRecord(beforeConflictState, 'Items', 'items'));
+        const afterConflictState = await readSelfFile(
+            baseURL,
+            users.adminSession,
+            'hidden-content.json',
+            users.target.id
+        );
+        expect(
+            hiddenItemsRevision(afterConflictState, 'target after stale unhide'),
+            'the rejected stale edit does not advance target state'
+        ).toBe(externallyReaddedRevision);
+        expect(
+            nestedRecord(afterConflictState, 'Items', 'items'),
+            'the rejected stale edit leaves the exact target dictionary unchanged'
+        ).toEqual(nestedRecord(beforeConflictState, 'Items', 'items'));
 
-    // An explicit user retry now uses the authoritative R+2 snapshot adopted
-    // by recovery and is the only mutation allowed to remove the row.
-    await unhide.click();
-    await expect(confirmation).toBeVisible();
-    const retryUnhideResponse = page.waitForResponse(response =>
-        response.request().method() === 'POST'
-        && pathOf(response.url())
-            === `/JellyfinCanopy/admin/hidden-content/${users.target.id}/unhide`,
-    { timeout: 30_000 });
-    await confirmation.locator('.jc-hide-confirm-hide').click();
-    const retryResponse = await retryUnhideResponse;
-    expect(retryResponse.status(), 'explicit target item retry succeeds').toBe(200);
-    expect(
-        retryResponse.request().headers()['if-match'],
-        'retry uses the authoritative recovered item-set revision'
-    ).toBe(`"${externallyReaddedRevision}"`);
-    expect(retryResponse.request().postDataJSON()).toEqual([fixture.itemId]);
-    const acknowledgement = recordOf(
-        await retryResponse.json(),
-        'target item retry acknowledgement'
-    );
-    expect(field(acknowledgement, 'Success', 'success')).toBe(true);
-    expect(Number(field(acknowledgement, 'Removed', 'removed'))).toBe(1);
-    const finalRevision = hiddenItemsRevision(
-        acknowledgement,
-        'target item retry acknowledgement'
-    );
-    expect(finalRevision).toBe(externallyReaddedRevision + 1);
-    expect(retryResponse.headers()['etag']).toBe(`"${finalRevision}"`);
-    await expect(exactCard, 'only the explicit retry removes the target row')
-        .toHaveCount(0);
+        expect(unhideRequests, 'the stale confirmation sends one browser mutation').toBe(1);
 
-    const targetState = await readSelfFile(
-        baseURL,
-        users.adminSession,
-        'hidden-content.json',
-        users.target.id
-    );
-    expect(hiddenItemsRevision(targetState, 'target state after retry'))
-        .toBe(finalRevision);
-    expect(
-        hiddenStateContainsItem(targetState, fixture.itemId),
-        'the target no longer sees the item after the explicit retry'
-    ).toBe(false);
+        // An explicit user retry now uses the authoritative R+2 snapshot adopted
+        // by recovery and is the only mutation allowed to remove the row.
+        await unhide.click();
+        await expect(confirmation).toBeVisible();
+        const finalRevision = await withObservedJsonResponse(page, unhideUrl, async (readObservedBody) => {
+            const retryUnhideResponse = page.waitForResponse(response =>
+                response.request().method() === 'POST'
+                && pathOf(response.url())
+                    === `/JellyfinCanopy/admin/hidden-content/${users.target.id}/unhide`,
+            { timeout: 30_000 });
+            await confirmation.locator('.jc-hide-confirm-hide').click();
+            const retryResponse = await retryUnhideResponse;
+            expect(retryResponse.status(), 'explicit target item retry succeeds').toBe(200);
+            expect(
+                retryResponse.request().headers()['if-match'],
+                'retry uses the authoritative recovered item-set revision'
+            ).toBe(`"${externallyReaddedRevision}"`);
+            expect(retryResponse.request().postDataJSON()).toEqual([fixture.itemId]);
+            expect(retryResponse.headers()['cache-control']).toBe('private, no-store, no-cache');
+            expect(retryResponse.headers()['pragma']).toBe('no-cache');
+            expect(retryResponse.headers()['expires']).toBe('0');
+            const observedBody = await readObservedBody(retryResponse);
+            const acknowledgement = recordOf(
+                await retryResponse.json(),
+                'target item retry acknowledgement'
+            );
+            expect(acknowledgement, 'browser clone and Playwright observe the same acknowledgement')
+                .toEqual(observedBody);
+            expect(field(acknowledgement, 'Success', 'success')).toBe(true);
+            expect(Number(field(acknowledgement, 'Removed', 'removed'))).toBe(1);
+            const finalRevision = hiddenItemsRevision(
+                acknowledgement,
+                'target item retry acknowledgement'
+            );
+            expect(finalRevision).toBe(externallyReaddedRevision + 1);
+            expect(retryResponse.headers()['etag']).toBe(`"${finalRevision}"`);
+            return finalRevision;
+        });
+        await expect(exactCard, 'only the explicit retry removes the target row')
+            .toHaveCount(0);
+
+        const targetState = await readSelfFile(
+            baseURL,
+            users.adminSession,
+            'hidden-content.json',
+            users.target.id
+        );
+        expect(hiddenItemsRevision(targetState, 'target state after retry'))
+            .toBe(finalRevision);
+        expect(
+            hiddenStateContainsItem(targetState, fixture.itemId),
+            'the target no longer sees the item after the explicit retry'
+        ).toBe(false);
+        expect(unhideRequests, 'only the explicit retry adds a second browser mutation').toBe(2);
+    } finally {
+        page.off('request', collectUnhide);
+    }
 }
 
 async function closePanelIfPresent(page: Page): Promise<void> {

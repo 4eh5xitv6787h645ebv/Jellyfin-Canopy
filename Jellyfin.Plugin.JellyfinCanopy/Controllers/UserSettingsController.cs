@@ -51,6 +51,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class UserSettingsController : JellyfinCanopyControllerBase
     {
         private readonly UserConfigurationManager _userConfigurationManager;

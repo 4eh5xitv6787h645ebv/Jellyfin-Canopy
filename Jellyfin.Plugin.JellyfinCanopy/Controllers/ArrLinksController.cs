@@ -49,6 +49,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class ArrLinksController : JellyfinCanopyControllerBase
     {
         private readonly Services.Arr.ArrFetchService _arrFetch;

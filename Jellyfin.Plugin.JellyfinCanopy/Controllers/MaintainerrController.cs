@@ -47,6 +47,7 @@ public sealed class MaintainerrController : JellyfinCanopyControllerBase
     [Authorize(Policy = Policies.RequiresElevation)]
     [RequestSizeLimit(TestRequestBodyBytes)]
     [Produces("application/json")]
+    [PrivateResponse]
     public async Task<IActionResult> Test(
         [FromBody] MaintainerrTestRequest? request,
         CancellationToken cancellationToken)

@@ -259,6 +259,25 @@ Authorization: MediaBrowser Token="{your-api-key}"
 
 **Error contract.** Endpoints are gated with ASP.NET authorization policies — bare `[Authorize]` for any authenticated user, `RequiresElevation` for admin-only. Authorization failures return a **bare status code with an empty body**: `401` for a missing/invalid token, `403` for a valid token without the required role. There is no JSON error envelope for authorization failures, so branch on the status code. JSON error bodies (for example, Seerr permission codes) are used for **business errors only**, on requests that already passed authorization.
 
+### HTTP storage of private responses
+
+Responses covered by the `PrivateResponse` policy use `Cache-Control:
+private, no-store, no-cache`, `Pragma: no-cache`, and `Expires: 0`. This includes
+`public-config`, whose projection changes after authentication. Clients must not
+retain these representations in an HTTP cache. Application caches remain
+governed by their existing ownership and lifetime rules.
+
+The scoped `PrivateResponse` result filter preserves response status, `Vary`,
+and representation validators. Settings ETags and `If-Match` revision checks
+still provide optimistic concurrency; `no-store` does not disable them. The
+filter also runs for MVC short-circuit results on selected actions. Authentication
+rejections produced before MVC remain owned by Jellyfin's middleware.
+
+Apply the filter to private actions, or to controllers whose entire surface is
+private. Public bundles, locales, mirrored assets, branding images, version
+information, anonymous Platform discovery, and avatar revalidation retain their
+existing cache policies.
+
 ### Get plugin version
 
 Returns the plugin's installed version, no authentication required:

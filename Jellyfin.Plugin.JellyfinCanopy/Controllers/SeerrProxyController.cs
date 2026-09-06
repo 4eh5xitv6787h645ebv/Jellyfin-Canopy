@@ -50,6 +50,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class SeerrProxyController : JellyfinCanopyControllerBase
     {
         private const int MaximumTitleIssueRows = 1_000;

@@ -48,6 +48,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Controllers
     /// </summary>
     [Route("JellyfinCanopy")]
     [ApiController]
+    [PrivateResponse]
     public class MaintenanceModeController : JellyfinCanopyControllerBase
     {
         private readonly MediaBrowser.Controller.Session.ISessionManager _sessionManager;
