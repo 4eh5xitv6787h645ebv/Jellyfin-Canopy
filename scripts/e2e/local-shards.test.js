@@ -367,55 +367,120 @@ for (const [signal, expected] of [['INT', 130], ['TERM', 143]]) {
     });
 }
 
-test('launcher keeps runner passwords out of the tracked process argv', (t) => {
-    if (!fs.existsSync('/proc/self/cmdline') || spawnSync('setsid', ['--version']).status !== 0) {
-        t.skip('Linux procfs and GNU setsid are required');
-        return;
-    }
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-local-argv-contract-'));
-    try {
-        const fakeSeed = path.join(root, 'fake-seed.sh');
-        fs.writeFileSync(fakeSeed, '#!/usr/bin/env bash\nsleep 30\n', { mode: 0o700 });
-        const command = [
-            'source "$1"',
-            'set -e',
-            'SHARDS=1',
-            'RUN_ID=argv-contract',
-            'CPUS_PER_SERVER=2',
-            'PROJECTS[1]=argv-contract-s1',
-            'STATE_DIRS[1]="$2/state"',
-            'RESULT_DIRS[1]="$2/results"',
-            'mkdir -p "${STATE_DIRS[1]}" "${RESULT_DIRS[1]}"',
-            'SEED_SCRIPT="$2/fake-seed.sh"',
-            'PLUGIN_DLL=/bin/true',
-            'ADMIN_USER=argv_admin',
-            'ADMIN_PASS=argv-secret-admin',
-            'USER_NAME=argv_user',
-            'USER_PASS=argv-secret-user',
-            'trap terminate_active_jobs EXIT',
-            'start_seed_jobs >/dev/null',
-            'pid="${SEED_PIDS[1]}"',
-            'for _ in {1..50}; do',
-            '  cmdline="$(tr "\\0" " " < "/proc/$pid/cmdline")"',
-            '  [[ "$cmdline" == *fake-seed.sh* ]] && break',
-            '  sleep 0.02',
-            'done',
-            '[[ "$cmdline" == *fake-seed.sh* ]]',
-            '[[ "$cmdline" != *"$ADMIN_PASS"* ]]',
-            '[[ "$cmdline" != *"$USER_PASS"* ]]',
-            'terminate_active_jobs',
-            'SEED_PIDS[1]=""',
-        ].join('\n');
-        const result = spawnSync('bash', ['-c', command, 'bash', SCRIPT, root], {
-            cwd: ROOT,
-            encoding: 'utf8',
-            timeout: 10_000,
-        });
-        assert.equal(result.status, 0, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
-    } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-    }
-});
+for (const [name, passwordArgument, pauseBeforeExec, expectedOutput] of [
+    ['launcher keeps runner passwords out of the tracked process argv', '', false,
+        'argv-ready\nadmin-password-absent\nuser-password-absent\n'],
+    ['launcher argv readiness rejects inherited shell command text before exec', '', true,
+        'preexec-rejected\nargv-ready\nadmin-password-absent\nuser-password-absent\n'],
+    ['launcher argv check rejects an appended admin password after script readiness', 'JF_ADMIN_PASS', false,
+        'argv-ready\n'],
+    ['launcher argv check rejects an appended user password after script readiness', 'JF_USER_PASS', false,
+        'argv-ready\nadmin-password-absent\n'],
+]) {
+    test(name, (t) => {
+        if (!fs.existsSync('/proc/self/cmdline') || spawnSync('setsid', ['--version']).status !== 0) {
+            t.skip('Linux procfs and GNU setsid are required');
+            return;
+        }
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-local-argv-contract-'));
+        try {
+            const fakeSeed = path.join(root, 'fake-seed.sh');
+            fs.writeFileSync(fakeSeed, [
+                '#!/usr/bin/env bash',
+                'if [[ -n "$ARGV_PASSWORD_ARGUMENT" && $# == 0 ]]; then',
+                '  exec bash "$0" "${!ARGV_PASSWORD_ARGUMENT}"',
+                'fi',
+                // A negative fixture must finish its self-exec before argv is sampled.
+                ': > "$JF_E2E_STATE_DIR/seed-ready"',
+                'sleep 30',
+                '',
+            ].join('\n'), { mode: 0o700 });
+            const command = [
+                'source "$1"',
+                'set -e',
+                'SHARDS=1',
+                'RUN_ID=argv-contract',
+                'CPUS_PER_SERVER=2',
+                'PROJECTS[1]=argv-contract-s1',
+                'STATE_DIRS[1]="$2/state"',
+                'RESULT_DIRS[1]="$2/results"',
+                'mkdir -p "${STATE_DIRS[1]}" "${RESULT_DIRS[1]}"',
+                'SEED_SCRIPT="$2/fake-seed.sh"',
+                'PLUGIN_DLL=/bin/true',
+                'ADMIN_USER=argv_admin',
+                'ADMIN_PASS=argv-secret-admin',
+                'USER_NAME=argv_user',
+                'USER_PASS=argv-secret-user',
+                'export ARGV_PASSWORD_ARGUMENT="$3"',
+                // Preserve NUL argument boundaries and inspect the same snapshot for secrets.
+                'read_seed_argv() {',
+                '  argv=()',
+                '  mapfile -d "" -t argv < "/proc/$pid/cmdline" || return 1',
+                '  [[ "${argv[0]-}" == bash && "${argv[1]-}" == "$SEED_SCRIPT" ]]',
+                '}',
+                'trap terminate_active_jobs EXIT',
+                'if [[ "$4" == pause ]]; then',
+                '  fixture_root=$2',
+                '  fixture_parent=$BASHPID',
+                '  mkfifo "$fixture_root/release"',
+                '  exec 9<> "$fixture_root/release"',
+                // Pause the real launcher's subshell immediately before its exec.
+                '  pause_seed_exec() {',
+                '    if [[ "$BASHPID" != "$fixture_parent" && "$BASH_COMMAND" == \'exec setsid --wait bash "${SEED_SCRIPT}"\' ]]; then',
+                '      printf "%s\\n" "$BASHPID" > "$fixture_root/preexec-pid"',
+                '      read -r -t 1 -u 9 release || exit 96',
+                '    fi',
+                '  }',
+                '  set -T',
+                '  trap pause_seed_exec DEBUG',
+                'fi',
+                'start_seed_jobs >/dev/null',
+                'pid="${SEED_PIDS[1]}"',
+                'if [[ "$4" == pause ]]; then',
+                '  for _ in {1..50}; do',
+                '    [[ -s "$fixture_root/preexec-pid" ]] && break',
+                '    sleep 0.02',
+                '  done',
+                '  [[ "$(<"$fixture_root/preexec-pid")" == "$pid" ]]',
+                '  if read_seed_argv; then exit 97; fi',
+                '  cmdline="${argv[*]}"',
+                // Prove the old predicate would accept the fixture's own secret constants.
+                '  [[ "$cmdline" == *fake-seed.sh* ]]',
+                '  [[ "$cmdline" == *"$ADMIN_PASS"* && "$cmdline" == *"$USER_PASS"* ]]',
+                '  printf "preexec-rejected\\n"',
+                '  printf "release\\n" >&9',
+                'fi',
+                'for _ in {1..50}; do',
+                '  if [[ -f "${STATE_DIRS[1]}/seed-ready" ]] && read_seed_argv; then break; fi',
+                '  sleep 0.02',
+                'done',
+                '[[ -f "${STATE_DIRS[1]}/seed-ready" ]]',
+                '[[ "${argv[0]-}" == bash && "${argv[1]-}" == "$SEED_SCRIPT" ]]',
+                'cmdline="${argv[*]}"',
+                'printf "argv-ready\\n"',
+                '[[ "$cmdline" != *"$ADMIN_PASS"* ]]',
+                'printf "admin-password-absent\\n"',
+                '[[ "$cmdline" != *"$USER_PASS"* ]]',
+                'printf "user-password-absent\\n"',
+                'terminate_active_jobs',
+                'SEED_PIDS[1]=""',
+            ].join('\n');
+            const result = spawnSync('bash', ['-c', command, 'bash', SCRIPT, root,
+                passwordArgument, pauseBeforeExec ? 'pause' : ''], {
+                cwd: ROOT,
+                encoding: 'utf8',
+                timeout: 10_000,
+            });
+            assert.equal(result.status, passwordArgument ? 1 : 0,
+                `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+            // A negative case must reach its password assertion, not merely time out.
+            assert.equal(result.stdout, expectedOutput);
+            assert.equal(result.stderr, '');
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+}
 
 test('retained passwords are deleted while username-only diagnostics are redacted', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jc-local-scrub-contract-'));
