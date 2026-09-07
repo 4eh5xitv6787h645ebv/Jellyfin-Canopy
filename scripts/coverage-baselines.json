@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 47256,
+        "coveredLines": 47259,
         "totalLines": 57163
       },
       "observations": {
-        "cleanRuns": 2,
+        "cleanRuns": 3,
         "minimumCoveredLines": 47254,
-        "maximumCoveredLines": 47256
+        "maximumCoveredLines": 47259
       },
       "tolerance": {
-        "missingCoveredLines": 2,
-        "rationale": "Canonical Series relationship-string reuse changes the complete assembly scope from 57,155 to 57,163 instrumented lines. The accompanying paused-handoff regression owns its dedicated producer thread and observes queue admission separately from thread startup, preserving the original one-second admission deadline and losslessness checks. Two clean full runs on the identical 601-file production/test/build-input scope at Canopy commit aa6105355e6d13dfbb3ff9fba8bc981c6182b255, using SDK 10.0.302/runtime 10.0.10, each passed all 4,716 tests and measured 47,256/57,163 and 47,254/57,163. Both raw Cobertura reports and full logs are retained, with identical class/file/line keys and verified source hashes after the main update. These observations establish high-water 47,256, directly observed floor 47,254, and exactly two lines of tolerance (about 0.0035 percentage points). TagCacheDependencyGraph coverage advances from 242/270 to 258/277 and TagCacheService from 1,847/1,938 to 1,849/1,939; both changed owners have identical coverage in the two new runs. Six differing Boolean line hits in existing PlatformProviderInvocationService and PlatformProviderRegistryOrchestrator lifecycle branches produce the two-line net spread. No changed-owner coverage is lost, and no failing-test or different-source measurement is included. The policy, client baseline, coverage implementation, original worker-allocation budgets and queue-admission deadline remain unchanged. coverage-baseline.test.js rejects 47,253, requires review above 47,256, and rejects either neighboring total-line scope or an unevidenced broader envelope."
+        "missingCoveredLines": 5,
+        "rationale": "Canonical Series relationship-string reuse changes the complete assembly scope from 57,155 to 57,163 instrumented lines. The accompanying paused-handoff regression owns its dedicated producer thread and observes queue admission separately from thread startup, preserving the original one-second admission deadline and losslessness checks. Two clean local full runs on the identical 601-file production/test/build-input scope at Canopy commit aa6105355e6d13dfbb3ff9fba8bc981c6182b255, using SDK 10.0.302/runtime 10.0.10, each passed all 4,716 tests and measured 47,256/57,163 and 47,254/57,163. Both raw Cobertura reports and full logs are retained, with identical class/file/line keys and verified source hashes after the main update. A third clean hosted run on the identical 601 source/build inputs at Canopy synthetic merge 2c0af3ee9c337464bdfdd3341e08d496180f598b, using SDK 10.0.400/runtime 10.0.11, passed all 4,716 tests and measured 47,259/57,163. Its full job log and exact checkout/source hashes are retained; the job does not publish its XML, so the additional hosted line hits cannot be attributed individually. These three observations establish high-water 47,259, unchanged directly observed floor 47,254, and exactly five lines of tolerance (about 0.0088 percentage points). TagCacheDependencyGraph coverage advances from 242/270 to 258/277 and TagCacheService from 1,847/1,938 to 1,849/1,939; both changed owners have identical coverage in the two new runs. In the local pair, six differing Boolean line hits in existing PlatformProviderInvocationService and PlatformProviderRegistryOrchestrator lifecycle branches produce the two-line net spread. The local pair loses no changed-owner coverage, and no failing-test or different-source measurement is included. The policy, client baseline, coverage implementation, original worker-allocation budgets and queue-admission deadline remain unchanged. coverage-baseline.test.js rejects 47,253, requires review above 47,259, and rejects either neighboring total-line scope or an unevidenced broader envelope."
       }
     }
   }
