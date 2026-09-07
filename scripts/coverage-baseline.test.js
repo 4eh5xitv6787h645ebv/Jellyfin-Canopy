@@ -25,12 +25,12 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         baselines.policy.description,
         /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
     );
-    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2976, totalLines: 3362 });
+    assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2984, totalLines: 3362 });
     assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 47261, totalLines: 57163 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 2,
-        minimumCoveredLines: 2976,
-        maximumCoveredLines: 2976,
+        minimumCoveredLines: 2984,
+        maximumCoveredLines: 2984,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
         cleanRuns: 4,
@@ -39,6 +39,16 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 0);
     assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 7);
+});
+
+test('document retirement coverage rejects either adjacent count and scope', () => {
+    const profile = baselines.profiles.client;
+    assert.equal(evaluateCoverage({ coveredLines: 2983, totalLines: 3362 }, profile).reason, 'regression');
+    assert.equal(evaluateCoverage({ coveredLines: 2984, totalLines: 3362 }, profile).reason, 'exact');
+    assert.equal(evaluateCoverage({ coveredLines: 2985, totalLines: 3362 }, profile).reason, 'stale-baseline');
+    for (const totalLines of [3361, 3363]) {
+        assert.equal(evaluateCoverage({ coveredLines: 2984, totalLines }, profile).reason, 'scope-drift');
+    }
 });
 
 test('server relationship-reuse scope accepts only its clean observed envelope', () => {
