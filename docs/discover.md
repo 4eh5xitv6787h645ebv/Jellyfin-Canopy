@@ -594,9 +594,9 @@ The Permission Audit is an administrator-only tool that checks every Jellyfin us
 
 **Where to find it:** open the plugin configuration, go to the **Seerr** section, and click **Run Audit** in the "Permission Audit" area.
 
-**How it works:** the audit iterates every Jellyfin user and tries to resolve a linked Seerr user for each, returning a per-user report with three outcomes:
+**How it works:** the audit iterates every Jellyfin user and tries to resolve a linked Seerr user for each. A successful audit returns a per-user report with three outcomes:
 
-- **Not linked** — the Jellyfin user has no corresponding Seerr account (or Seerr was unreachable). Use the Import Users feature or check Seerr manually.
+- **Not linked** — the Jellyfin user has no corresponding Seerr account, or is blocked from Seerr by Jellyfin Canopy configuration. Read the row's detailed reason: review Canopy's blocked-user settings for blocked users, and import only a confirmed absent account that should have Seerr access.
 - **Permissions Missing** — a linked user lacks one or more permissions an enabled feature needs. The audit lists the specific missing permissions, drawn from: `REQUEST`, `REQUEST_MOVIE`, `REQUEST_TV`, `REQUEST_4K`, `REQUEST_4K_MOVIE`, `REQUEST_4K_TV`, `REQUEST_ADVANCED`, `REQUEST_VIEW`, `MANAGE_REQUESTS`, `CREATE_ISSUES`, `VIEW_ISSUES`, `MANAGE_ISSUES`.
 - **OK** — the user is linked and has the required permissions. OK users are collapsed into an expandable section.
 
@@ -608,13 +608,14 @@ The Permission Audit is an administrator-only tool that checks every Jellyfin us
 1. Ensure Seerr integration is configured and reachable (Seerr URLs + API key).
 2. Open the plugin configuration → **Seerr** → **Permission Audit**.
 3. Click **Run Audit** and wait for results (large user lists can take a while).
-4. Review anyone flagged **Permissions Missing** or **Not linked**, and fix them in Seerr.
+4. Review anyone flagged **Permissions Missing** or **Not linked**. Adjust permissions in Seerr where needed, and follow the detailed reason for **Not linked** rows.
 
 **Notes:**
 
-- The audit bypasses the cache to guarantee fresh permission checks, so it can be slow with many users.
-- If Seerr is unreachable the audit may report users as **Not linked** — verify Seerr availability via the plugin's Seerr status check.
-- If users *should* be linked but appear as not linked, try the **Import Users Now** action first.
+- The audit is read-only and never auto-imports users. It bypasses the user-mapping cache for fresh permission checks, so it can be slow with many users.
+- If a Seerr user lookup is incomplete or unavailable, the whole audit fails with **Audit failed**. Previous results are cleared, and no partial report is shown. The audit also fails if the integration is disabled or its configuration changes during the run.
+- On **Audit failed**, check the displayed error and server logs, verify Seerr availability via the plugin's Seerr status check, and review the integration configuration. Rerun the audit after recovery; an audit failure does not confirm that an account is absent.
+- Use **Import Users Now** only after confirming that a needed Seerr account is absent and importing it is appropriate. Rerun the audit after correcting accounts, permissions, or Canopy settings.
 
 Remember that these permissions govern what a user may *do* in Seerr; the separate, server-side [parental-rating filter](#parental-rating-tag-filtering) governs what they may *see*, resolving each caller's own Jellyfin limit regardless of their Seerr permissions.
 
