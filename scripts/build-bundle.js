@@ -16,6 +16,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const esbuild = require('esbuild');
 const ts = require('typescript');
+const { staticCssPlugin } = require('./static-css');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PROJECT_DIR = path.join(REPO_ROOT, 'Jellyfin.Plugin.JellyfinCanopy');
@@ -191,6 +192,7 @@ function esmOptions(devMode = false, outDir = OUT_DIR) {
         format: 'esm',
         outdir: outDir,
         splitting: true,
+        plugins: devMode ? [] : [staticCssPlugin(SRC_ROOT)],
         target: ['es2022'],
         banner: { js: `/* Jellyfin Canopy - generated ${devMode ? 'DEV ' : ''}ES module. Do not edit. */` },
     };

@@ -1915,7 +1915,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                         Recursive = true,
                         OrderBy = new[] { (ItemSortBy.PremiereDate, JSortOrder.Ascending) },
                     }).ToList();
-                    var formattedSeriesId = FormatId(change.Id);
+                    var relationshipId = new TagCacheRelationshipId(change.Id);
                     var snapshotIds = descendantSnapshot.Select(static item => item.Id).ToHashSet();
                     var oldSeriesRepairIds = new HashSet<Guid>();
                     var discoveredDescendantIds = new HashSet<Guid>();
@@ -2087,7 +2087,7 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                 descendant.Id,
                                 DependencyTarget(descendant.Id, descendant.GetBaseItemKind()));
                         }
-                        else if (!string.Equals(existing.SeriesId, formattedSeriesId, StringComparison.Ordinal)
+                        else if (!string.Equals(existing.SeriesId, relationshipId.Formatted, StringComparison.Ordinal)
                             || descendant is MediaBrowser.Controller.Entities.TV.Episode movedEpisode
                                 && !string.Equals(existing.SeasonId, FormatId(movedEpisode.SeasonId), StringComparison.Ordinal))
                         {
@@ -2128,7 +2128,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                                         descendant,
                                         existing,
                                         FirstEpisodeFromSnapshot,
-                                        lastUpdated);
+                                        lastUpdated,
+                                        relationshipId);
                                 }
                                 else
                                 {
