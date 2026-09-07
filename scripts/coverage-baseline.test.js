@@ -26,19 +26,19 @@ test('reviewed coverage baselines match the clean measurement envelopes', () => 
         /exact minimum directly observed by clean runs on the identical source, tests, and total-line scope/
     );
     assert.deepEqual(baselines.profiles.client.measured, { coveredLines: 2976, totalLines: 3362 });
-    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 47259, totalLines: 57163 });
+    assert.deepEqual(baselines.profiles.server.measured, { coveredLines: 47261, totalLines: 57163 });
     assert.deepEqual(baselines.profiles.client.observations, {
         cleanRuns: 2,
         minimumCoveredLines: 2976,
         maximumCoveredLines: 2976,
     });
     assert.deepEqual(baselines.profiles.server.observations, {
-        cleanRuns: 3,
+        cleanRuns: 4,
         minimumCoveredLines: 47254,
-        maximumCoveredLines: 47259,
+        maximumCoveredLines: 47261,
     });
     assert.equal(baselines.profiles.client.tolerance.missingCoveredLines, 0);
-    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 5);
+    assert.equal(baselines.profiles.server.tolerance.missingCoveredLines, 7);
 });
 
 test('server relationship-reuse scope accepts only its clean observed envelope', () => {
@@ -48,15 +48,16 @@ test('server relationship-reuse scope accepts only its clean observed envelope',
         [47254, true, 'within-tolerance'],
         [47255, true, 'within-tolerance'],
         [47256, true, 'within-tolerance'],
-        [47259, true, 'exact'],
-        [47260, false, 'stale-baseline'],
+        [47259, true, 'within-tolerance'],
+        [47261, true, 'exact'],
+        [47262, false, 'stale-baseline'],
     ]) {
         const result = evaluateCoverage({ coveredLines, totalLines: 57163 }, profile);
         assert.equal(result.ok, ok);
         assert.equal(result.reason, reason);
     }
     for (const totalLines of [57162, 57164]) {
-        const result = evaluateCoverage({ coveredLines: 47259, totalLines }, profile);
+        const result = evaluateCoverage({ coveredLines: 47261, totalLines }, profile);
         assert.equal(result.ok, false);
         assert.equal(result.reason, 'scope-drift');
     }
