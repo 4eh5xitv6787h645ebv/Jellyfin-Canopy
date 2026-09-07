@@ -1332,8 +1332,10 @@ public sealed class TagCacheDependencyInvalidationTests
         Assert.Equal(new[] { "eng" }, entry.AudioLanguages);
     }
 
-    [Fact]
-    public void UpdatingSeries_RebuildsOnlyDescendantsThatCaptureSeriesFields()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdatingSeries_RebuildsOnlyDescendantsThatCaptureSeriesFields(bool duplicateRows)
     {
         var seriesId = Guid.NewGuid();
         var seasonId = Guid.NewGuid();
@@ -1391,7 +1393,9 @@ public sealed class TagCacheDependencyInvalidationTests
                 queries.Add(query);
                 if (query.AncestorIds?.Contains(seriesId) == true)
                 {
-                    return new BaseItem[] { season, unrelatedEpisode, episode };
+                    return duplicateRows
+                        ? new BaseItem[] { season, unrelatedEpisode, episode, season, episode }
+                        : new BaseItem[] { season, unrelatedEpisode, episode };
                 }
 
                 if (query.ParentId == seriesId || query.ParentId == seasonId)
@@ -3199,7 +3203,14 @@ public sealed class TagCacheDependencyInvalidationTests
             $"Coalesced Series worker allocated {allocated:N0} bytes (budget: {allocationBudget:N0})");
     }
 
-    private static long RunCoalescedSeriesCapacityFixture(int seriesCount, int childrenPerSeries)
+    [Fact]
+    public void CoalescedSeriesRepair_ReusesOneRelationshipStringForEachSiblingGroup()
+    {
+        RunCoalescedSeriesCapacityFixture(2, 3, assertSharedRelationship: true);
+    }
+
+    private static long RunCoalescedSeriesCapacityFixture(
+        int seriesCount, int childrenPerSeries, bool assertSharedRelationship = false)
     {
         var probeCount = 0;
         var series = Enumerable.Range(0, seriesCount).Select(_ => new StubSeries
@@ -3268,6 +3279,10 @@ public sealed class TagCacheDependencyInvalidationTests
             Assert.Equal(SavedAt.Ticks, entry.SourceRevision);
             Assert.Equal(5, entry.CommunityRating);
             Assert.Equal(50, entry.CriticRating);
+            if (assertSharedRelationship)
+            {
+                Assert.Same(service.GetEntryForTest(Key(children[i][0].Id))!.SeriesId, entry.SeriesId);
+            }
         }
         return allocated;
     }

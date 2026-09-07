@@ -14,9 +14,9 @@ Jellyfin Canopy is a comprehensive plugin that bundles advanced features and cus
 
 #### Which apps and platforms does it work on?
 
-Jellyfin Canopy runs on any client that uses Jellyfin's embedded web UI. That includes the official Jellyfin web UI, the desktop apps, and the official Android and iOS apps — every feature is available as long as the app renders Jellyfin's web interface.
+Canopy's supported interface enhancements run in Jellyfin 12's modern web layout, whether it runs in a browser or an app with an embedded web UI. Classic browser layouts are unsupported.
 
-It does **not** work on Android TV or other native TV apps, because those clients don't use the embedded web UI.
+Native clients such as Android TV do not display those interface enhancements. Server-side features, such as automatic season requests, can still act on playback reported by native clients when the feature and its integration are configured and enabled.
 
 #### Can I customize the keyboard shortcuts?
 

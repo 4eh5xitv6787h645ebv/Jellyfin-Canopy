@@ -32,6 +32,26 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
         byte RetryAttempts = 0);
 
     /// <summary>
+    /// One expansion's canonical relationship ID. The default value supplies no formatting
+    /// hint; a later live relationship change always falls back to its own current ID.
+    /// </summary>
+    internal readonly struct TagCacheRelationshipId
+    {
+        internal TagCacheRelationshipId(Guid id)
+        {
+            Id = id;
+            Formatted = id == Guid.Empty ? null : id.ToString("N");
+        }
+
+        private Guid Id { get; }
+
+        internal string? Formatted { get; }
+
+        internal string Format(Guid liveId)
+            => liveId == Id && Formatted != null ? Formatted : liveId.ToString("N");
+    }
+
+    /// <summary>
     /// Authoritative dependency inventory for every <see cref="TagCacheEntry"/> field.
     /// The background tag-cache worker uses the same graph to expand invalidations:
     /// first-Episode fields invalidate their Series/Season containers, while fields
@@ -399,10 +419,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             BaseItem? series,
             Episode episode,
             TagCacheEntry existing,
-            long lastUpdated)
+            long lastUpdated,
+            TagCacheRelationshipId relationshipId = default)
         {
             var refreshed = existing.Clone();
-            refreshed.SeriesId = episode.SeriesId == Guid.Empty ? null : episode.SeriesId.ToString("N");
+            var liveSeriesId = episode.SeriesId;
+            refreshed.SeriesId = liveSeriesId == Guid.Empty ? null : relationshipId.Format(liveSeriesId);
             refreshed.SeasonId = episode.SeasonId == Guid.Empty ? null : episode.SeasonId.ToString("N");
             refreshed.SeasonNumber = episode.ParentIndexNumber;
             refreshed.SeriesTmdbId = series?.ProviderIds?.TryGetValue("Tmdb", out var tmdbId) == true
@@ -427,11 +449,12 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
             BaseItem descendant,
             TagCacheEntry existing,
             Func<BaseItem, BaseItem?> firstEpisode,
-            long lastUpdated)
+            long lastUpdated,
+            TagCacheRelationshipId relationshipId = default)
         {
             if (descendant is Episode episode)
             {
-                return ApplySeasonRelationshipRefresh(series, episode, existing, lastUpdated);
+                return ApplySeasonRelationshipRefresh(series, episode, existing, lastUpdated, relationshipId);
             }
 
             var refreshed = ApplyParentSeriesRefresh(
@@ -442,7 +465,8 @@ namespace Jellyfin.Plugin.JellyfinCanopy.Services
                 lastUpdated);
             if (descendant is Season)
             {
-                refreshed.SeriesId = series.Id.ToString("N");
+                // Preserve the live read after parent refresh callbacks, including an empty ID.
+                refreshed.SeriesId = relationshipId.Format(series.Id);
             }
 
             return refreshed;
