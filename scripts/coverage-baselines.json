@@ -27,17 +27,17 @@
       "scope": "complete Jellyfin.Plugin.JellyfinCanopy assembly",
       "package": "Jellyfin.Plugin.JellyfinCanopy",
       "measured": {
-        "coveredLines": 47244,
+        "coveredLines": 47245,
         "totalLines": 57155
       },
       "observations": {
-        "cleanRuns": 4,
+        "cleanRuns": 5,
         "minimumCoveredLines": 47236,
-        "maximumCoveredLines": 47244
+        "maximumCoveredLines": 47245
       },
       "tolerance": {
-        "missingCoveredLines": 8,
-        "rationale": "The complete assembly remains at 57,155 instrumented lines after Canopy PR #754. Retain the previously reviewed clean local observations of 47,241 and 47,236 covered lines, and record the 47,244-line observed high-water independently reported by the successful 4,695-test post-merge run for #754 and the successful 4,695-test PR #756 run. The 600 C#/project input files are identical across these measurements; differences from the recorded local source commit are coverage metadata/tests and the two documentation paragraphs in #756, with no plugin, server-test, client-resource source or build changes. All four complete test runs passed; the hosted commands failed only because coverage advanced above the old 47,241 high-water. Both original Cobertura reports and all four logs are retained privately. Hosted XML was not retained, so the exact three additional hosted line hits are not attributed to a particular branch. High-water advances to 47,244; the already reviewed floor remains exactly 47,236, so the eight-line downward bound (about 0.014 percentage points) preserves the existing acceptance floor. No failed test run or changed-source scope is included. The client profile, measurement implementation, policy and performance limits remain unchanged. Coverage tests reject 47,235, require review above 47,244, and reject scope drift or an unevidenced wider envelope."
+        "missingCoveredLines": 9,
+        "rationale": "The complete assembly remains at 57,155 instrumented lines after Canopy PR #754. Preserve the four reviewed clean observations recorded in #757: local coverage of 47,241 and 47,236 lines, and hosted coverage of 47,244 lines in the #754 post-merge and #756 PR runs. The #757 post-merge run at Canopy commit 5397cac2e085a0db23d6f306b1d1e218c92e7362 passed all 4,695 tests and measured 47,245/57,155, failing only the stale-high-water check. All five observations share identical 600 C#/project inputs and unchanged production, server-test, client-resource and build sources; only coverage metadata/tests and #756's help paragraphs differ. Retain both local Cobertura reports and all five complete logs privately. Hosted XML was not retained, so the additional hosted line hits are not attributed to specific branches. Record the observed high-water of 47,245 and preserve the already reviewed floor of exactly 47,236: the nine-line downward bound (about 0.0158 percentage points) does not lower the acceptance floor. No failed-test or changed-source run is included. The client profile, measurement implementation, policy and performance limits remain unchanged. Coverage tests reject 47,235, accept 47,236 through 47,245, require review at 47,246, and reject scope drift or an unevidenced wider envelope."
       }
     }
   }
