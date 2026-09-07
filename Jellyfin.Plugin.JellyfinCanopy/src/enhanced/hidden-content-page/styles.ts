@@ -7,7 +7,7 @@
 // CSS Styles
 // ============================================================
 
-const CSS_STYLES = `
+const CSS_STYLES = /* @canopy-static-css */ `
     .jc-hidden-content-page {
       padding: 2em;
       max-width: 95vw;
