@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -23,19 +26,21 @@ public sealed class TagCachePendingRestoreTests
         var olderIds = Enumerable.Range(0, 2_048).Select(_ => Guid.NewGuid()).ToArray();
         var racedId = Guid.NewGuid();
         var duringDrainId = Guid.NewGuid();
-        using var drainReached = new ManualResetEventSlim();
-        using var allowDrain = new ManualResetEventSlim();
-        using var restoreReached = new ManualResetEventSlim();
-        using var allowRestore = new ManualResetEventSlim();
+        var drainReached = new ManualResetEventSlim();
+        var allowDrain = new ManualResetEventSlim();
+        var restoreReached = new ManualResetEventSlim();
+        var allowRestore = new ManualResetEventSlim();
         var library = new CountingLibraryManager
         {
             GetItemsResultHook = static _ => new QueryResult<BaseItem>(0, 0, Array.Empty<BaseItem>()),
             GetItemByIdHook = static _ => null,
         };
-        Task<bool>? build = null;
+        var service = NewService(directory, library);
+        var resources = new RaceResources(service, directory, drainReached, allowDrain, restoreReached, allowRestore);
+        var workers = new List<DedicatedWorker>();
+        Exception? failure = null;
         try
         {
-            using var service = NewService(directory, library);
             service.OnBeforeSwapForTest = () =>
             {
                 service.OnBeforeSwapForTest = null;
@@ -55,31 +60,38 @@ public sealed class TagCachePendingRestoreTests
                 Assert.True(allowRestore.Wait(TimeSpan.FromSeconds(10)));
             };
 
-            build = Task.Run(() => service.BuildFullCache(null, default, canPublish: () => false));
+            var published = true;
+            var build = StartWorker(workers, resources, () =>
+                published = service.BuildFullCache(null, default, canPublish: () => false));
 
             Assert.True(drainReached.Wait(TimeSpan.FromSeconds(10)));
-            var duringDrain = Task.Run(() => service.EnqueueUpdate(duringDrainId));
-            await duringDrain.WaitAsync(TimeSpan.FromSeconds(1));
+            var duringDrain = StartWorker(workers, resources, () => service.EnqueueUpdate(duringDrainId));
+            await AssertEnqueueCompletesAsync(duringDrain);
             allowDrain.Set();
 
             Assert.True(restoreReached.Wait(TimeSpan.FromSeconds(10)));
-            var duringRestore = Task.Run(() => service.EnqueueRemoval(racedId));
-            await duringRestore.WaitAsync(TimeSpan.FromSeconds(1));
+            var duringRestore = StartWorker(workers, resources, () => service.EnqueueRemoval(racedId));
+            await AssertEnqueueCompletesAsync(duringRestore);
             allowRestore.Set();
 
-            Assert.False(await build.WaitAsync(TimeSpan.FromSeconds(10)));
+            await build.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(published);
             var restored = service.DrainPendingForTest().ToDictionary(change => change.Id);
             Assert.Equal(olderIds.Length + 2, restored.Count);
             Assert.All(olderIds, id => Assert.False(restored[id].Removed));
             Assert.False(restored[duringDrainId].Removed);
             Assert.True(restored[racedId].Removed);
         }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
+        }
         finally
         {
             allowDrain.Set();
             allowRestore.Set();
-            if (build != null) await build.WaitAsync(TimeSpan.FromSeconds(10));
-            TryDelete(directory);
+            JoinWorkers(workers, resources, failure);
         }
     }
 
@@ -220,17 +232,19 @@ public sealed class TagCachePendingRestoreTests
     {
         var directory = TempDirectory();
         var movie = new StubMovie { Id = Guid.NewGuid(), DateLastSaved = DateTime.UtcNow };
-        using var restoreReached = new ManualResetEventSlim();
-        using var allowRestore = new ManualResetEventSlim();
+        var restoreReached = new ManualResetEventSlim();
+        var allowRestore = new ManualResetEventSlim();
         var library = new CountingLibraryManager
         {
             GetItemsResultHook = static _ => new QueryResult<BaseItem>(0, 0, Array.Empty<BaseItem>()),
             GetItemByIdHook = id => id == movie.Id ? movie : null,
         };
-        Task<bool>? build = null;
+        var owned = NewService(directory, library);
+        var resources = new RaceResources(owned, directory, restoreReached, allowRestore);
+        var workers = new List<DedicatedWorker>();
+        Exception? failure = null;
         try
         {
-            using var owned = NewService(directory, library);
             owned.SeedEntryForTest(Key(movie.Id), new TagCacheEntry { Type = "Movie", SourceRevision = 1 });
             owned.OnBeforeSwapForTest = () =>
             {
@@ -244,12 +258,15 @@ public sealed class TagCachePendingRestoreTests
                 Assert.True(allowRestore.Wait(TimeSpan.FromSeconds(10)));
             };
 
-            build = Task.Run(() => owned.BuildFullCache(null, default, canPublish: () => false));
+            var published = true;
+            var build = StartWorker(workers, resources, () =>
+                published = owned.BuildFullCache(null, default, canPublish: () => false));
             Assert.True(restoreReached.Wait(TimeSpan.FromSeconds(10)));
             owned.Suspend();
             owned.Resume();
             allowRestore.Set();
-            Assert.False(await build.WaitAsync(TimeSpan.FromSeconds(10)));
+            await build.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(published);
             Assert.False(owned.IsSuspendedForTest);
             Assert.Equal(0, owned.PendingChangeCountForTest);
             Assert.Equal(0, owned.Count);
@@ -259,12 +276,165 @@ public sealed class TagCachePendingRestoreTests
             Assert.Equal(0, owned.PendingChangeCountForTest);
             Assert.Equal(0, owned.Count);
         }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
+        }
         finally
         {
             allowRestore.Set();
-            if (build != null) await build.WaitAsync(TimeSpan.FromSeconds(10));
-            TryDelete(directory);
+            JoinWorkers(workers, resources, failure);
         }
+    }
+
+    private static DedicatedWorker StartWorker(List<DedicatedWorker> workers, RaceResources resources, Action operation)
+    {
+        var worker = new DedicatedWorker(resources, operation);
+        workers.Add(worker);
+        worker.Start();
+        return worker;
+    }
+
+    private static async Task AssertEnqueueCompletesAsync(DedicatedWorker worker)
+    {
+        // Worker startup is a handshake. Only the actual scan-thread operation owns
+        // the one-second budget; a shared ThreadPool queue is not part of enqueue.
+        try { await worker.Started.WaitAsync(TimeSpan.FromSeconds(10)); }
+        catch (TimeoutException ex) { throw new TimeoutException("Enqueue worker did not start within ten seconds.", ex); }
+        try { await worker.Completion.WaitAsync(TimeSpan.FromSeconds(1)); }
+        catch (TimeoutException ex) { throw new TimeoutException("Enqueue did not complete within one second after worker startup.", ex); }
+        Assert.True(worker.Elapsed <= TimeSpan.FromSeconds(1),
+            $"Enqueue took {worker.Elapsed.TotalMilliseconds:F3} ms after its worker started.");
+    }
+
+    private static void JoinWorkers(List<DedicatedWorker> workers, RaceResources resources, Exception? failure)
+    {
+        var errors = new List<Exception>();
+        foreach (var worker in workers)
+        {
+            try
+            {
+                Assert.True(worker.Join(), "Dedicated race worker did not exit within ten seconds.");
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+        }
+
+        // A timed-out/throwing join is not permission to dispose an actor's resources.
+        // Controller release cleans synchronously only after every actor has released its lease.
+        resources.Release();
+        errors.AddRange(resources.Failures);
+        if (errors.Count == 0) return;
+        if (failure != null && !errors.Contains(failure)) errors.Insert(0, failure);
+        var aggregate = new AggregateException("Race worker cleanup failed.", errors);
+        // A failed test can return before a surviving actor. Retain its eventual cleanup
+        // result (including late worker/disposal faults) with the original failure evidence.
+        aggregate.Data["RaceCleanup"] = resources.Cleanup;
+        throw aggregate;
+    }
+
+    /// <summary>Retains the fixture until both its controller and every actor relinquish ownership.</summary>
+    private sealed class RaceResources
+    {
+        private readonly TagCacheService _service;
+        private readonly string _directory;
+        private readonly ManualResetEventSlim[] _gates;
+        private readonly ConcurrentQueue<Exception> _failures = new();
+        private readonly TaskCompletionSource _cleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _owners = 1;
+
+        public RaceResources(TagCacheService service, string directory, params ManualResetEventSlim[] gates)
+        {
+            _service = service;
+            _directory = directory;
+            _gates = gates;
+        }
+
+        public Task Cleanup => _cleanup.Task;
+        public Exception[] Failures => _failures.ToArray();
+        public void Retain() => Interlocked.Increment(ref _owners);
+        public void RecordFailure(Exception failure) => _failures.Enqueue(failure);
+
+        public void Release()
+        {
+            if (Interlocked.Decrement(ref _owners) != 0) return;
+            // The last actor calls this only after its operation returns, so even deferred
+            // cleanup cannot dispose a gate/service still in use by another race actor.
+            try { _service.Dispose(); }
+            catch (Exception ex) { RecordFailure(ex); }
+            foreach (var gate in _gates)
+            {
+                try { gate.Dispose(); }
+                catch (Exception ex) { RecordFailure(ex); }
+            }
+            TryDelete(_directory);
+            if (_failures.IsEmpty) _cleanup.SetResult();
+            else
+            {
+                _cleanup.SetException(_failures);
+                _ = Cleanup.Exception; // Retain late errors without an unobserved-task exception.
+            }
+        }
+    }
+
+    /// <summary>Owns one synchronous race actor independently of the shared test ThreadPool.</summary>
+    private sealed class DedicatedWorker
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Thread _thread;
+        private readonly RaceResources _resources;
+        private bool _wasStarted;
+
+        public DedicatedWorker(RaceResources resources, Action operation)
+        {
+            _resources = resources;
+            _thread = new Thread(() =>
+            {
+                var startedAt = Stopwatch.GetTimestamp();
+                _started.SetResult();
+                try
+                {
+                    operation();
+                    Elapsed = Stopwatch.GetElapsedTime(startedAt);
+                    _completion.SetResult();
+                }
+                catch (Exception ex)
+                {
+                    resources.RecordFailure(ex);
+                    _completion.SetException(ex);
+                    _ = Completion.Exception;
+                }
+                finally
+                {
+                    resources.Release();
+                }
+            }) { IsBackground = true };
+        }
+
+        public Task Started => _started.Task;
+        public Task Completion => _completion.Task;
+        public TimeSpan Elapsed { get; private set; }
+
+        public void Start()
+        {
+            _resources.Retain();
+            try
+            {
+                _thread.Start();
+                _wasStarted = true;
+            }
+            catch
+            {
+                _resources.Release();
+                throw;
+            }
+        }
+
+        public bool Join() => !_wasStarted || _thread.Join(TimeSpan.FromSeconds(10));
     }
 
     private static TagCacheService NewService(string directory, CountingLibraryManager library)
