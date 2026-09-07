@@ -10,17 +10,17 @@
       "scope": "Jellyfin.Plugin.JellyfinCanopy/src/core/**",
       "report": "coverage/coverage-summary.json",
       "measured": {
-        "coveredLines": 2976,
+        "coveredLines": 2984,
         "totalLines": 3362
       },
       "observations": {
         "cleanRuns": 2,
-        "minimumCoveredLines": 2976,
-        "maximumCoveredLines": 2976
+        "minimumCoveredLines": 2984,
+        "maximumCoveredLines": 2984
       },
       "tolerance": {
         "missingCoveredLines": 0,
-        "rationale": "Issue #717 adds a lazy identity- and navigation-fenced awards details module and its focused tests outside the fixed Jellyfin.Plugin.JellyfinCanopy/src/core/** instrumentation scope, rebased on the combined #718/#732/#733 main tree. Two clean full client runs on this exact 273-file and 2,629-test tree passed every test and both measured 2,976/3,362 core lines (88.519%) without instrumentation spread. The reviewed observed high-water and exact observed floor therefore remain 2,976/3,362 with zero tolerance; the prior #718 evidence established this core source scope, while these runs establish the same exact ratchet against the expanded issue #717 tree. coverage-baseline.test.js retains the exact below-floor, above-baseline, scope-change, observed-high-water, and broad-tolerance negative boundaries."
+        "rationale": "Document retirement tests exercise the shared routed-page owner through native-shaped page transitions, stale mutation/navigation callbacks, and restored authentication/configuration boundaries. Two clean full client runs at Canopy commit ed65e34a6c7115eeababa20196503905736e965f passed all 2,642 tests across 275 files and both measured 2,984/3,362 core lines (88.757%). The 578 recorded client source/test/configuration inputs and complete JSON summaries are identical between runs. Core production source and total-line scope are unchanged; the existing dom-observer owner advances from 166/200 to 174/200 covered lines, with every other core file retaining its prior line count. The observed high-water and exact floor therefore advance from 2,976 to 2,984 lines, with zero instrumentation tolerance. Raw logs and per-file summaries are retained privately. coverage-baseline.test.js rejects the immediately lower count, higher unreviewed count, and either neighboring scope; policy and server baseline are unchanged."
       }
     },
     "server": {
