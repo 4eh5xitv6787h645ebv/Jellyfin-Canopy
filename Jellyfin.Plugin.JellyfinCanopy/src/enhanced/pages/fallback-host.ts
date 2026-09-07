@@ -37,6 +37,8 @@ interface Adoption {
 let adoption: Adoption | null = null;
 let draining = false;
 let fallbackMountSubscribed = false;
+let documentLifetimeSubscribed = false;
+let documentRetired = false;
 
 // ONE stable registry handle for every adoption. Handles (and their
 // persistent onTeardown hooks) live in the lifecycle registry forever, so a
@@ -109,6 +111,8 @@ function renderSignedOutShell(host: HTMLElement, descriptor: PageDescriptor): vo
  * and hand it to the descriptor's render with a fresh dispose bag.
  */
 function adopt(descriptor: PageDescriptor, host: HTMLElement): void {
+    // Queued work and teardown mutations must not revive a hidden document.
+    if (documentRetired) return;
     if (adoption) drain('replaced');
 
     const handle = pagesHandle();
@@ -338,6 +342,26 @@ export function initFallbackHost(): void {
     }
     navigation.onViewBeforeShow((element) => handleViewBeforeShow(element));
     navigation.onNavigate(() => handleNavigate());
+    if (!documentLifetimeSubscribed) {
+        documentLifetimeSubscribed = true;
+        window.addEventListener('pagehide', (event) => {
+            // Native transitions target Document; ignore Jellyfin element events.
+            if (event.target !== document && event.target !== event.currentTarget) return;
+            documentRetired = true;
+            const host = adoption?.host;
+            // Abort the caller before Chromium rejects its response body on unload.
+            drain('document-hidden');
+            // A restored route may no longer be allowed to render this content.
+            host?.replaceChildren();
+        });
+        window.addEventListener('pageshow', (event) => {
+            if (event.target !== document && event.target !== event.currentTarget) return;
+            if (!event.persisted || !documentRetired) return;
+            documentRetired = false;
+            // BFCache needs fresh work with current descriptor/config/auth checks.
+            lateAdoptIfOnPage();
+        });
+    }
     if (!fallbackMountSubscribed) {
         const dom = JC.core.dom;
         if (dom) {
